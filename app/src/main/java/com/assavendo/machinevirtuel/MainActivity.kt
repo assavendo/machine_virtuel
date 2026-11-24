@@ -22,6 +22,7 @@ import com.assavendo.machinevirtuel.runtime.SnapshotManager
 import com.assavendo.machinevirtuel.runtime.RuntimeInstaller
 import com.assavendo.machinevirtuel.runtime.VmRuntimeService
 import com.assavendo.machinevirtuel.runtime.RecoveryPlanStore
+import com.assavendo.machinevirtuel.runtime.PackageTrustStore
 import com.assavendo.machinevirtuel.security.ThirdPartyLicenseManifest
 import com.assavendo.machinevirtuel.ui.VmDisplayView
 import com.assavendo.machinevirtuel.vm.*
@@ -427,6 +428,66 @@ class MainActivity : Activity() {
     }
 
     private fun importVmPackage() {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            type = "application/octet-stream"
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        startActivityForResult(intent, 702)
+    }
+
+    private fun importTrustedVmPackage(uri: android.net.Uri) {
+        val local = File(cacheDir, "vm-import-" + System.currentTimeMillis() + ".vmxpack")
+        runCatching {
+            contentResolver.openInputStream(uri)?.use { input ->
+                local.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
+            } ?: error("Impossible d'ouvrir le package sélectionné.")
+            local
+        }.onFailure {
+            local.delete()
+            toast("Import package : " + (it.message ?: "échec"))
+        }.onSuccess { packageFile ->
+            val fingerprint = runCatching { VmPackageManager.packageKeyFingerprint(packageFile) }.getOrNull()
+            if (fingerprint == null || PackageTrustStore.isTrusted(this, fingerprint)) {
+                runCatching { manager.importVm(packageFile) }
+                    .onSuccess { toast("Package importé.") }
+                    .onFailure { toast("Import package : " + (it.message ?: "échec")) }
+                packageFile.delete()
+                refresh()
+                return@onSuccess
+            }
+
+            AlertDialog.Builder(this)
+                .setTitle("Nouvelle clé de signature")
+                .setMessage(
+                    "Ce package est signé par une clé qui n'est pas encore approuvée sur cet appareil.
+
+" +
+                        "Empreinte SHA-256 :
+" + fingerprint + "
+
+" +
+                        "N'approuvez cette clé que si vous avez vérifié cette empreinte par un canal de confiance."
+                )
+                .setNegativeButton("Annuler") { _, _ -> packageFile.delete() }
+                .setPositiveButton("Approuver et importer") { _, _ ->
+                    runCatching {
+                        PackageTrustStore.trust(this, fingerprint)
+                        manager.importVm(packageFile)
+                    }
+                        .onSuccess { toast("Clé approuvée et package importé.") }
+                        .onFailure { toast("Import package : " + (it.message ?: "échec")) }
+                    packageFile.delete()
+                    refresh()
+                }
+                .setNeutralButton("Révoquer") { _, _ ->
+                    PackageTrustStore.revoke(this, fingerprint)
+                    packageFile.delete()
+                    toast("Clé non approuvée.")
+                }
+                .show()
+        }
+    }
+
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             type = "application/octet-stream"
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -569,6 +630,10 @@ class MainActivity : Activity() {
                     refresh()
                 }
             }, "phoenixvm-$toolId-addon-install").start()
+            return
+        }
+        if (requestCode == 702) {
+            importTrustedVmPackage(uri)
             return
         }
         if (requestCode != 701) return
