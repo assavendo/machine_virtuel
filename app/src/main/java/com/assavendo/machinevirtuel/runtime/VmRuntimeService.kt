@@ -148,7 +148,13 @@ class VmRuntimeService : Service() {
                     val process = startQemu(
                         paths, vm, dir, qmp, serial, log, fsHandle?.socket, tpmHandle
                     )
-                    if (!process.isAlive) error("QEMU exited immediately.")
+                    try {
+                        awaitQmpReady(process, qmp)
+                    } catch (t: Throwable) {
+                        process.destroy()
+                        if (!process.waitFor(1, TimeUnit.SECONDS)) process.destroyForcibly()
+                        throw t
+                    }
                     handle = Handle(process, backend, qmp, tapOwned, fsHandle, tpmHandle)
                     if (backend != decision.selected) {
                         updateNotification("Fallback backend " + backend.label)
@@ -220,6 +226,19 @@ class VmRuntimeService : Service() {
             }
             Thread.sleep(intervalMs.coerceIn(250L, 5000L))
         }
+    }
+
+    private fun awaitQmpReady(process: Process, qmp: File) {
+        val deadline = System.currentTimeMillis() + 15_000L
+        var lastStatus: String? = null
+        while (System.currentTimeMillis() < deadline) {
+            check(process.isAlive) { "QEMU a quitté avant d'ouvrir son canal QMP." }
+            lastStatus = QmpController.queryStatus(qmp)
+            if (lastStatus != null) return
+            Thread.sleep(100L)
+        }
+        error("QEMU ne fournit pas de réponse QMP après 15 secondes; VM non publiée comme démarrée. Dernier état: " +
+            (lastStatus ?: "aucune réponse"))
     }
 
     private fun startQemu(
