@@ -36,6 +36,8 @@ data class VmConfig(
     var androidSystemPath: String = "",
     var androidVendorPath: String = "",
     var androidUserdataPath: String = "",
+    var androidAdbEnabled: Boolean = false,
+    var androidAdbHostPort: Int = 5555,
     var firmwarePath: String = "",
     var firmwareKind: String = "UEFI",
     var secureBoot: Boolean = false,
