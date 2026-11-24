@@ -93,6 +93,10 @@ class MainActivity : Activity() {
         projectActions.addView(space(8))
         projectActions.addView(actionButton("Runtime x86", teal) { chooseX86Runtime() })
         projectActions.addView(space(8))
+        projectActions.addView(actionButton("Virtio-fs", teal) { chooseRuntimeAddon("virtiofsd", 704) })
+        projectActions.addView(space(8))
+        projectActions.addView(actionButton("TPM logiciel", teal) { chooseRuntimeAddon("swtpm", 705) })
+        projectActions.addView(space(8))
         projectActions.addView(actionButton("Licence", teal) { showLicenses() })
         content.addView(projectActions)
 
@@ -382,6 +386,40 @@ class MainActivity : Activity() {
             .show()
     }
 
+    private fun chooseRuntimeAddon(toolId: String, requestCode: Int) {
+        val label = if (toolId == "virtiofsd") "virtiofsd" else "swtpm"
+        val script = if (toolId == "virtiofsd") {
+            "scripts/build-virtiofsd-android-arm64-addon.sh"
+        } else {
+            "scripts/build-swtpm-android-arm64-addon.sh"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Installer l'extension $label")
+            .setMessage(
+                "L'extension est optionnelle et exécutera du code natif sur Android. " +
+                    "Choisissez uniquement une archive TAR.XZ que vous avez construite avec $script " +
+                    "ou obtenue depuis une source de confiance. Le manifeste SHA-256 protège contre " +
+                    "la corruption et les archives incomplètes; il ne remplace pas une signature de provenance."
+            )
+            .setNegativeButton("Annuler", null)
+            .setPositiveButton("Choisir l'archive") { _, _ ->
+                startActivityForResult(
+                    Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        type = "application/x-xz"
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                    },
+                    requestCode
+                )
+            }
+            .setNeutralButton("Retirer") { _, _ ->
+                runCatching { RuntimeInstaller.removeOptionalTool(this, toolId) }
+                    .onSuccess { toast("Extension $label retirée.") }
+                    .onFailure { toast(it.message ?: "Retrait impossible.") }
+                refresh()
+            }
+            .show()
+    }
+
     private fun importVmPackage() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             type = "application/octet-stream"
@@ -466,6 +504,18 @@ class MainActivity : Activity() {
                     refresh()
                 }
             }, "phoenixvm-x86-addon-install").start()
+            return
+        }
+        if (requestCode == 704 || requestCode == 705) {
+            val toolId = if (requestCode == 704) "virtiofsd" else "swtpm"
+            Thread({
+                val result = runCatching { RuntimeInstaller.installOptionalTool(this, uri, toolId) }
+                handler.post {
+                    result.onSuccess { toast("Extension " + toolId + " installée et vérifiée.") }
+                        .onFailure { toast("Installation " + toolId + " : " + (it.message ?: "échec")) }
+                    refresh()
+                }
+            }, "phoenixvm-$toolId-addon-install").start()
             return
         }
         if (requestCode != 701) return
