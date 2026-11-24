@@ -48,6 +48,9 @@ The following names and SPDX-like identifiers are transcribed from the upstream 
 | Bouncy Castle `bcprov-jdk18on` | 1.87 | Bouncy Castle License, based on the MIT X Consortium license | Bundled JCA provider for Ed25519 package verification on supported Android versions. Project: https://github.com/bcgit/bc-java |
 | Debian OVMF package | `2025.02-8+deb13u1`, SHA-256 `78e0d54df11fc77406cb7a0bc9a39e5bca6d1cbe06556b91d9a73491c52decdf` | EDK2/OVMF component notices; the full Debian `copyright` file is copied into the optional runtime package | Provisioned by `scripts/provision-x86-ovmf.sh`; not part of the default ARM64 runtime. Source package: https://packages.debian.org/trixie/ovmf |
 | QEMU x86_64/i386 Android runtime | QEMU 11.1.3 source archive with pinned SHA-256 in `scripts/build-qemu-android-x86-runtime.sh` | QEMU GPL terms and notices for every linked component | Optional user-built runtime add-on; the builder includes QEMU license files and generates a per-file SHA-256 list. |
+| virtiofsd Android ARM64 add-on | virtiofsd v1.15.0, commit `697f63ce` | Apache-2.0/BSD-3-Clause source notices as shipped by virtiofsd | Optional user-built add-on; `scripts/build-virtiofsd-android-arm64-addon.sh` builds against an explicitly supplied Android ARM64 dependency prefix and emits a per-file SHA-256 manifest. |
+| swtpm Android ARM64 add-on | swtpm v0.10.2, commit `32b5a05`; libtpms v0.10.2, commit `03ff248` | swtpm BSD-3-Clause family notice; libtpms BSD-style project notice | Optional user-built add-on; `scripts/build-swtpm-android-arm64-addon.sh` builds TPM 2 software emulation, disables Linux-only seccomp/CPUSE interfaces, and emits a per-file SHA-256 manifest. |
+
 
 The OVMF firmware can contain components with different upstream notices. The script preserves the Debian package copyright file; this table must not be treated as a substitute for reviewing those component notices. The x86 add-on hash list provides integrity against accidental corruption, not publisher authentication. The UI therefore warns users to install only an archive they built themselves or obtained from a trusted release.
 
@@ -56,6 +59,10 @@ The OVMF firmware can contain components with different upstream notices. The sc
 The pinned SHA-256 manifest enumerates the archive files by path and digest. It includes (among others) QEMU system/image binaries, crosvm, helper networking tools, graphics libraries, VNC/USB/SLIRP dependencies, EDK2 firmware, Android-specific kernel modules, a kernel/initramfs and utility binaries.
 
 The current upstream catalogue does not separately identify every library that appears in the hash manifest. Examples that need an exact package/version/license-to-file mapping before any public redistribution include libepoxy, libffi, GLib components, libslirp, libusb, libpixman, PCRE2, virglrenderer, libvulkan_freedreno and other platform-provided objects. Do not infer their licenses from the names alone.
+
+## Package signing
+
+PhoenixVM now signs exported `.vmxpack` bytes automatically with an installation-specific Ed25519 identity. The private key material is encrypted with an Android Keystore AES-GCM key; the public key and signature are published as sidecars next to the package. This authenticates integrity relative to the exported public key, but the public key is not a global trust anchor. Cross-device trust, key rotation and publisher pinning require a separate policy before public redistribution.
 
 ## Release gate — required before publishing or distributing builds
 
