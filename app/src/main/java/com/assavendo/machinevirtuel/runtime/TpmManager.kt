@@ -26,7 +26,15 @@ object TpmManager {
             "--tpm2",
             "--log", "level=20",
         )
-        val process = ProcessBuilder(command).redirectErrorStream(true).start()
+        val process = ProcessBuilder(command)
+            .redirectErrorStream(true)
+            .also {
+                val current = it.environment()["LD_LIBRARY_PATH"].orEmpty()
+                it.environment()["LD_LIBRARY_PATH"] =
+                    paths.swtpmLibDir.absolutePath +
+                        if (current.isBlank()) "" else File.pathSeparator + current
+            }
+            .start()
         Thread {
             process.inputStream.use { input ->
                 FileOutputStream(log, true).buffered().use { output -> input.copyTo(output) }
