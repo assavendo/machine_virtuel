@@ -99,6 +99,48 @@ object QemuCommandBuilder {
             args += "-device"; args += "scsi-cd,bus=scsi0.0,drive=cd0"
         }
 
+        fun requireImage(path: String, label: String): String {
+            require(path.isNotBlank()) { label + " est requis." }
+            val file = File(path)
+            require(file.isFile && file.length() > 0L) { label + " est introuvable ou vide." }
+            return qemuKeyValue(file.absolutePath, label)
+        }
+
+        if (vm.kernelPath.isNotBlank()) {
+            args += "-kernel"; args += requireImage(vm.kernelPath, "kernelPath")
+            if (vm.initrdPath.isNotBlank()) {
+                args += "-initrd"; args += requireImage(vm.initrdPath, "initrdPath")
+            }
+            if (vm.dtbPath.isNotBlank()) {
+                args += "-dtb"; args += requireImage(vm.dtbPath, "dtbPath")
+            }
+            if (vm.kernelCommandLine.isNotBlank()) {
+                require(vm.kernelCommandLine.length <= 16_384 &&
+                    !vm.kernelCommandLine.contains('\u0000')) { "kernelCommandLine invalide." }
+                args += "-append"; args += vm.kernelCommandLine
+            }
+        }
+
+        if (vm.androidSystemPath.isNotBlank() ||
+            vm.androidVendorPath.isNotBlank() ||
+            vm.androidUserdataPath.isNotBlank()
+        ) {
+            require(vm.guestOs.contains("android", ignoreCase = true)) {
+                "Les partitions Android ne peuvent être attachées qu'à un guest Android."
+            }
+            fun addAndroidDisk(id: String, path: String) {
+                if (path.isBlank()) return
+                val image = requireImage(path, id)
+                args += "-drive"
+                args += "if=none,id=$id,format=raw,file=$image,cache=none,aio=threads"
+                args += "-device"
+                args += "virtio-blk-pci,drive=$id,disable-legacy=on,disable-modern=off"
+            }
+            addAndroidDisk("android-system", vm.androidSystemPath)
+            addAndroidDisk("android-vendor", vm.androidVendorPath)
+            addAndroidDisk("android-userdata", vm.androidUserdataPath)
+        }
+
         val boot = vm.bootOrder.mapNotNull {
             when (it.lowercase()) {
                 "disk" -> "c"
