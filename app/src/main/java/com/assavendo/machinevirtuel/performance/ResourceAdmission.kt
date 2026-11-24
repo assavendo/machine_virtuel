@@ -13,19 +13,27 @@ data class ResourceAdmission(
 
 object ResourceAdmissionController {
     fun check(vm: VmConfig, current: List<VmConfig>, host: HostCapabilities): ResourceAdmission {
-        val active = current.filter { it.state == VmState.RUNNING || it.state == VmState.STARTING }
-        val usedRam = active.sumOf { it.ramMb.toLong() }
-        val reserve = 768L
-        val available = (host.availableMemoryMb - usedRam - reserve).coerceAtLeast(0L)
-        val maxRam = minOf(vm.ramMb.toLong(), (host.totalMemoryMb * 70L / 100L))
-        val allowed = maxRam >= 256L && available >= 256L
-        val recommendedRam = minOf(maxRam, available).toInt().coerceAtLeast(256)
-        val cores = host.cpuCount.coerceAtLeast(1)
-        val recommendedVcpus = vm.vCpu.coerceIn(1, cores)
-        val reason = if (allowed) {
-            "Ressources compatibles avec la marge Android."
-        } else {
-            "Marge mémoire insuffisante pour démarrer cette VM sans risque d'OOM."
+        val active = current.filter {
+            it.id != vm.id && (it.state == VmState.RUNNING || it.state == VmState.STARTING ||
+                it.state == VmState.PAUSED || it.state == VmState.SUSPENDED)
+        }
+        val committedVmRam = active.sumOf { it.ramMb.coerceAtLeast(0).toLong() }
+        val reserve = maxOf(768L, host.totalMemoryMb.coerceAtLeast(0L) / 10L)
+        val physicalBudget = (host.availableMemoryMb - reserve).coerceAtLeast(0L)
+        val configuredBudget = (host.totalMemoryMb * 70L / 100L - committedVmRam).coerceAtLeast(0L)
+        val budgetForNewVm = minOf(physicalBudget, configuredBudget)
+        val requestedRam = vm.ramMb.toLong()
+        val validRam = requestedRam >= 256L
+        val allowed = validRam && budgetForNewVm >= requestedRam
+        val recommendedRam = minOf(requestedRam.coerceAtLeast(256L), budgetForNewVm)
+            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        val recommendedVcpus = vm.vCpu.coerceIn(1, host.cpuCount.coerceAtLeast(1))
+        val reason = when {
+            !validRam -> "La RAM demandée doit être d'au moins 256 MiB."
+            allowed -> "Ressources suffisantes avec réserve Android et plafond agrégé des VM."
+            else -> "RAM insuffisante: la VM demande " + requestedRam +
+                " MiB, budget prudent disponible " + budgetForNewVm +
+                " MiB après réserve Android et VM actives."
         }
         return ResourceAdmission(allowed, reason, recommendedRam, recommendedVcpus)
     }
