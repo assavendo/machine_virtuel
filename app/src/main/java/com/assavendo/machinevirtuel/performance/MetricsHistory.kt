@@ -22,6 +22,25 @@ data class VmMetricsSample(
     val translationMs: Double = 0.0,
 )
 
+
+data class MetricsWindow(
+    val minutes: Int,
+    val samples: Int,
+    val cpuHostAvg: Double,
+    val cpuGuestAvg: Double,
+    val ramGuestAvgMb: Double,
+    val ramHostAvgMb: Double,
+    val temperatureAvgC: Double?,
+    val temperatureMaxC: Double?,
+    val ioReadBytesPerSecAvg: Double,
+    val ioWriteBytesPerSecAvg: Double,
+    val networkRxBytesPerSecAvg: Double,
+    val networkTxBytesPerSecAvg: Double,
+    val cacheHitRateAvg: Double,
+    val translationMsAvg: Double,
+    val throttlingSamples: Int,
+)
+
 class MetricsHistory(private val maxSamples: Int = 3600) {
     private val samples = ArrayDeque<VmMetricsSample>()
 
@@ -34,4 +53,30 @@ class MetricsHistory(private val maxSamples: Int = 3600) {
         return samples.filter { it.timestampMs >= threshold }
     }
     @Synchronized fun all(): List<VmMetricsSample> = samples.toList()
+    /** Fixed dashboard windows required by the specification: 1, 5 and 30 minutes. */
+    @Synchronized fun windows(): List<MetricsWindow> = listOf(1, 5, 30).map { windowMinutes ->
+        val values = last(windowMinutes)
+        fun avg(selector: (VmMetricsSample) -> Double): Double =
+            if (values.isEmpty()) 0.0 else values.map(selector).average()
+        val temperatures = values.mapNotNull { it.temperatureC }
+        MetricsWindow(
+            minutes = windowMinutes,
+            samples = values.size,
+            cpuHostAvg = avg { it.cpuHostPercent },
+            cpuGuestAvg = avg { it.cpuGuestPercent },
+            ramGuestAvgMb = avg { it.ramGuestMb.toDouble() },
+            ramHostAvgMb = avg { it.ramHostMb.toDouble() },
+            temperatureAvgC = temperatures.takeIf { it.isNotEmpty() }?.average(),
+            temperatureMaxC = temperatures.maxOrNull(),
+            ioReadBytesPerSecAvg = avg { it.ioReadBytesPerSec.toDouble() },
+            ioWriteBytesPerSecAvg = avg { it.ioWriteBytesPerSec.toDouble() },
+            networkRxBytesPerSecAvg = avg { it.networkRxBytesPerSec.toDouble() },
+            networkTxBytesPerSecAvg = avg { it.networkTxBytesPerSec.toDouble() },
+            cacheHitRateAvg = avg { it.cacheHitRate },
+            translationMsAvg = avg { it.translationMs },
+            throttlingSamples = values.count { it.throttling },
+        )
+    }
+
+
 }
