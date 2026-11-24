@@ -32,7 +32,7 @@ object QmpController {
         executeForResponse(socketFile, command) != null
 
     private fun executeForResponse(socketFile: File, command: String): String? {
-        if (!socketFile.isFile) return null
+        if (!socketFile.exists()) return null
         return runCatching {
             LocalSocket().use { socket ->
                 socket.setSoTimeout(3_000)
