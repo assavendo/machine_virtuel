@@ -10,6 +10,9 @@ import android.os.IBinder
 import com.assavendo.machinevirtuel.host.HostCapabilityScanner
 import com.assavendo.machinevirtuel.performance.HostMetricsCollector
 import com.assavendo.machinevirtuel.performance.ResourceAdmissionController
+import com.assavendo.machinevirtuel.performance.DeviceTopology
+import com.assavendo.machinevirtuel.performance.GlobalVmScheduler
+import com.assavendo.machinevirtuel.performance.PerformanceOptimizer
 import com.assavendo.machinevirtuel.performance.VmMetricsRegistry
 import com.assavendo.machinevirtuel.vm.*
 import java.io.File
@@ -102,6 +105,18 @@ class VmRuntimeService : Service() {
             DiskManager.ensureVmStorage(filesDir, vm, paths)
             DiskManager.ensureNvram(vm, DiskManager.firmwareTemplate(paths, vm))
 
+            val topology = DeviceTopology.read()
+            val schedule = GlobalVmScheduler().schedule(store.list(), topology, host.availableMemoryMb)
+                .firstOrNull { it.vmId == id }
+            val desiredVcpus = schedule?.recommendedVcpus ?: minOf(vm.vCpu, host.cpuCount.coerceAtLeast(1))
+            val thermalDecision = PerformanceOptimizer().decide(vm, HostMetricsCollector(this).sample())
+            vm.vCpu = minOf(desiredVcpus, thermalDecision.vCpu).coerceAtLeast(1)
+            vm.monitoringIntervalMs = thermalDecision.monitoringIntervalMs
+            logger.info(
+                "CPU scheduler: " + vm.vCpu + " vCPU; " +
+                    (schedule?.reason ?: "topology fallback") + "; " + thermalDecision.reason
+            )
+
             val decision = VmOrchestrator().choose(vm, host)
             val candidates = decision.candidates.map { it.backend }.distinct().filter { backend ->
                 when (backend) {
@@ -180,7 +195,7 @@ class VmRuntimeService : Service() {
             logger.info("VM running on backend " + active.backend.label)
             updateNotification("VM " + vm.name + " running • " + active.backend.label)
 
-            executor.execute { monitorVm(id, active, vm.monitoringIntervalMs) }
+            executor.execute { monitorVm(id, active, vm) }
             executor.execute {
                 val exit = runCatching { active.process.waitFor() }.getOrDefault(-1)
                 val currentStore = VmStore(this)
@@ -212,8 +227,9 @@ class VmRuntimeService : Service() {
         }
     }
 
-    private fun monitorVm(id: String, handle: Handle, intervalMs: Long) {
+    private fun monitorVm(id: String, handle: Handle, vm: VmConfig) {
         val collector = HostMetricsCollector(this, findQemuPid(handle.qmp))
+        var lastBalloonRequestMs = 0L
         while (processes[id] === handle && handle.process.isAlive) {
             runCatching {
                 val sample = collector.sample()
@@ -221,13 +237,28 @@ class VmRuntimeService : Service() {
                 if (sample.availableMemoryMb < 256L) {
                     VmEventBus.emit(VmEvent(id, VmEventType.MEMORY_WARNING, message = "available RAM < 256 MB"))
                     updateNotification("VM memory pressure • Android available RAM < 256 MB")
+                } else if (sample.availableMemoryMb < 512L && vm.balloonEnabled && vm.ramMb >= 768) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastBalloonRequestMs >= 30_000L) {
+                        val targetMb = (vm.ramMb - 256).coerceAtLeast(512)
+                        val targetBytes = targetMb.toLong() * 1024L * 1024L
+                        if (QmpController.setBalloonTarget(handle.qmp, targetBytes)) {
+                            lastBalloonRequestMs = now
+                            VmEventBus.emit(
+                                VmEvent(id, VmEventType.MEMORY_WARNING,
+                                    message = "QMP accepted guest balloon target " + targetMb +
+                                        " MiB; guest driver/reclaim still required")
+                            )
+                            updateNotification("Memory pressure • guest balloon target requested")
+                        }
+                    }
                 }
                 if (sample.isThrottling) {
                     VmEventBus.emit(VmEvent(id, VmEventType.THERMAL_WARNING, message = "thermal throttling"))
                     updateNotification("VM thermal throttling detected")
                 }
             }
-            Thread.sleep(intervalMs.coerceIn(250L, 5000L))
+            Thread.sleep(vm.monitoringIntervalMs.coerceIn(250L, 5000L))
         }
     }
 
