@@ -6,7 +6,7 @@ import com.assavendo.machinevirtuel.vm.VmConfig
 import java.io.File
 
 object CrosvmCommandBuilder {
-    fun build(paths: RuntimePaths, vm: VmConfig): List<String> {
+    fun build(paths: RuntimePaths, vm: VmConfig, controlSocket: File = FilePaths.controlSocket(vm.id)): List<String> {
         require(vm.arch == GuestArch.ARM64) {
             "crosvm Android est provisionné ici pour les guests ARM64 uniquement."
         }
@@ -71,7 +71,7 @@ object CrosvmCommandBuilder {
             }
 
             add("--socket")
-            add(FilePaths.controlSocket(vm.id).absolutePath)
+            add(controlSocket.absolutePath)
         }
     }
 }
