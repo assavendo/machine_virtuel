@@ -71,12 +71,24 @@ class VmDisplayView(context: Context) : View(context), RfbClient.Listener {
     }
 
     override fun onSize(width: Int, height: Int) {
-        guestWidth = width.coerceAtLeast(1)
-        guestHeight = height.coerceAtLeast(1)
-        bitmap?.recycle()
-        bitmap = Bitmap.createBitmap(guestWidth, guestHeight, Bitmap.Config.ARGB_8888)
-            .apply { eraseColor(Color.BLACK) }
-        postInvalidate()
+        require(width in 1..8192 && height in 1..8192 &&
+            width.toLong() * height.toLong() <= 16_777_216L
+        ) { "La résolution de l'écran invité dépasse la limite mémoire autorisée." }
+        post {
+            val next = try {
+                Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
+                    eraseColor(Color.BLACK)
+                }
+            } catch (t: Throwable) {
+                onError(IllegalStateException("Mémoire insuffisante pour l'image de la VM.", t))
+                return@post
+            }
+            bitmap?.recycle()
+            bitmap = next
+            guestWidth = width
+            guestHeight = height
+            invalidate()
+        }
     }
 
     override fun onFrame(x: Int, y: Int, width: Int, height: Int, argb: IntArray) {
