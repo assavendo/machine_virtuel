@@ -5,7 +5,8 @@ QEMU_VERSION="11.1.3"
 QEMU_SHA256="5a8289c7940dc77d3873c81a6c29ba3afe1446fc9d36e77fa1658cdbecb84b22"
 QEMU_TARGETS="x86_64-softmmu,i386-softmmu"
 
-ROOT="$PWD/.build/qemu-$QEMU_VERSION"
+PROJECT_ROOT="$PWD"
+ROOT="$PROJECT_ROOT/.build/qemu-$QEMU_VERSION"
 SRC="$ROOT/src"
 PREFIX="$ROOT/prefix"
 
@@ -54,6 +55,16 @@ cp "$PREFIX/bin/qemu-system-x86_64" "$PREFIX/runtime-pack/usr/bin/"
 if [[ -f "$PREFIX/bin/qemu-system-i386" ]]; then
   cp "$PREFIX/bin/qemu-system-i386" "$PREFIX/runtime-pack/usr/bin/"
 fi
-cp "$PREFIX/bin/qemu-img" "$PREFIX/runtime-pack/usr/bin/" 2>/dev/null || true
+cp "$PREFIX/bin/qemu-img" "$PREFIX/runtime-pack/usr/bin/"
+
+"$PROJECT_ROOT/scripts/provision-x86-ovmf.sh" "$PREFIX/runtime-pack"
+
+(
+  cd "$PREFIX/runtime-pack"
+  find . -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+  tar -cJf "$ROOT/phoenixvm-x86-runtime.tar.xz" .
+  sha256sum "$ROOT/phoenixvm-x86-runtime.tar.xz" > "$ROOT/phoenixvm-x86-runtime.tar.xz.sha256"
+)
 
 echo "Runtime ready: $PREFIX/runtime-pack"
+echo "Optional add-on archive: $ROOT/phoenixvm-x86-runtime.tar.xz"
