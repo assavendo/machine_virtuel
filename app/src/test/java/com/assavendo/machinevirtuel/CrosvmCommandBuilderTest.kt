@@ -67,6 +67,30 @@ class CrosvmCommandBuilderTest {
     }
 
     @Test
+    fun sharedDirectoryUsesCrosvmNativeVirtioFs() {
+        val f = fixture()
+        try {
+            val shared = File(f.root, "shared").apply { mkdirs() }
+            val vm = VmConfig(
+                name = "shared",
+                arch = GuestArch.ARM64,
+                backend = BackendKind.GUNYAH,
+                diskPath = f.disk.absolutePath,
+                firmwarePath = f.firmware.absolutePath,
+                sharedDirPath = shared.absolutePath,
+                sharedDirTag = "shared",
+                audioEnabled = false,
+            )
+            val command = CrosvmCommandBuilder.build(f.paths, vm, File(f.root, "control.sock"))
+            val i = command.indexOf("--shared-dir")
+            assertTrue(i >= 0)
+            assertEquals(shared.canonicalPath + ":shared:type=fs", command[i + 1])
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun directKernelAddsInitrdAndParams() {
         val f = fixture()
         try {
