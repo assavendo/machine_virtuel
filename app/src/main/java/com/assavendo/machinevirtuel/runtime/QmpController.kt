@@ -44,7 +44,7 @@ object QmpController {
                         val greeting = reader.readLine() ?: error("QMP closed before greeting.")
                         check(greeting.contains("\"QMP\"")) { "Invalid QMP greeting." }
                         send(writer, """{"execute":"qmp_capabilities"}""")
-                        readCommandResult(reader)
+                        check(readCommandResult(reader) != null) { "QMP capability negotiation failed." }
                         send(writer, command)
                         readCommandResult(reader)
                     }
