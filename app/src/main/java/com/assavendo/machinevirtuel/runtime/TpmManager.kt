@@ -3,6 +3,7 @@ package com.assavendo.machinevirtuel.runtime
 import com.assavendo.machinevirtuel.vm.GuestArch
 import com.assavendo.machinevirtuel.vm.VmConfig
 import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 
 data class TpmHandle(val process: Process, val socket: File)
@@ -13,9 +14,8 @@ object TpmManager {
         check(paths.hasSwtpm()) {
             "TPM demandé mais swtpm n'est pas présent dans le runtime vérifié."
         }
-        val stateDir = File(
-            if (vm.tpmStatePath.isBlank()) runtimeDir else vm.tpmStatePath
-        ).apply { mkdirs() }
+        val stateDir = if (vm.tpmStatePath.isBlank()) runtimeDir else File(vm.tpmStatePath)
+        check(stateDir.mkdirs() || stateDir.isDirectory) { "Impossible de créer le répertoire d'état TPM." }
         val socket = File(stateDir, "swtpm-sock")
         socket.delete()
         val command = listOf(
@@ -29,15 +29,18 @@ object TpmManager {
         val process = ProcessBuilder(command).redirectErrorStream(true).start()
         Thread {
             process.inputStream.use { input ->
-                log.outputStream(append = true).buffered().use { output -> input.copyTo(output) }
+                FileOutputStream(log, true).buffered().use { output -> input.copyTo(output) }
             }
         }.start()
 
         val deadline = System.currentTimeMillis() + 5_000L
-        while (System.currentTimeMillis() < deadline && !socket.exists() && process.isAlive) Thread.sleep(25L)
+        while (System.currentTimeMillis() < deadline && !socket.exists() && process.isAlive) {
+            Thread.sleep(25L)
+        }
         if (!socket.exists() || !process.isAlive) {
             process.destroy()
             runCatching { process.waitFor(1, TimeUnit.SECONDS) }
+            if (process.isAlive) process.destroyForcibly()
             error("swtpm n'a pas créé son socket TPM.")
         }
         return TpmHandle(process, socket)
