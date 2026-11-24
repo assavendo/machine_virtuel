@@ -39,7 +39,6 @@ class HypervisorManagerTest {
         assertFalse(QemuBackend(BackendKind.KVM).detect(base, vm))
         assertFalse(CrosvmBackend(BackendKind.KVM).detect(base, vm))
     }
-}
 
     @Test
     fun crosvmRequiresHeadlessModeAndNonNatNetworking() {
@@ -68,3 +67,4 @@ class HypervisorManagerTest {
         assertFalse(issues.any { it.field == "headless" && it.fatal })
         assertFalse(issues.any { it.field == "networkMode" && it.fatal })
     }
+}
