@@ -19,25 +19,29 @@ class VmRuntimeService : Service() {
     companion object {
         const val ACTION_START = "phoenixvm.START"
         const val ACTION_STOP = "phoenixvm.STOP"
+        const val ACTION_PAUSE = "phoenixvm.PAUSE"
+        const val ACTION_RESUME = "phoenixvm.RESUME"
         const val EXTRA_VM_ID = "vm_id"
         private const val CHANNEL = "phoenixvm-runtime"
         private const val NOTIFICATION_ID = 1001
         private val processes = ConcurrentHashMap<String, Handle>()
 
         fun start(context: Context, vmId: String) {
-            val intent = Intent(context, VmRuntimeService::class.java)
-                .setAction(ACTION_START)
-                .putExtra(EXTRA_VM_ID, vmId)
-            context.startForegroundService(intent)
+            context.startForegroundService(Intent(context, VmRuntimeService::class.java)
+                .setAction(ACTION_START).putExtra(EXTRA_VM_ID, vmId))
         }
-
         fun stop(context: Context, vmId: String) {
-            val intent = Intent(context, VmRuntimeService::class.java)
-                .setAction(ACTION_STOP)
-                .putExtra(EXTRA_VM_ID, vmId)
-            context.startService(intent)
+            context.startService(Intent(context, VmRuntimeService::class.java)
+                .setAction(ACTION_STOP).putExtra(EXTRA_VM_ID, vmId))
         }
-
+        fun pause(context: Context, vmId: String) {
+            context.startService(Intent(context, VmRuntimeService::class.java)
+                .setAction(ACTION_PAUSE).putExtra(EXTRA_VM_ID, vmId))
+        }
+        fun resume(context: Context, vmId: String) {
+            context.startService(Intent(context, VmRuntimeService::class.java)
+                .setAction(ACTION_RESUME).putExtra(EXTRA_VM_ID, vmId))
+        }
         fun vncPort(vmId: String): Int = VncPorts.portFor(vmId)
     }
 
@@ -55,6 +59,8 @@ class VmRuntimeService : Service() {
         when (intent.action) {
             ACTION_START -> executor.execute { startVm(id) }
             ACTION_STOP -> executor.execute { stopVm(id) }
+            ACTION_PAUSE -> executor.execute { pauseVm(id) }
+            ACTION_RESUME -> executor.execute { resumeVm(id) }
         }
         return START_STICKY
     }
@@ -67,11 +73,8 @@ class VmRuntimeService : Service() {
         val vm = original.copy()
         try {
             val paths = RuntimeInstaller.ensure(this)
-            DiskManager.ensureVmStorage(filesDir, vm)
-            DiskManager.ensureNvram(
-                vm,
-                if (vm.backend == BackendKind.GUNYAH) paths.edk2GunyahVars else paths.edk2QemuVars
-            )
+            DiskManager.ensureVmStorage(filesDir, vm, paths)
+            DiskManager.ensureNvram(vm, if (vm.backend == BackendKind.GUNYAH) paths.edk2GunyahVars else paths.edk2QemuVars)
             store.save(store.list().map { if (it.id == id) vm else it })
 
             val dir = FilePaths.vmDir(id)
@@ -99,9 +102,7 @@ class VmRuntimeService : Service() {
                 Handle(process, activeBackend, qmp)
             }
 
-            if (!handle.process.isAlive) {
-                throw IllegalStateException("Backend exited immediately; inspect " + log.absolutePath)
-            }
+            check(handle.process.isAlive) { "Backend exited immediately; inspect " + log.absolutePath }
 
             vm.state = VmState.RUNNING
             vm.lastStartedAt = System.currentTimeMillis()
@@ -135,11 +136,11 @@ class VmRuntimeService : Service() {
         log: File,
     ): Process {
         val command = QemuCommandBuilder.build(paths, vm, qmp, serial, log)
-        val environment = mapOf(
+        val env = mapOf(
             "LD_LIBRARY_PATH" to paths.libDir.absolutePath,
             "QEMU_AUDIO_DRV" to "none",
         )
-        val process = RootProcessLauncher.start(command, dir, environment, preferRoot = true)
+        val process = RootProcessLauncher.start(command, dir, env, preferRoot = true)
         attachLogs(process, log)
         return process
     }
@@ -151,19 +152,36 @@ class VmRuntimeService : Service() {
         log: File,
     ): Handle {
         val command = CrosvmCommandBuilder.build(paths, vm)
-        val environment = mapOf("LD_LIBRARY_PATH" to paths.libDir.absolutePath)
-        val process = RootProcessLauncher.start(command, dir, environment, preferRoot = true)
+        val process = RootProcessLauncher.start(
+            command, dir, mapOf("LD_LIBRARY_PATH" to paths.libDir.absolutePath), preferRoot = true
+        )
         attachLogs(process, log)
         return Handle(process, vm.backend, FilePaths.qmp(vm.id))
     }
 
     private fun attachLogs(process: Process, log: File) {
-        Thread {
-            process.inputStream.use { it.copyTo(log.outputStream().buffered()) }
-        }.start()
-        Thread {
-            process.errorStream.use { it.copyTo(log.outputStream().buffered()) }
-        }.start()
+        Thread { process.inputStream.use { it.copyTo(log.outputStream().buffered()) } }.start()
+        Thread { process.errorStream.use { it.copyTo(log.outputStream().buffered()) } }.start()
+    }
+
+    private fun pauseVm(id: String) {
+        val handle = processes[id] ?: return
+        if ((handle.backend == BackendKind.QEMU_TCG || handle.backend == BackendKind.KVM) &&
+            QmpController.pause(handle.qmp)
+        ) {
+            VmStore(this).update(id) { it.state = VmState.PAUSED }
+            updateNotification("VM paused")
+        }
+    }
+
+    private fun resumeVm(id: String) {
+        val handle = processes[id] ?: return
+        if ((handle.backend == BackendKind.QEMU_TCG || handle.backend == BackendKind.KVM) &&
+            QmpController.resume(handle.qmp)
+        ) {
+            VmStore(this).update(id) { it.state = VmState.RUNNING }
+            updateNotification("VM resumed")
+        }
     }
 
     private fun stopVm(id: String) {
@@ -174,12 +192,7 @@ class VmRuntimeService : Service() {
             handle.process.destroy()
         }
         processes.remove(id)
-        val store = VmStore(this)
-        val list = store.list()
-        list.firstOrNull { it.id == id }?.let {
-            it.state = VmState.OFF
-            store.save(list)
-        }
+        VmStore(this).update(id) { it.state = VmState.OFF }
     }
 
     private fun createChannel() {

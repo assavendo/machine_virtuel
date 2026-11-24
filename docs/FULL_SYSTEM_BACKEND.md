@@ -1,74 +1,50 @@
 # Full-system backend integration
 
-PhoenixVM is a real system virtual machine platform. The guest owns CPU state, RAM, firmware, virtual storage, network, graphics and input. Wine, Winlator, Box64 and FEX are not the VM.
+PhoenixVM uses an actual system VM runtime. The guest owns CPU state, RAM, firmware, virtual storage, networking, graphics and input. Application compatibility layers are not the VM.
 
-## Runtime provenance
+## Runtime
 
-The project pins DroidVM-Prebuilts at commit c4998e150a08f0e60d141591fd63ea0010eb4f75.
+The repository pins DroidVM-Prebuilts commit c4998e150a08f0e60d141591fd63ea0010eb4f75.
 
-At first VM start:
-1. prebuilt-arm64-v8a.tar.xz is streamed through XZ;
-2. a safe USTAR reader rejects absolute paths and traversal;
-3. critical executables and firmware are checked against the upstream JSON SHA-256 manifest;
-4. the runtime is installed into app-private storage;
-5. a revision marker prevents repeated extraction.
+First launch streams the ARM64 tar.xz runtime through XZ, extracts it with traversal protection, validates critical executable and UEFI hashes against the upstream manifest, installs it privately and records a revision marker.
 
-## QEMU reference path
+## QEMU backend
 
-The display-capable full-system reference backend is QEMU System AArch64:
-- ARM64 virt machine;
-- GIC v3 and high-memory machine configuration;
-- UEFI pflash code image plus per-VM writable NVRAM;
-- persistent raw virtual disk;
+The reference path is QEMU System AArch64 with:
+- ARM64 virt machine, GIC v3 and high memory;
+- UEFI pflash plus writable per-VM NVRAM;
+- persistent raw/qcow2/vhdx/vdi/vmdk disk formats through qemu-img;
 - optional installer ISO;
-- virtio-blk;
-- virtio-net with user-mode NAT;
-- virtio-gpu;
-- virtio-tablet and virtio-keyboard;
-- loopback VNC framebuffer;
-- QMP Unix control socket;
-- serial log and QEMU diagnostic log.
+- virtio-blk, virtio-net, virtio-gpu, virtio-tablet, virtio-keyboard and virtio-rng;
+- QEMU XHCI controller;
+- UTC RTC;
+- optional 9p shared directory;
+- local-only VNC framebuffer;
+- QMP socket;
+- serial and diagnostic logs.
 
-CPU:
-- /dev/kvm selected when accessible;
-- otherwise QEMU TCG with multi-threaded translation;
-- no fake acceleration flag.
+The CPU backend is selected per host:
+- KVM + host CPU when /dev/kvm is usable;
+- otherwise TCG with multi-threaded translation.
 
-## crosvm hardware path
+## crosvm backend
 
-When supported Android hypervisor interfaces are exposed, the orchestrator can select crosvm with:
-- KVM;
-- Gunyah;
-- GenieZone;
-- Halla.
+When Android hardware virtualization is exposed, the orchestrator selects crosvm with KVM, Gunyah, GenieZone or Halla.
 
-The command is a real VMM invocation with UEFI, guest memory, vCPUs and virtual block storage.
+The current crosvm path is a genuine VMM path with UEFI, memory, vCPUs, block storage and backend selection. Its Android-native display/input and privileged network bridge are deliberately separate follow-up integrations because their host permissions and device-specific interfaces differ.
+
+## Privileges and execution
+
+Android sandboxing may block execution from app data and access to virtualization device nodes. RootProcessLauncher uses a normal app process when possible and a verified su executable when the user has root access. No acceleration is reported unless the selected backend is actually used.
+
+## Display
+
+QEMU VNC is exposed only on localhost and is consumed by the embedded RFB client. Raw framebuffer encoding plus keyboard and pointer events provide the compatibility baseline. The high-performance future path is direct virtio-gpu plus Vulkan/gfxstream shared buffers.
 
 ## Lifecycle
 
-VM state is driven by the actual backend process:
-- STARTING before launch;
-- RUNNING only after the process is alive;
-- OFF on clean exit;
-- ERROR on failed/non-zero exit;
-- QMP system_powerdown before forced QEMU termination.
+The runtime service marks STARTING before launch and RUNNING only after the real process survives startup. Process exit persists OFF/ERROR. QMP is used for orderly shutdown and for pause/resume on QEMU.
 
-## Remaining source-spec work
+## Boundaries still remaining
 
-The following are not yet claimed complete:
-- crosvm Android display/input bridge;
-- root/TAP bridge networking;
-- virtio-snd audio;
-- virtio-fs/9p sharing;
-- USB;
-- TPM;
-- pause/resume/suspend;
-- qcow2/vhdx/vdi/vmdk management;
-- snapshots/clones/import/export;
-- persistent x86 translation cache integrated with a real DynaRec;
-- tiered JIT;
-- Vulkan shared-buffer display;
-- Windows ARM64/x86 acceptance;
-- Android guest acceptance;
-- thermal-aware scheduler;
-- sustained benchmark proof.
+Audio, TPM, live RAM snapshots, virtio-fs, root TAP bridges, direct Vulkan display, crosvm display/input, x86 persistent DynaRec cache, tiered JIT and performance validation remain separate work items rather than being falsely declared complete.

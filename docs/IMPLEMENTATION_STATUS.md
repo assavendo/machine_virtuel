@@ -1,52 +1,52 @@
 # Implementation status against the source specification
 
-The repository is deliberately honest: a feature is COMPLETE only after implementation and validation, not after a stub exists.
+A feature is COMPLETE only after implementation and validation. No feature is marked complete merely because a class or UI placeholder exists.
 
 ## Full-system core
 
-| Area | Status |
-|---|---|
-| Real full-system boundary | Implemented |
-| Runtime provenance and pinned prebuilt | Implemented |
-| Safe runtime extraction | Implemented |
-| Runtime SHA-256 verification | Implemented for critical files |
-| QEMU ARM64 system backend | Implemented |
-| QEMU TCG MTTCG path | Implemented |
-| QEMU KVM selection | Implemented, device validation pending |
-| UEFI + per-VM NVRAM | Implemented |
-| Persistent raw disk | Implemented |
-| ISO attachment | Implemented |
-| VirtIO block | Implemented in QEMU command path |
-| VirtIO network | Implemented in QEMU command path with user NAT |
-| VirtIO GPU | Implemented in QEMU command path |
-| VirtIO keyboard/tablet | Implemented in QEMU command path |
-| QMP shutdown | Implemented |
-| Embedded VNC/RFB display | Implemented baseline |
-| crosvm backend selection | Implemented |
-| Gunyah/GenieZone/Halla crosvm launch foundation | Implemented |
-| Android/root execution fallback | Root launcher implemented |
-| Runtime foreground lifecycle | Implemented |
+- Real full-system VM boundary: IMPLEMENTED.
+- Pinned full-system runtime (QEMU/crosvm/UEFI/VirtIO libraries): IMPLEMENTED.
+- Safe runtime extraction and critical SHA-256 verification: IMPLEMENTED.
+- QEMU ARM64 virt machine: IMPLEMENTED.
+- QEMU KVM selection: IMPLEMENTED in code; device validation pending.
+- QEMU TCG multi-threaded translation: IMPLEMENTED.
+- UEFI + per-VM writable NVRAM: IMPLEMENTED.
+- Persistent raw disk: IMPLEMENTED.
+- qcow2/vhdx/vdi/vmdk creation/conversion primitives: IMPLEMENTED in qemu-img layer; UI wiring pending.
+- ISO attachment: IMPLEMENTED.
+- VirtIO block/network/GPU/tablet/keyboard/RNG devices in QEMU path: IMPLEMENTED.
+- Virtual USB controller: IMPLEMENTED in QEMU path; host USB passthrough pending.
+- RTC: IMPLEMENTED.
+- 9p shared directory: IMPLEMENTED in QEMU command path; guest mount UX pending.
+- QMP powerdown/pause/resume: IMPLEMENTED.
+- Cold disk/NVRAM snapshots: IMPLEMENTED; live RAM-state snapshots pending.
+- Embedded raw-RFB/VNC display/input baseline: IMPLEMENTED.
+- Foreground VM runtime service: IMPLEMENTED.
+- Root-aware process launcher: IMPLEMENTED.
+- crosvm KVM/Gunyah/GenieZone/Halla selection and launch foundation: IMPLEMENTED.
 
-## Still incomplete from the full specification
+## Still incomplete from the complete source specification
 
-- crosvm native Android display/input bridge;
-- root TAP/bridge networking;
-- virtio-snd with AAudio/Oboe;
-- virtio-fs/9p sharing;
-- USB controller/device mapping;
-- TPM;
-- true pause/resume/suspend;
-- qcow2/vhdx/vdi/vmdk image management;
-- snapshots, clones, export/import;
-- persistent x86 translation cache integrated with a DynaRec;
-- tiered JIT implementation;
-- direct Vulkan/gfxstream shared-buffer display path;
-- Windows ARM64 and x86_64 acceptance;
-- Android guest acceptance;
-- thermal-aware scheduler and sustained performance control;
-- complete benchmark suite proving the 20% target;
-- device farm / on-device hardware matrix.
+- crosvm Android-native display/input bridge.
+- Root TAP/bridge networking and IPv6 bridge modes.
+- virtio-snd with AAudio/Oboe host audio.
+- Shared folders via virtio-fs in addition to 9p.
+- USB host device passthrough and automatic permissions.
+- TPM 2.0 integration.
+- Suspend-to-disk / saved-memory state.
+- Live VM snapshots with RAM/CPU/device state.
+- High-performance Vulkan/gfxstream/Venus shared-buffer display path.
+- Persistent x86 translation cache connected to a real DynaRec/JIT.
+- Tiered JIT implementation and profiling database.
+- Thermal-aware vCPU/p-core/e-core scheduler.
+- Complete Windows ARM64/x86_64 boot and driver acceptance suite.
+- Complete Android guest acceptance suite.
+- Multi-device hardware test matrix.
+- Sustained benchmark suite and measured proof of the requested 20% improvement.
+- Complete image manager UI, clone/export/import packages and recovery workflows.
 
-## MVP status
+## MVP reality check
 
-The core MVP path is now a genuine full-system QEMU VM path. It is not a Wine/Winlator launcher. The missing MVP-level acceptance items are real device boot validation and the remaining peripheral requirements from the source document.
+The repository now contains a genuine full-system QEMU backend with real guest CPU/RAM/UEFI/disk/network/GPU/input and an embedded display path.
+
+It is not yet the final 100% source-spec product because the remaining peripherals, privileged Android integrations and performance systems above still require implementation and on-device validation.

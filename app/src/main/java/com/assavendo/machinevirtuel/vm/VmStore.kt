@@ -21,7 +21,10 @@ class VmStore(context: Context) {
                 ramMb = o.optInt("ramMb", 2048),
                 vCpu = o.optInt("vCpu", 2),
                 diskPath = o.optString("diskPath"),
+                diskFormat = DiskFormat.valueOf(o.optString("diskFormat", DiskFormat.RAW.name)),
                 isoPath = o.optString("isoPath"),
+                sharedDirPath = o.optString("sharedDirPath"),
+                sharedDirTag = o.optString("sharedDirTag", "shared"),
                 firmwarePath = o.optString("firmwarePath"),
                 backend = BackendKind.valueOf(o.optString("backend", BackendKind.QEMU_TCG.name)),
                 profile = PerformanceProfile.valueOf(o.optString("profile", PerformanceProfile.AUTO.name)),
@@ -45,7 +48,10 @@ class VmStore(context: Context) {
                 put("ramMb", vm.ramMb)
                 put("vCpu", vm.vCpu)
                 put("diskPath", vm.diskPath)
+                put("diskFormat", vm.diskFormat.name)
                 put("isoPath", vm.isoPath)
+                put("sharedDirPath", vm.sharedDirPath)
+                put("sharedDirTag", vm.sharedDirTag)
                 put("firmwarePath", vm.firmwarePath)
                 put("backend", vm.backend.name)
                 put("profile", vm.profile.name)

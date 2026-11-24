@@ -6,7 +6,14 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 
 object QmpController {
-    fun systemPowerdown(socketFile: File): Boolean {
+    fun systemPowerdown(socketFile: File): Boolean =
+        execute(socketFile, """{"execute":"system_powerdown"}""")
+    fun pause(socketFile: File): Boolean =
+        execute(socketFile, """{"execute":"stop"}""")
+    fun resume(socketFile: File): Boolean =
+        execute(socketFile, """{"execute":"cont"}""")
+
+    private fun execute(socketFile: File, command: String): Boolean {
         if (!socketFile.exists()) return false
         return runCatching {
             LocalSocket().use { socket ->
@@ -16,7 +23,8 @@ object QmpController {
                 readObject(input)
                 writeLine(output, """{"execute":"qmp_capabilities"}""")
                 readObject(input)
-                writeLine(output, """{"execute":"system_powerdown"}""")
+                writeLine(output, command)
+                readObject(input)
                 true
             }
         }.getOrDefault(false)
@@ -29,7 +37,6 @@ object QmpController {
 
     private fun readObject(input: java.io.InputStream) {
         val buffer = ByteArray(8192)
-        val count = input.read(buffer)
-        check(count > 0) { "QMP socket closed" }
+        check(input.read(buffer) > 0) { "QMP socket closed" }
     }
 }

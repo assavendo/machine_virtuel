@@ -81,7 +81,7 @@ class MainActivity : Activity() {
         content.addView(cacheLabel)
 
         content.addView(TextView(this).apply {
-            text = "Architecture : vraie VM complète. Le cœur ne repose pas sur Wine/Winlator. Le runtime QEMU/crosvm est extrait, vérifié par SHA-256 et exécuté comme backend réel."
+            text = "Architecture : vraie VM complète. Le runtime QEMU/crosvm est extrait, vérifié par SHA-256 et exécuté comme backend réel."
             setTextColor(muted)
             textSize = 12f
             setPadding(4, 22, 4, 0)
@@ -139,7 +139,7 @@ class MainActivity : Activity() {
             card.addView(title(vm.name, 19f))
             card.addView(subtitle(
                 vm.guestOs + " • " + vm.arch.label + " • " + vm.ramMb + " MB • " +
-                    vm.vCpu + " vCPU • backend " + vm.backend.label
+                    vm.vCpu + " vCPU • " + vm.diskFormat.name + " • backend " + vm.backend.label
             ))
             card.addView(subtitle(
                 "État : " + vm.state.name +
@@ -149,14 +149,30 @@ class MainActivity : Activity() {
 
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
             when (vm.state) {
-                VmState.RUNNING, VmState.STARTING -> {
+                VmState.RUNNING -> {
+                    row.addView(actionButton("Pause", accent) {
+                        VmRuntimeService.pause(this@MainActivity, vm.id)
+                    })
+                    row.addView(space(8))
+                    row.addView(actionButton("Écran", accent) { showDisplay(vm.id) })
+                    row.addView(space(8))
                     row.addView(actionButton("Arrêter", bad) {
                         VmRuntimeService.stop(this@MainActivity, vm.id)
                     })
-                    if (vm.state == VmState.RUNNING) {
-                        row.addView(space(8))
-                        row.addView(actionButton("Écran", accent) { showDisplay(vm.id) })
-                    }
+                }
+                VmState.PAUSED -> {
+                    row.addView(actionButton("Reprendre", good) {
+                        VmRuntimeService.resume(this@MainActivity, vm.id)
+                    })
+                    row.addView(space(8))
+                    row.addView(actionButton("Arrêter", bad) {
+                        VmRuntimeService.stop(this@MainActivity, vm.id)
+                    })
+                }
+                VmState.STARTING -> {
+                    row.addView(actionButton("Arrêter", bad) {
+                        VmRuntimeService.stop(this@MainActivity, vm.id)
+                    })
                 }
                 else -> {
                     row.addView(actionButton("Démarrer", good) {
@@ -188,7 +204,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Nouvelle machine virtuelle")
-            .setMessage("Création d'un PC virtuel complet avec disque 16 GiB sparse, UEFI/NVRAM persistants et backend auto.")
+            .setMessage("VM complète avec UEFI/NVRAM, disque persistant, VirtIO, réseau NAT et affichage VNC local. Le runtime réel est vérifié au premier démarrage.")
             .setView(input)
             .setNegativeButton("Annuler", null)
             .setPositiveButton("Créer") { _, _ ->
@@ -214,9 +230,7 @@ class MainActivity : Activity() {
         if (requestCode != 701 || resultCode != RESULT_OK) return
         val vmId = isoTargetVm ?: return
         val uri = data?.data ?: return
-        val target = File(filesDir, "vms/" + vmId + "/installer.iso").apply {
-            parentFile?.mkdirs()
-        }
+        val target = File(filesDir, "vms/" + vmId + "/installer.iso").apply { parentFile?.mkdirs() }
         contentResolver.openInputStream(uri)?.use { input ->
             target.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
         } ?: return
@@ -234,9 +248,7 @@ class MainActivity : Activity() {
             .create()
         dialog.setOnDismissListener { view.disconnect() }
         dialog.setOnShowListener {
-            view.postDelayed({
-                view.connect(VmRuntimeService.vncPort(vmId))
-            }, 1200)
+            view.postDelayed({ view.connect(VmRuntimeService.vncPort(vmId)) }, 1200)
         }
         dialog.show()
     }
