@@ -55,6 +55,7 @@ data class VmConfig(
     var displayHeight: Int = 720,
     var dpi: Int = 160,
     var fullscreen: Boolean = false,
+    var headless: Boolean = false,
     var audioEnabled: Boolean = true,
     var audioFrequencyHz: Int = 48000,
     var audioChannels: Int = 2,
