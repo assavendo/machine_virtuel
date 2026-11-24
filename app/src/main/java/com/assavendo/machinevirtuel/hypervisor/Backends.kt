@@ -2,6 +2,7 @@ package com.assavendo.machinevirtuel.hypervisor
 
 import com.assavendo.machinevirtuel.host.HostCapabilities
 import com.assavendo.machinevirtuel.runtime.CrosvmCommandBuilder
+import com.assavendo.machinevirtuel.runtime.FilePaths
 import com.assavendo.machinevirtuel.runtime.QemuCommandBuilder
 import com.assavendo.machinevirtuel.runtime.RuntimePaths
 import com.assavendo.machinevirtuel.vm.BackendKind
