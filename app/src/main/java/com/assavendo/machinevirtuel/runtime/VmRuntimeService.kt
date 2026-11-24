@@ -12,6 +12,7 @@ import com.assavendo.machinevirtuel.performance.HostMetricsCollector
 import com.assavendo.machinevirtuel.performance.VmMetricsRegistry
 import com.assavendo.machinevirtuel.vm.*
 import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -97,10 +98,22 @@ class VmRuntimeService : Service() {
 
             val host = HostCapabilityScanner(this).scan()
             val decision = VmOrchestrator().choose(vm, host)
-            val candidates = decision.candidates.map { it.backend }.distinct().filter {
-                it != BackendKind.AVF || AvfCapabilityProbe.probe(this).virtualMachineClass
+            val candidates = decision.candidates.map { it.backend }.distinct().filter { backend ->
+                when (backend) {
+                    BackendKind.AVF -> false
+                    BackendKind.GUNYAH, BackendKind.GENIEZONE, BackendKind.HALLA -> false
+                    BackendKind.KVM -> host.kvm
+                    BackendKind.QEMU_TCG -> paths.qemu.canExecute() &&
+                        (vm.arch == GuestArch.ARM64 || when (vm.arch) {
+                            GuestArch.X86_64 -> paths.qemuX86.canExecute() || paths.qemuX86Headless.canExecute()
+                            GuestArch.X86_32 -> paths.qemuI386.canExecute()
+                            else -> false
+                        })
+                }
             }
-            check(candidates.isNotEmpty()) { "Aucun backend disponible." }
+            check(candidates.isNotEmpty()) {
+                "Aucun backend réellement exécutable pour cette VM. Les backends privilégiés sont conservés comme indisponibles jusqu'à validation du runtime complet sur l'appareil."
+            }
 
             val dir = FilePaths.vmDir(id)
             val qmp = FilePaths.qmp(id)
@@ -120,35 +133,22 @@ class VmRuntimeService : Service() {
                         it.state = VmState.STARTING
                         it.backend = backend
                     }
-                    if (vm.sharedDirPath.isNotBlank() &&
-                        (backend == BackendKind.QEMU_TCG || backend == BackendKind.KVM)
-                    ) {
+                    if (vm.sharedDirPath.isNotBlank() && backend == BackendKind.QEMU_TCG) {
                         fsHandle = VirtioFsManager.start(paths, vm, dir, log)
                     }
-                    if (vm.tpmEnabled && (backend == BackendKind.QEMU_TCG || backend == BackendKind.KVM)) {
+                    if (vm.tpmEnabled && backend == BackendKind.QEMU_TCG) {
                         tpmHandle = TpmManager.start(paths, vm, dir, log)
                     }
 
-                    val candidate = when (backend) {
-                        BackendKind.GUNYAH, BackendKind.GENIEZONE, BackendKind.HALLA ->
-                            startCrosvm(paths, vm, dir, log, tapOwned)
-                        BackendKind.AVF ->
-                            throw UnsupportedOperationException(
-                                "AVF détecté mais lifecycle VirtualizationService non exposable à cette app sur cet hôte."
-                            )
-                        else -> {
-                            val process = startQemu(
-                                paths, vm, dir, qmp, serial, log, fsHandle?.socket, tpmHandle
-                            )
-                            Handle(process, backend, qmp, tapOwned, fsHandle, tpmHandle)
-                        }
-                    }
-
-                    if (!candidate.process.isAlive) error("Backend exited immediately.")
-                    handle = candidate
+                    val process = startQemu(
+                        paths, vm, dir, qmp, serial, log, fsHandle?.socket, tpmHandle
+                    )
+                    if (!process.isAlive) error("QEMU exited immediately.")
+                    handle = Handle(process, backend, qmp, tapOwned, fsHandle, tpmHandle)
                     if (backend != decision.selected) {
                         updateNotification("Fallback backend " + backend.label)
                         logger.warn("Fallback backend selected: " + backend.label)
+                        VmEventBus.emit(VmEvent(id, VmEventType.FALLBACK_ACTIVATED, message = backend.label))
                     }
                     break
                 } catch (t: Throwable) {
@@ -160,21 +160,24 @@ class VmRuntimeService : Service() {
             }
 
             val active = handle ?: throw lastError ?: IllegalStateException("Tous les backends ont échoué.")
+            vm.backend = active.backend
             vm.state = VmState.RUNNING
             vm.lastStartedAt = System.currentTimeMillis()
             store.save(store.list().map { if (it.id == id) vm else it })
             processes[id] = active
+            VmEventBus.emit(VmEvent(id, VmEventType.VM_STARTED, message = active.backend.label))
             logger.info("VM running on backend " + active.backend.label)
             updateNotification("VM " + vm.name + " running • " + active.backend.label)
 
             executor.execute { monitorVm(id, active, vm.monitoringIntervalMs) }
             executor.execute {
                 val exit = runCatching { active.process.waitFor() }.getOrDefault(-1)
-                val current = VmStore(this).list()
+                val currentStore = VmStore(this)
+                val current = currentStore.list()
                 current.firstOrNull { it.id == id }?.let {
                     it.state = if (exit == 0) VmState.OFF else VmState.ERROR
                 }
-                VmStore(this).save(current)
+                currentStore.save(current)
                 processes.remove(id)
                 VirtioFsManager.stop(active.virtioFs)
                 TpmManager.stop(active.tpm)
@@ -182,6 +185,7 @@ class VmRuntimeService : Service() {
                     VmStore(this).list().firstOrNull { it.id == id }?.tapName
                         ?.takeIf { it.isNotBlank() }?.let { TapNetworkManager().removeInterface(it) }
                 }
+                VmEventBus.emit(VmEvent(id, if (exit == 0) VmEventType.VM_STOPPED else VmEventType.VM_ERROR, message = "exit=$exit"))
                 logger.info("VM stopped with exit code " + exit)
                 updateNotification("VM " + vm.name + " stopped • exit " + exit)
             }
@@ -189,6 +193,7 @@ class VmRuntimeService : Service() {
             logger.error("VM start failed", t)
             vm.state = VmState.ERROR
             store.save(store.list().map { if (it.id == id) vm else it })
+            VmEventBus.emit(VmEvent(id, VmEventType.VM_ERROR, message = t.message ?: "VM start failed"))
             updateNotification("VM " + vm.name + ": " + (t.message ?: "start error"))
         }
     }
@@ -200,9 +205,11 @@ class VmRuntimeService : Service() {
                 val sample = collector.sample()
                 VmMetricsRegistry.record(id, sample)
                 if (sample.availableMemoryMb < 256L) {
+                    VmEventBus.emit(VmEvent(id, VmEventType.MEMORY_WARNING, message = "available RAM < 256 MB"))
                     updateNotification("VM memory pressure • Android available RAM < 256 MB")
                 }
                 if (sample.isThrottling) {
+                    VmEventBus.emit(VmEvent(id, VmEventType.THERMAL_WARNING, message = "thermal throttling"))
                     updateNotification("VM thermal throttling detected")
                 }
             }
@@ -232,36 +239,15 @@ class VmRuntimeService : Service() {
         return process
     }
 
-    private fun startCrosvm(
-        paths: RuntimePaths,
-        vm: VmConfig,
-        dir: File,
-        log: File,
-        tapOwned: Boolean,
-    ): Handle {
-        val command = CrosvmCommandBuilder.build(paths, vm)
-        val process = RootProcessLauncher.start(
-            command, dir,
-            mapOf("LD_LIBRARY_PATH" to paths.libDir.absolutePath),
-            preferRoot = false
-        )
-        attachLogs(process, log)
-        return Handle(process, vm.backend, FilePaths.qmp(vm.id), tapOwned, null, null)
-    }
-
     private fun attachLogs(process: Process, log: File) {
         Thread {
             process.inputStream.use { input ->
-                log.outputStream(append = true).buffered().use { output ->
-                    input.copyTo(output)
-                }
+                FileOutputStream(log, true).buffered().use { output -> input.copyTo(output) }
             }
         }.start()
         Thread {
             process.errorStream.use { input ->
-                log.outputStream(append = true).buffered().use { output ->
-                    input.copyTo(output)
-                }
+                FileOutputStream(log, true).buffered().use { output -> input.copyTo(output) }
             }
         }.start()
     }
@@ -272,29 +258,25 @@ class VmRuntimeService : Service() {
 
     private fun pauseVm(id: String) {
         val handle = processes[id] ?: return
-        if ((handle.backend == BackendKind.QEMU_TCG || handle.backend == BackendKind.KVM) &&
-            QmpController.pause(handle.qmp)
-        ) {
+        if (handle.backend == BackendKind.QEMU_TCG && QmpController.pause(handle.qmp)) {
             VmStore(this).update(id) { it.state = VmState.PAUSED }
+            VmEventBus.emit(VmEvent(id, VmEventType.VM_PAUSED))
             updateNotification("VM paused")
         }
     }
 
     private fun resumeVm(id: String) {
         val handle = processes[id] ?: return
-        if ((handle.backend == BackendKind.QEMU_TCG || handle.backend == BackendKind.KVM) &&
-            QmpController.resume(handle.qmp)
-        ) {
+        if (handle.backend == BackendKind.QEMU_TCG && QmpController.resume(handle.qmp)) {
             VmStore(this).update(id) { it.state = VmState.RUNNING }
+            VmEventBus.emit(VmEvent(id, VmEventType.VM_RESUMED))
             updateNotification("VM resumed")
         }
     }
 
     private fun rebootVm(id: String) {
         val handle = processes[id] ?: return
-        if ((handle.backend == BackendKind.QEMU_TCG || handle.backend == BackendKind.KVM) &&
-            QmpController.reset(handle.qmp)
-        ) {
+        if (handle.backend == BackendKind.QEMU_TCG && QmpController.reset(handle.qmp)) {
             updateNotification("VM reboot requested")
         } else {
             updateNotification("Reboot unavailable for current backend")
@@ -304,7 +286,8 @@ class VmRuntimeService : Service() {
     private fun stopVm(id: String, force: Boolean) {
         val handle = processes[id] ?: return
         VmStore(this).update(id) { it.state = VmState.STOPPING }
-        val clean = !force && QmpController.systemPowerdown(handle.qmp)
+        val clean = !force && handle.backend == BackendKind.QEMU_TCG &&
+            QmpController.systemPowerdown(handle.qmp)
         if (clean) {
             if (!handle.process.waitFor(10, TimeUnit.SECONDS)) handle.process.destroy()
         } else {
@@ -319,6 +302,7 @@ class VmRuntimeService : Service() {
                 ?.takeIf { it.isNotBlank() }?.let { TapNetworkManager().removeInterface(it) }
         }
         VmStore(this).update(id) { it.state = VmState.OFF }
+        VmEventBus.emit(VmEvent(id, VmEventType.VM_STOPPED))
     }
 
     private fun createChannel() {
