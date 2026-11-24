@@ -26,10 +26,15 @@ android {
         sourceCompatibility=JavaVersion.VERSION_17
         targetCompatibility=JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget="17" }
+    // Kotlin compiler target follows the Java toolchain under built-in Kotlin.
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(17)
+        }
+    }
     packaging { jniLibs { useLegacyPackaging=true } }
 }
 dependencies {
     implementation("org.tukaani:xz:1.10")
-    testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlin:kotlin-test:2.2.10")
 }
