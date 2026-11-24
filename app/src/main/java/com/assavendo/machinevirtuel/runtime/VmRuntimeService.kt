@@ -22,24 +22,27 @@ class VmRuntimeService : Service() {
         const val ACTION_STOP = "phoenixvm.STOP"
         const val ACTION_PAUSE = "phoenixvm.PAUSE"
         const val ACTION_RESUME = "phoenixvm.RESUME"
+        const val ACTION_REBOOT = "phoenixvm.REBOOT"
+        const val ACTION_FORCE_STOP = "phoenixvm.FORCE_STOP"
+        const val ACTION_QUERY_STATUS = "phoenixvm.QUERY_STATUS"
         const val EXTRA_VM_ID = "vm_id"
         private const val CHANNEL = "phoenixvm-runtime"
         private const val NOTIFICATION_ID = 1001
         private val processes = ConcurrentHashMap<String, Handle>()
 
-        fun start(context: Context, vmId: String) = context.startForegroundService(
-            Intent(context, VmRuntimeService::class.java).setAction(ACTION_START).putExtra(EXTRA_VM_ID, vmId)
-        )
-        fun stop(context: Context, vmId: String) = context.startService(
-            Intent(context, VmRuntimeService::class.java).setAction(ACTION_STOP).putExtra(EXTRA_VM_ID, vmId)
-        )
-        fun pause(context: Context, vmId: String) = context.startService(
-            Intent(context, VmRuntimeService::class.java).setAction(ACTION_PAUSE).putExtra(EXTRA_VM_ID, vmId)
-        )
-        fun resume(context: Context, vmId: String) = context.startService(
-            Intent(context, VmRuntimeService::class.java).setAction(ACTION_RESUME).putExtra(EXTRA_VM_ID, vmId)
-        )
+        fun start(context: Context, vmId: String) = send(context, ACTION_START, vmId, true)
+        fun stop(context: Context, vmId: String) = send(context, ACTION_STOP, vmId)
+        fun forceStop(context: Context, vmId: String) = send(context, ACTION_FORCE_STOP, vmId)
+        fun pause(context: Context, vmId: String) = send(context, ACTION_PAUSE, vmId)
+        fun resume(context: Context, vmId: String) = send(context, ACTION_RESUME, vmId)
+        fun reboot(context: Context, vmId: String) = send(context, ACTION_REBOOT, vmId)
+        fun queryStatus(vmId: String): String? = processes[vmId]?.let { QmpController.queryStatus(it.qmp) }
         fun vncPort(vmId: String): Int = VncPorts.portFor(vmId)
+
+        private fun send(context: Context, action: String, vmId: String, foreground: Boolean = false) {
+            val intent = Intent(context, VmRuntimeService::class.java).setAction(action).putExtra(EXTRA_VM_ID, vmId)
+            if (foreground) context.startForegroundService(intent) else context.startService(intent)
+        }
     }
 
     private val executor = Executors.newCachedThreadPool()
@@ -55,9 +58,11 @@ class VmRuntimeService : Service() {
         val id = intent?.getStringExtra(EXTRA_VM_ID) ?: return START_NOT_STICKY
         when (intent.action) {
             ACTION_START -> executor.execute { startVm(id) }
-            ACTION_STOP -> executor.execute { stopVm(id) }
+            ACTION_STOP -> executor.execute { stopVm(id, false) }
+            ACTION_FORCE_STOP -> executor.execute { stopVm(id, true) }
             ACTION_PAUSE -> executor.execute { pauseVm(id) }
             ACTION_RESUME -> executor.execute { resumeVm(id) }
+            ACTION_REBOOT -> executor.execute { rebootVm(id) }
         }
         return START_STICKY
     }
@@ -65,24 +70,30 @@ class VmRuntimeService : Service() {
     private fun startVm(id: String) {
         val store = VmStore(this)
         val logger = VmLogger(this, id)
-        logger.info("VM start requested")
         val original = store.list().firstOrNull { it.id == id } ?: return
         if (processes[id]?.process?.isAlive == true) return
 
         val vm = original.copy()
         var tapOwned = false
-        var tpmHandle: TpmHandle? = null
         var lastError: Throwable? = null
+
         try {
             VmSpecValidator.validate(vm).firstOrNull { it.fatal }?.let { error(it.message) }
             val paths = RuntimeInstaller.ensure(this)
+
             if (vm.networkMode == NetworkMode.TAP) {
                 val tap = TapNetworkManager()
                 tapOwned = !tap.exists(vm.tapName)
-                check(tap.ensureInterface(vm.tapName)) { "Impossible de preparer l'interface TAP " + vm.tapName }
+                check(tap.ensureInterface(vm.tapName)) {
+                    "Impossible de preparer l'interface TAP " + vm.tapName
+                }
             }
+
             DiskManager.ensureVmStorage(filesDir, vm, paths)
-            DiskManager.ensureNvram(vm, if (vm.backend == BackendKind.GUNYAH) paths.edk2GunyahVars else paths.edk2QemuVars)
+            DiskManager.ensureNvram(
+                vm,
+                if (vm.backend == BackendKind.GUNYAH) paths.edk2GunyahVars else paths.edk2QemuVars
+            )
 
             val host = HostCapabilityScanner(this).scan()
             val decision = VmOrchestrator().choose(vm, host)
@@ -102,6 +113,7 @@ class VmRuntimeService : Service() {
             var handle: Handle? = null
             for (backend in candidates) {
                 var fsHandle: VirtioFsHandle? = null
+                var tpmHandle: TpmHandle? = null
                 try {
                     vm.backend = backend
                     store.update(id) {
@@ -125,19 +137,23 @@ class VmRuntimeService : Service() {
                                 "AVF détecté mais lifecycle VirtualizationService non exposable à cette app sur cet hôte."
                             )
                         else -> {
-                            val process = startQemu(paths, vm, dir, qmp, serial, log, fsHandle?.socket, tpmHandle)
+                            val process = startQemu(
+                                paths, vm, dir, qmp, serial, log, fsHandle?.socket, tpmHandle
+                            )
                             Handle(process, backend, qmp, tapOwned, fsHandle, tpmHandle)
                         }
                     }
 
                     if (!candidate.process.isAlive) error("Backend exited immediately.")
                     handle = candidate
-                    if (backend != decision.selected) updateNotification("Fallback backend " + backend.label)
+                    if (backend != decision.selected) {
+                        updateNotification("Fallback backend " + backend.label)
+                        logger.warn("Fallback backend selected: " + backend.label)
+                    }
                     break
                 } catch (t: Throwable) {
                     VirtioFsManager.stop(fsHandle)
                     TpmManager.stop(tpmHandle)
-                    tpmHandle = null
                     lastError = t
                     appendLog(log, "BACKEND " + backend.label + " FAILED: " + (t.message ?: "unknown") + "\n")
                 }
@@ -148,10 +164,10 @@ class VmRuntimeService : Service() {
             vm.lastStartedAt = System.currentTimeMillis()
             store.save(store.list().map { if (it.id == id) vm else it })
             processes[id] = active
-            updateNotification("VM " + vm.name + " running • " + active.backend.label)
             logger.info("VM running on backend " + active.backend.label)
-            executor.execute { monitorVm(id, active, vm.monitoringIntervalMs) }
+            updateNotification("VM " + vm.name + " running • " + active.backend.label)
 
+            executor.execute { monitorVm(id, active, vm.monitoringIntervalMs) }
             executor.execute {
                 val exit = runCatching { active.process.waitFor() }.getOrDefault(-1)
                 val current = VmStore(this).list()
@@ -183,8 +199,12 @@ class VmRuntimeService : Service() {
             runCatching {
                 val sample = collector.sample()
                 VmMetricsRegistry.record(id, sample)
-                if (sample.availableMemoryMb < 256L) updateNotification("VM memory pressure • Android available RAM < 256 MB")
-                if (sample.isThrottling) updateNotification("VM thermal throttling detected")
+                if (sample.availableMemoryMb < 256L) {
+                    updateNotification("VM memory pressure • Android available RAM < 256 MB")
+                }
+                if (sample.isThrottling) {
+                    updateNotification("VM thermal throttling detected")
+                }
             }
             Thread.sleep(intervalMs.coerceIn(250L, 5000L))
         }
@@ -200,9 +220,13 @@ class VmRuntimeService : Service() {
         virtioFsSocket: File?,
         tpmHandle: TpmHandle?,
     ): Process {
-        val command = QemuCommandBuilder.build(paths, vm, qmp, serial, log, virtioFsSocket, tpmHandle)
+        val command = QemuCommandBuilder.build(
+            paths, vm, qmp, serial, log, virtioFsSocket, tpmHandle
+        )
         val process = RootProcessLauncher.start(
-            command, dir, mapOf("LD_LIBRARY_PATH" to paths.libDir.absolutePath), preferRoot = false
+            command, dir,
+            mapOf("LD_LIBRARY_PATH" to paths.libDir.absolutePath),
+            preferRoot = false
         )
         attachLogs(process, log)
         return process
@@ -217,21 +241,27 @@ class VmRuntimeService : Service() {
     ): Handle {
         val command = CrosvmCommandBuilder.build(paths, vm)
         val process = RootProcessLauncher.start(
-            command, dir, mapOf("LD_LIBRARY_PATH" to paths.libDir.absolutePath), preferRoot = false
+            command, dir,
+            mapOf("LD_LIBRARY_PATH" to paths.libDir.absolutePath),
+            preferRoot = false
         )
         attachLogs(process, log)
-        return Handle(process, vm.backend, FilePaths.qmp(vm.id), tapOwned, null)
+        return Handle(process, vm.backend, FilePaths.qmp(vm.id), tapOwned, null, null)
     }
 
     private fun attachLogs(process: Process, log: File) {
         Thread {
             process.inputStream.use { input ->
-                log.outputStream(append = true).buffered().use { output -> input.copyTo(output) }
+                log.outputStream(append = true).buffered().use { output ->
+                    input.copyTo(output)
+                }
             }
         }.start()
         Thread {
             process.errorStream.use { input ->
-                log.outputStream(append = true).buffered().use { output -> input.copyTo(output) }
+                log.outputStream(append = true).buffered().use { output ->
+                    input.copyTo(output)
+                }
             }
         }.start()
     }
@@ -260,12 +290,27 @@ class VmRuntimeService : Service() {
         }
     }
 
-    private fun stopVm(id: String) {
+    private fun rebootVm(id: String) {
+        val handle = processes[id] ?: return
+        if ((handle.backend == BackendKind.QEMU_TCG || handle.backend == BackendKind.KVM) &&
+            QmpController.reset(handle.qmp)
+        ) {
+            updateNotification("VM reboot requested")
+        } else {
+            updateNotification("Reboot unavailable for current backend")
+        }
+    }
+
+    private fun stopVm(id: String, force: Boolean) {
         val handle = processes[id] ?: return
         VmStore(this).update(id) { it.state = VmState.STOPPING }
-        if (QmpController.systemPowerdown(handle.qmp)) {
+        val clean = !force && QmpController.systemPowerdown(handle.qmp)
+        if (clean) {
             if (!handle.process.waitFor(10, TimeUnit.SECONDS)) handle.process.destroy()
-        } else handle.process.destroy()
+        } else {
+            handle.process.destroy()
+            if (force && handle.process.isAlive) handle.process.destroyForcibly()
+        }
         VirtioFsManager.stop(handle.virtioFs)
         TpmManager.stop(handle.tpm)
         processes.remove(id)
@@ -281,12 +326,20 @@ class VmRuntimeService : Service() {
             NotificationChannel(CHANNEL, "PhoenixVM runtime", NotificationManager.IMPORTANCE_LOW)
         )
     }
+
     private fun notification(text: String): Notification =
-        Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_sys_download_done)
-            .setContentTitle("PhoenixVM").setContentText(text).setOngoing(true).build()
+        Notification.Builder(this, CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("PhoenixVM")
+            .setContentText(text)
+            .setOngoing(true)
+            .build()
+
     private fun updateNotification(text: String) {
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(text))
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, notification(text))
     }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
