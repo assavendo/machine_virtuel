@@ -236,6 +236,23 @@ class VmRuntimeService : Service() {
                 val current = currentStore.list()
                 current.firstOrNull { it.id == id }?.let {
                     it.state = if (exit == 0) VmState.OFF else VmState.ERROR
+                    if (exit != 0) {
+                        val plan = RecoveryManager.plan(
+                            filesDir,
+                            it,
+                            "Backend " + active.backend.label + " exited with code " + exit
+                        )
+                        RecoveryPlanStore.write(filesDir, plan)
+                        VmEventBus.emit(
+                            VmEvent(
+                                id,
+                                VmEventType.RECOVERY_AVAILABLE,
+                                message = plan.actions.joinToString(" • ")
+                            )
+                        )
+                    } else {
+                        RecoveryPlanStore.clear(filesDir, id)
+                    }
                 }
                 currentStore.save(current)
                 processes.remove(id)
@@ -256,7 +273,12 @@ class VmRuntimeService : Service() {
             logger.error("VM start failed", t)
             vm.state = VmState.ERROR
             store.save(store.list().map { if (it.id == id) vm else it })
+            val plan = RecoveryManager.plan(filesDir, vm, t.message ?: "VM start failed")
+            RecoveryPlanStore.write(filesDir, plan)
             VmEventBus.emit(VmEvent(id, VmEventType.VM_ERROR, message = t.message ?: "VM start failed"))
+            VmEventBus.emit(
+                VmEvent(id, VmEventType.RECOVERY_AVAILABLE, message = plan.actions.joinToString(" • "))
+            )
             updateNotification("VM " + vm.name + ": " + (t.message ?: "start error"))
         }
     }
