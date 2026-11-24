@@ -156,7 +156,9 @@ object QemuCommandBuilder {
         when (vm.networkMode) {
             NetworkMode.DISABLED -> Unit
             NetworkMode.NAT -> {
-                val forwards = vm.portForwards.joinToString(",") {
+                val forwards = mutableListOf<String>()
+                val hostPorts = mutableSetOf<Int>()
+                vm.portForwards.forEach {
                     require(it.hostPort in 1..65535 && it.guestPort in 1..65535) {
                         "Port forwarding must use 1..65535."
                     }
@@ -165,10 +167,22 @@ object QemuCommandBuilder {
                         "udp" -> "udp"
                         else -> error("Protocole de redirection réseau invalide.")
                     }
-                    "hostfwd=" + protocol + "::" + it.hostPort + "-:" + it.guestPort
+                    require(hostPorts.add(it.hostPort)) {
+                        "Deux redirections réseau utilisent le même port hôte."
+                    }
+                    forwards += "hostfwd=" + protocol + "::" + it.hostPort + "-:" + it.guestPort
+                }
+                if (vm.guestOs.contains("android", ignoreCase = true) && vm.androidAdbEnabled) {
+                    require(vm.androidAdbHostPort in 1..65535) {
+                        "androidAdbHostPort must use 1..65535."
+                    }
+                    require(hostPorts.add(vm.androidAdbHostPort)) {
+                        "androidAdbHostPort entre en collision avec une redirection réseau existante."
+                    }
+                    forwards += "hostfwd=tcp::" + vm.androidAdbHostPort + "-:5555"
                 }
                 args += "-netdev"
-                args += if (forwards.isBlank()) "user,id=net0" else "user,id=net0," + forwards
+                args += if (forwards.isEmpty()) "user,id=net0" else "user,id=net0," + forwards.joinToString(",")
                 args += "-device"; args += "virtio-net-pci,netdev=net0,disable-legacy=on,disable-modern=off"
             }
             NetworkMode.TAP -> {
