@@ -1,0 +1,127 @@
+# Traçabilité exhaustive du cahier des charges PhoenixVM
+
+**Référence examinée :** \`Cahier_des_charges_VM_Android_Complete_UltraPerformance-1.txt\`  
+**Version source :** 1.0 — 23 novembre 2026  
+**Dépôt audité :** \`assavendo/machine_virtuel\`, branche \`main\`  
+**Date de l'audit logiciel :** 24 novembre 2026
+
+Ce document suit la numérotation originale du cahier, y compris son numéro 32 utilisé deux fois et l'absence du numéro 31. Il ne renumérote pas la source.
+
+## Légende
+
+- **CODE** : mécanisme logiciel présent dans le dépôt ; cela ne prétend pas qu'un guest complet a déjà été démarré sur un téléphone.
+- **PARTIEL** : socle ou API présent, mais fonction non complète, runtime absent, intégration non achevée ou validation manquante.
+- **APPAREIL** : validation exigeant un téléphone/SoC réel, un OS invité réel, des autorisations OEM ou une mesure physique ; le code peut préparer le test mais ne peut pas le certifier depuis GitHub.
+- **À FAIRE** : exigence logicielle non implémentée ou insuffisamment démontrée.
+
+## Tableau de traçabilité — sections 0 à 30
+
+| Section du cahier | État | Vérification et résultat |
+|---|---|---|
+| 0. Objectif global | PARTIEL | L'application est conçue comme VMM full-system. L'objectif final — plusieurs guests réellement démarrés, avec accélération — n'est pas encore prouvé. Aucun Wine/Winlator ne remplace le VMM. |
+| 1. Définition du produit | PARTIEL | Couches Android/Kotlin, moteur natif Rust, moteur QEMU et services VM présents. Mode headless/API desktop et séparation complète en daemon natif ne sont pas achevés. |
+| 2. Principes de conception obligatoires | PARTIEL | Interface backend, détection, fallback explicite et blocage fail-closed présents. Les hyperviseurs protégés restent non exécutés tant que leurs bridges/permissions réels ne sont pas validés. |
+| 3. Architecture globale cible | PARTIEL | Socle UI → orchestration → moteur et périphériques VirtIO présent. L'architecture multi-processus native, shared graphics et bridges de tous les backends reste incomplète. |
+| 4. Technologies de base recommandées | PARTIEL | Kotlin, Rust, QEMU, crosvm, EDK2, VirtIO, VNC/RFB et bibliothèques graphiques référencées. FEX/Box64 ne sont pas intégrés au cœur et ne sont pas nécessaires à une VM full-system. |
+| 5. Modes de fonctionnement | PARTIEL | Modes AUTO/PERFORMANCE/COMPATIBILITY/EXPERT et profils existants. La sélection GPU et certains paramètres sont volontairement limités aux capacités démontrées. |
+| 6. Gestion des machines virtuelles | PARTIEL | Modèle persistant et opérations create/clone/start/stop/pause/resume/reboot/delete/import/export/snapshot/restore disponibles. Les états RUNNING et RECOVERY sont maintenant liés à des contrôles plus stricts, mais la stabilité multi-VM reste à tester. |
+| 7. Création d'une VM | PARTIEL | Modèle de configuration et gestion stockage/firmware/réseau/ISO. Tous les chemins d'assistant et toutes les familles d'OS ne sont pas validés de bout en bout. |
+| 8. CPU : architecture de performance | PARTIEL | KVM détecté lorsque le device est réellement accessible ; QEMU TCG/MTTCG ; scheduler P/E et température. QEMU x86 doit être construit puis importé ; pinning/priorités/temps traduction/GPU wait ne sont pas tous mesurés. |
+| 9. Cache de traduction | PARTIEL | Cache de profils/métadonnées L0 mémoire, L1 processus, L2 persistant par VM, L3 global optionnel, fingerprints, validation, invalidation, compteurs et nettoyage ; taille réelle TCG \`tb-size\` paramétrée. Le code machine des Translation Blocks QEMU n'est **pas** sérialisé entre lancements : cette capacité nécessiterait un travail interne sur le TCG/QEMU et ses règles d'invalidation. |
+| 10. JIT multi-niveaux | PARTIEL | QEMU TCG assure sa traduction/JIT réelle ; PhoenixVM enregistre un état de profil COLD/WARM/HOT/VERY_HOT. Le moteur de recompilation personnalisé à plusieurs niveaux, la chaîne de blocs et la génération de code persistante ne sont pas implémentés. |
+| 11. RAM / mémoire | PARTIEL | Admission mémoire avec réserve Android, budget agrégé multi-VM, surveillance, préallocation et requête balloon QMP optionnelle. Le reclaim effectif dépend du pilote invité ; shared pages/mmap avancés et suspension automatique sûre avant OOM ne sont pas validés. |
+| 12. GPU / affichage | PARTIEL | VirtIO-GPU software, modes VirGL/Gfxstream optionnels, VNC/RFB, résolution et limites framebuffer sécurisées. L'accélération matérielle réelle, le partage de buffers et la présentation directe Surface/Vulkan Android nécessitent un device et les bridges graphiques compatibles. |
+| 13. Stockage virtuel | PARTIEL | RAW/qcow2/vhdx/vdi/vmdk et opérations qemu-img disponibles avec timeouts, drainage des sorties et remplacement de disque avec rollback. Les formats/contrôleurs/charges réelles doivent encore être intégrés et testés sur appareil. |
+| 14. Snapshots et restauration | PARTIEL | Snapshots à froid atomiques, manifeste, SHA-256 disque/NVRAM, protection, rétention et restauration avec sauvegarde/rollback. Pas de snapshot RAM/live ni de garantie crash-consistent sans test réel. |
+| 15. Réseau | PARTIEL | NAT, redirections de ports, mode TAP privilégié, VirtIO-net et paramètres par VM. Bridge réel, DNS/IPv6/MTU et permissions réseau varient selon Android et restent à tester sur appareil. |
+| 16. Audio | PARTIEL | Modèle d'option et périphérique virtio-sound avec backend AAudio configuré. Capture, sortie, latence et synchronisation audio/vidéo non validées sur téléphone. |
+| 17. Input | PARTIEL | Clavier, souris, tablette/touch VirtIO, gestes, raccourcis et chemin RFB présents. Remappage clavier complet, USB HID et latence tactile exigent essais d'usage réels. |
+| 18. Partage de fichiers | PARTIEL | VirtIO-FS lorsque virtiofsd est disponible, sinon 9p/VirtFS ; les partages read-only ne démarrent pas par un chemin virtiofs non pris en charge. Le runtime Android virtiofsd n'est pas inclus dans le bundle épinglé. |
+| 19. Boot et firmware | PARTIEL | EDK2 ARM64 séparé et OVMF x86_64 séparé, NVRAM par VM et boot ISO/disque configurés. Le firmware x86 est fourni par un script d'approvisionnement, pas encore intégré au runtime Android livré par défaut. |
+| 20. Systèmes invités cibles | PARTIEL | Modèle d'architecture/OS et QEMU ARM64 full-system. La compatibilité Linux ARM64 est le chemin prioritaire mais doit encore réussir un boot réel ; Windows, Android et BSD ne sont pas annoncés comme validés. |
+| 21. Mode Windows | PARTIEL | Le chemin QEMU x86 full-system et firmware OVMF sont préparés ; Windows ARM64/x86, VirtIO drivers, TPM, UEFI Secure Boot et activation ne sont pas validés. |
+| 22. Mode Android guest | À FAIRE | Le schéma d'un guest Android est documenté, mais l'orchestration concrète des images kernel/boot/vendor/system/userdata, bootloader et ADB n'est pas achevée. |
+| 23. Hypervisor Manager | PARTIEL | Détection et abstractions de KVM/Gunyah/GenieZone/Halla/AVF et sélection présentes. Les backends OEM/AVF sont désactivés jusqu'à disponibilité de leurs interfaces complètes et autorisées. |
+| 24. Orchestrateur automatique | PARTIEL | Sélection, admission, fallback, scheduler et profil thermique présents. L'optimisation par mesures de tous les backends et profils cross-backend exige des mesures de runtime. |
+| 25. Monitoring temps réel | PARTIEL | CPU PID, RSS, CPU système, mémoire, thermique, fréquence, pression mémoire, I/O et réseau collectés ; historique. GPU wait, traduction, interruptions invitées et mesures kernel privilégiées manquent ou ne sont pas exposées. |
+| 26. Mode performance extrême | PARTIEL | Profil et politiques d'allocation/cache/vCPU présents. Aucune promesse de débit n'est faite sans benchmark, et le GPU accéléré dépend du téléphone/runtime. |
+| 27. Mode performance stable | PARTIEL | Réduction vCPU/activité sur états thermiques et mémoire, réserves RAM, fréquence de surveillance. La stabilité soutenue doit être mesurée sur téléphone. |
+| 28. Objectif de performance | APPAREIL | Le protocole de performance doit être chiffré à partir d'une baseline et de mesures reproductibles. Aucun gain universel n'est déclaré. |
+| 29. Benchmarking | PARTIEL / APPAREIL | Structures, moteurs et modèles de benchmark présents ; aucun benchmark comparatif sur téléphones représentatifs n'a été exécuté dans cet audit. |
+| 30. Comparaison avec le baseline | APPAREIL | QEMU/crosvm/Limbo et les configurations de référence doivent être comparés sous les mêmes conditions thermiques et ressources. |
+
+## Tableau de traçabilité — numéros 32 à 64
+
+| Section du cahier | État | Vérification et résultat |
+|---|---|---|
+| 32. Root / non-root | PARTIEL | Détection root, commandes privilégiées ciblées et backend non-root QEMU. Les permissions SELinux, root, TAP, hyperviseurs et stockage varient par appareil. Aucun contournement de sécurité Android n'est ajouté. |
+| 32. Profils appareils | PARTIEL / APPAREIL | Détection générique ABI/SoC/manufacturer/device/kernel/features présente. La base de profil Qualcomm/Dimensity/Exynos/Tensor avec capacités mesurées et preuves par modèle n'existe pas encore. |
+| 33. Sécurité | PARTIEL | Contrôles des chemins, archive traversal, SHA-256 runtime, Ed25519 streaming, limites d'archives, réserve mémoire et rollback. Fuzzing, audit d'isolation, sandbox et tests de pénétration restent à réaliser. |
+| 34. Gestion des images | PARTIEL | Import ISO/disque, métadonnées et opérations qemu-img. Catalogue de téléchargement OS, vérification complète des images et reprise réseau ne sont pas achevés. |
+| 35. Gestion des licences | PARTIEL | Manifeste amont exact, inventaire upstream, provenance OVMF et Bouncy Castle. Le SBOM complet fichier/version/licence de tous les binaires et notices est encore requis avant toute redistribution publique. |
+| 36. API interne | PARTIEL | API/service/event bus et surfaces Kotlin présents. Contrat complet versionné, IPC robuste, compatibilité et documentation API automatisée restent à achever. |
+| 37. Format de package VM | PARTIEL | Package versionné avec config, disque, NVRAM, snapshots, SHA-256, limites ZIP et signature Ed25519 facultative. Génération/gestion de clés et signature de paquets par défaut, chiffrement et compatibilité de versions restent à compléter. |
+| 38. Recovery / résilience | PARTIEL | Recovery plan, snapshots et remplacement transactionnel du runtime/disque. Récupération après coupure brutale du téléphone et tests d'injection de panne non réalisés. |
+| 39. Logging / diagnostic | PARTIEL | Journaux de service, par VM, niveaux et export diagnostics présents. Rotation, redaction exhaustive des secrets, support bundle sur incident et validation de taille restent incomplets. |
+| 40. Interface utilisateur | PARTIEL | Dashboard et contrôles VM, import ISO, package, snapshots, diagnostics et conseils. Les flux UX complets, accessibilité, état d'installation du runtime facultatif et réglages experts restent à terminer. |
+| 41. Gestion des gestes / commandes | PARTIEL | Settings partagés, zoom pinch, swipe clavier, Ctrl+Alt+Del trois doigts, input RFB. Les gestes ne sont pas encore entièrement configurable/validés sur toutes résolutions et sur toutes surfaces Android. |
+| 42. Multi-VM | PARTIEL | Gestionnaire de processus multi-VM, admission mémoire et répartition CPU. Isolation réseau/USB, fairness I/O/GPU et tests de charge multi-VM non validés. |
+| 43. Auto-optimizer | PARTIEL | Décisions de vCPU/monitoring au démarrage et réaction pression mémoire/thermique. Pas encore d'optimiseur complet et continu couvrant GPU/I/O/audio avec A/B et rollback. |
+| 44. Système de profils | PARTIEL | Presets/profils et configuration VM persistants. Profilage automatique par guest et device basé sur les résultats benchmark reste à constituer. |
+| 45. Mode développeur | PARTIEL | Diagnostics, logs, métriques, rapports et benchmark foundation. Console complète, traces des périphériques, inspection firmware et export reproductible restent incomplets. |
+| 46. Tests unitaires | PARTIEL | Tests ajoutés/renforcés pour QEMU command builder, firmware x86/ARM, disk sizing, admission RAM, snapshots et signature Ed25519 ; CI inclut tests Kotlin/Rust. La validation finale Gradle dépend du run CI courant. |
+| 47. Tests d'intégration | APPAREIL | Les scénarios KVM/Gunyah/GenieZone/Halla/TCG, Windows, GPU, partage, snapshot et import/export doivent être exécutés sur les appareils/guests correspondants. |
+| 48. Tests de stabilité | APPAREIL | Tests 30/60 min, 100 cycles, reprise veille, écran éteint, faibles ressources et incidents exigent un téléphone réel. |
+| 49. Tests de sécurité | PARTIEL / APPAREIL | Contrôles statiques, protections d'archives, hash et tests unitaires existent ; fuzzing, tests de permissions et validation sandbox demandent CI spécialisée et appareil. |
+| 50. Tests de compatibilité appareils | APPAREIL | Matrice Snapdragon/Dimensity/Exynos/Tensor et mesures par modèle non exécutable depuis GitHub seul. |
+| 51. CI/CD | PARTIEL | Workflows Rust/Android, SDK/NDK/Gradle, tests, lint, build et artefact APK définis. Une exécution complète verte du commit final doit être conservée avant release ; publication/signature AAB et analyse supply-chain restent à faire. |
+| 52. Structure de projet recommandée | PARTIEL | Répertoires app/native/docs/scripts/THIRD_PARTY et modules actuels. La séparation native par hypervisor/device/JIT reste partielle. |
+| 53. Feuille de route | PARTIEL | Roadmap source utilisée comme grille ; les phases d'acceptation matérielle restent ouvertes. |
+| 54. MVP obligatoire | APPAREIL | Le MVP ne peut pas être déclaré terminé tant qu'une VM Linux ARM64 n'a pas réellement démarré, affiché son écran, reçu l'input, accédé au réseau et conservé son état sur un téléphone. |
+| 55. Critères de réussite V2 | APPAREIL | GPU accéléré, QEMU x86, snapshots fiables, benchmarks et plusieurs hyperviseurs nécessitent les acceptations correspondantes. |
+| 56. Critères de performance | APPAREIL | +20 % ne peut être confirmé qu'avec protocole baseline, mesures et répétitions sur matériel ; aucun gain marketing non démontré n'est ajouté. |
+| 57. Stratégie anti-régression | PARTIEL | Tests et workflows sont en place ; benchmark avant/après, matrice device et garde-fous de performance ne sont pas complets. |
+| 58. Innovations à développer | PARTIEL | Orchestrateur, scheduler, profils thermiques, cache metadata, portabilité et admission RAM sont amorcés. Shared-memory graphics, cache machine-code persistant, base SoC mesurée et A/B backend restent à développer. |
+| 59. Limites techniques | CODE | Les limites d'accès Android/OEM, de performances x86, du GPU et de la thermique sont explicitement documentées ; la disponibilité par appareil doit ensuite être mesurée. |
+| 60. Règle de conception finale | CODE | Le service ne publie plus une VM RUNNING avant une réponse QMP et ne remplace pas un VMM par Wine/Winlator. Les backends incomplets sont fail-closed. |
+| 61. Résultat final attendu | APPAREIL | Le résultat produit complet n'est pas encore démontré ; il dépend des validations guest, hypervisor, GPU, réseau et stabilité. |
+| 62. Sources techniques de référence | PARTIEL | QEMU, crosvm, DroidVM, EDK2 et Android AVF référencés ; les versions et licences doivent être revalidées à chaque release. |
+| 63. Référence technique actuelle (état 2026) | PARTIEL | DroidVM et QEMU sont utilisés comme bases de référence. Les composants exacts ne sont pas automatiquement interchangeables et les bridges manquants restent à construire. |
+| 64. Directive développeurs / IA | CODE | Les règles anti-Wine-as-VMM, transparence des limites, hypervisor abstrait, VirtIO, benchmark et licences sont reprises dans les garde-fous et docs. |
+
+## Réalisations logicielles ajoutées pendant l'audit
+
+- Fiabilisation des API Android thermiques, du processus root et des processus auxiliaires.
+- Démarrage full-system fail-closed, séparation des firmwares ARM64 et x86_64, contrôle de disponibilité des composants.
+- Réécriture de l'installation du runtime : extraction tar contrôlée, chemins limités au staging, vérification SHA-256 de l'ensemble des fichiers de manifeste, staging et rollback.
+- QEMU/QMP : arguments validés, contrôle de disponibilité QMP avant l'état RUNNING, pause/reprise/redémarrage/arrêt propre sur QEMU TCG/KVM, requête balloon contrôlée.
+- Disques : tailles RAW correctes, commandes qemu-img avec timeouts et sorties drainées, vérification avant compactage et rollback.
+- Snapshots froids : manifestes, hashes disque/NVRAM, protection, rétention et restauration transactionnelle.
+- Packages VM : limites ZIP, vérification hash, import/export atomique, snapshots portables et Ed25519 en streaming avec fournisseur Bouncy Castle.
+- Cache metadata L0/L1/L2/L3, fingerprints, validation/invalidation, statistiques, profils et réglage du vrai \`tb-size\` QEMU.
+- Scheduler global branché au lancement, admission RAM multi-VM, compteurs CPU process/système et mesures mémoire/thermique/I/O/réseau.
+- RFB : correction du message SetEncodings et limites de mémoire pour les dimensions framebuffer.
+- Gestes et contrôles d'affichage.
+- Tests unitaires ciblés et pipelines GitHub Actions revus.
+- Inventaire de licences tiers et provisionnement vérifié du firmware x86 OVMF dans le script de build.
+
+## Bloqueurs non physiques qui restent à traiter avant une release logicielle honnête
+
+1. Le runtime QEMU x86_64/i386 n'est pas dans le bundle Android pinned ; le script de build produit un add-on séparé, mais l'importation de cet add-on dans l'application et son expérience UI restent à finaliser.
+2. Le runtime pinned ne fournit pas virtiofsd ni swtpm ; leurs constructions Android et leur installation en add-ons restent à terminer.
+3. Le cache L0/L1/L2/L3 conserve des profils et métadonnées, pas les Translation Blocks compilés ; un vrai cache inter-lancement demanderait une modification TCG/QEMU et une politique de sécurité/invalidation spécifique.
+4. Le moteur JIT personnalisé à plusieurs niveaux n'est pas implémenté ; seule la traduction QEMU TCG réelle et son profilage applicatif sont utilisés.
+5. La signature des packages est vérifiée si sidecars fournis, mais PhoenixVM ne génère pas encore automatiquement une paire de clés et la signature d'export.
+6. Le SBOM/licence fichier par fichier de tout le runtime n'est pas encore complet.
+7. Le niveau de qualité Android/Kotlin final doit être prouvé par un run GitHub Actions complet, après les derniers commits.
+
+## Travaux explicitement exclus car physiques ou liés au matériel
+
+- Boot réel de Linux/Windows/Android guest et tests des ISOs.
+- Autorisation OEM et exécution réelle de KVM/Gunyah/GenieZone/Halla/AVF.
+- Compatibilité GPU/Vulkan/Surface/audio/USB réel.
+- Benchmark, chauffe, throttling soutenu, batterie, veille et stabilité multi-VM.
+- Matrice Snapdragon/Dimensity/Exynos/Tensor.
+- Comparaison réelle avec Limbo/QEMU/crosvm sous charges équivalentes.
+
+Ces exclusions ne sont pas présentées comme des « tâches terminées ». Elles sont identifiées comme validations physiques requises, conformément à la portée demandée.
