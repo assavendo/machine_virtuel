@@ -73,6 +73,8 @@ class VmStore(context: Context) {
             androidSystemPath = o.optString("androidSystemPath"),
             androidVendorPath = o.optString("androidVendorPath"),
             androidUserdataPath = o.optString("androidUserdataPath"),
+            androidAdbEnabled = o.optBoolean("androidAdbEnabled", false),
+            androidAdbHostPort = o.optInt("androidAdbHostPort", 5555),
             firmwarePath = o.optString("firmwarePath"),
             firmwareKind = o.optString("firmwareKind", "UEFI"),
             secureBoot = o.optBoolean("secureBoot", false),
@@ -127,6 +129,7 @@ class VmStore(context: Context) {
         put("diskPath", vm.diskPath); put("diskFormat", vm.diskFormat.name); put("diskSizeGiB", vm.diskSizeGiB)
         put("isoPath", vm.isoPath); put("kernelPath", vm.kernelPath); put("initrdPath", vm.initrdPath); put("dtbPath", vm.dtbPath)
         put("kernelCommandLine", vm.kernelCommandLine); put("androidSystemPath", vm.androidSystemPath); put("androidVendorPath", vm.androidVendorPath); put("androidUserdataPath", vm.androidUserdataPath)
+        put("androidAdbEnabled", vm.androidAdbEnabled); put("androidAdbHostPort", vm.androidAdbHostPort)
         put("firmwarePath", vm.firmwarePath); put("firmwareKind", vm.firmwareKind)
         put("secureBoot", vm.secureBoot); put("tpmEnabled", vm.tpmEnabled); put("tpmStatePath", vm.tpmStatePath)
         put("sharedDirPath", vm.sharedDirPath); put("sharedDirTag", vm.sharedDirTag); put("sharedDirReadOnly", vm.sharedDirReadOnly)
