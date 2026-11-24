@@ -34,6 +34,8 @@ object RuntimeDiagnostics {
 
         val virgl = File(paths.libDir, "libvirglrenderer.so")
         val gfxstream = File(paths.libDir, "libgfxstream_backend.so")
+        file("x86 runtime library directory", paths.x86LibDir)
+        file("x86 QEMU data directory", paths.qemuShareX86)
         file("VirGL renderer", virgl)
         file("Gfxstream backend", gfxstream)
 
