@@ -86,7 +86,8 @@ object RuntimeInstaller {
         val p = RuntimePaths(context)
         return mapOf(
             "qemu_arm64" to p.qemu.canExecute(),
-            "qemu_x86_64" to p.hasX86SystemQemu(),
+            "qemu_x86_64" to (p.qemuX86.canExecute() || p.qemuX86Headless.canExecute()),
+            "qemu_i386" to p.qemuI386.canExecute(),
             "virtiofsd" to p.hasVirtiofsd(),
             "swtpm" to p.hasSwtpm(),
             "gfxstream" to File(p.libDir, "libgfxstream_backend.so").isFile,

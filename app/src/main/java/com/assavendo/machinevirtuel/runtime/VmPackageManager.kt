@@ -71,6 +71,14 @@ object VmPackageManager {
 
     fun importPackage(context: Context, packageFile: File): VmConfig {
         require(packageFile.isFile) { "Package VM introuvable." }
+        val signature = File(packageFile.absolutePath + ".sig")
+        val publicKey = File(packageFile.absolutePath + ".pub")
+        require(signature.isFile == publicKey.isFile) { "Package signature pair is incomplete." }
+        if (signature.isFile && publicKey.isFile) {
+            require(PackageSignatureVerifier.verifyFile(packageFile, signature, publicKey)) {
+                "Signature Ed25519 du package invalide."
+            }
+        }
         val staging = File(context.cacheDir, "vm-import-" + UUID.randomUUID()).apply { mkdirs() }
         try {
             unzipSafe(packageFile, staging)

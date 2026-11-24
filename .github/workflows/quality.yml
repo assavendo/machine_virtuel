@@ -32,9 +32,9 @@ jobs:
         run: |
           test -f docs/THIRD_PARTY_LICENSES.md
           test -f THIRD_PARTY/DroidVM-Prebuilts.txt
-      - name: Source policy check
+      - name: Full-system policy check
         run: |
-          if grep -R -nE 'Wine.*VMM|Winlator.*VMM|FEX.*VMM' app native docs; then
-            echo "Forbidden substitution wording detected."
+          if grep -R -nE 'Wine|Winlator|Box64|Box86|FEX' app/src/main/java/com/assavendo/machinevirtuel/runtime; then
+            echo "Compatibility layer leaked into the VMM runtime."
             exit 1
           fi

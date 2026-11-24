@@ -9,6 +9,7 @@ class RuntimePaths(val root: File) {
     val qemu = File(root, "usr/bin/qemu-system-aarch64")
     val qemuX86 = File(root, "usr/bin/qemu-system-x86_64")
     val qemuX86Headless = File(root, "usr/bin/qemu-system-x86_64-headless")
+    val qemuI386 = File(root, "usr/bin/qemu-system-i386")
     val qemuImg = File(root, "usr/bin/qemu-img")
     val crosvm = File(root, "usr/bin/crosvm")
     val virtiofsd = File(root, "usr/libexec/virtiofsd")
@@ -24,7 +25,7 @@ class RuntimePaths(val root: File) {
         qemu.canExecute() && crosvm.canExecute() && qemuImg.canExecute() &&
             libDir.isDirectory && edk2Qemu.isFile && edk2QemuVars.isFile
 
-    fun hasX86SystemQemu(): Boolean = qemuX86.canExecute() || qemuX86Headless.canExecute()
+    fun hasX86SystemQemu(): Boolean = qemuX86.canExecute() || qemuX86Headless.canExecute() || qemuI386.canExecute()
     fun hasVirtiofsd(): Boolean = virtiofsd.canExecute()
     fun hasSwtpm(): Boolean = swtpm.canExecute()
     fun marker(): File = File(root, ".runtime-version")

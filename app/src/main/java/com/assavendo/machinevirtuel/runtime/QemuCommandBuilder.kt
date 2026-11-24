@@ -19,7 +19,8 @@ object QemuCommandBuilder {
     ): List<String> {
         val qemu = when (vm.arch) {
             GuestArch.ARM64 -> paths.qemu
-            GuestArch.X86_64, GuestArch.X86_32 -> if (paths.qemuX86.canExecute()) paths.qemuX86 else paths.qemuX86Headless
+            GuestArch.X86_64 -> if (paths.qemuX86.canExecute()) paths.qemuX86 else paths.qemuX86Headless
+            GuestArch.X86_32 -> paths.qemuI386
         }
         if (!qemu.canExecute()) throw IllegalStateException(
             "Aucun QEMU systeme compatible avec l'architecture " + vm.arch.label + " n'est installé dans le runtime PhoenixVM."
