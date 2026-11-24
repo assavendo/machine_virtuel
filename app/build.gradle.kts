@@ -36,5 +36,6 @@ android {
 }
 dependencies {
     implementation("org.tukaani:xz:1.10")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.87")
     testImplementation("org.jetbrains.kotlin:kotlin-test:2.2.10")
 }
