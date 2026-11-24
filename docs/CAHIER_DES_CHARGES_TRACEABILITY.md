@@ -36,12 +36,12 @@ Ce document suit la numérotation originale du cahier, y compris son numéro 32 
 | 15. Réseau | PARTIEL | NAT, redirections de ports, mode TAP privilégié, VirtIO-net et paramètres par VM. Bridge réel, DNS/IPv6/MTU et permissions réseau varient selon Android et restent à tester sur appareil. |
 | 16. Audio | PARTIEL | Modèle d'option et périphérique virtio-sound avec backend AAudio configuré. Capture, sortie, latence et synchronisation audio/vidéo non validées sur téléphone. |
 | 17. Input | PARTIEL | Clavier, souris, tablette/touch VirtIO, gestes, raccourcis et chemin RFB présents. Remappage clavier complet, USB HID et latence tactile exigent essais d'usage réels. |
-| 18. Partage de fichiers | PARTIEL | VirtIO-FS lorsque virtiofsd est disponible, sinon 9p/VirtFS ; les partages read-only ne démarrent pas par un chemin virtiofs non pris en charge. Le runtime Android virtiofsd n'est pas inclus dans le bundle épinglé. |
+| 18. Partage de fichiers | PARTIEL | VirtIO-FS lorsque virtiofsd est disponible, sinon 9p/VirtFS ; les partages read-only ne démarrent pas par un chemin virtiofs non pris en charge. Un installateur d'add-on virtiofsd vérifié (SHA-256, staging, rollback, dépendances isolées) et son builder Android ARM64 sont maintenant présents ; l'artefact doit encore être réellement construit et validé sur l'appareil. |
 | 19. Boot et firmware | PARTIEL | EDK2 ARM64 séparé et OVMF x86_64 séparé, NVRAM par VM et boot ISO/disque configurés. Le firmware x86 est fourni par un script d'approvisionnement ; QEMU x86 est fourni via une extension séparée, importable depuis l'interface avec vérification d'intégrité. La construction et le boot guest restent à valider. |
 | 20. Systèmes invités cibles | PARTIEL | Modèle d'architecture/OS et QEMU ARM64 full-system. La compatibilité Linux ARM64 est le chemin prioritaire mais doit encore réussir un boot réel ; Windows, Android et BSD ne sont pas annoncés comme validés. |
 | 21. Mode Windows | PARTIEL | Le chemin QEMU x86 full-system et firmware OVMF sont préparés ; Windows ARM64/x86, VirtIO drivers, TPM, UEFI Secure Boot et activation ne sont pas validés. |
 | 22. Mode Android guest | À FAIRE | Le schéma d'un guest Android est documenté, mais l'orchestration concrète des images kernel/boot/vendor/system/userdata, bootloader et ADB n'est pas achevée. |
-| 23. Hypervisor Manager | PARTIEL | Détection et abstractions de KVM/Gunyah/GenieZone/Halla/AVF et sélection présentes. Les backends OEM/AVF sont désactivés jusqu'à disponibilité de leurs interfaces complètes et autorisées. |
+| 23. Hypervisor Manager | PARTIEL | Détection et abstractions de KVM/Gunyah/GenieZone/Halla/AVF et sélection présentes. KVM/QEMU et crosvm KVM/Gunyah/GenieZone/Halla possèdent maintenant des chemins de lancement software réels ; AVF reste fail-closed jusqu'à son bridge Android complet et autorisé. |
 | 24. Orchestrateur automatique | PARTIEL | Sélection, admission, fallback, scheduler et profil thermique présents. L'optimisation par mesures de tous les backends et profils cross-backend exige des mesures de runtime. |
 | 25. Monitoring temps réel | PARTIEL | CPU PID, RSS, CPU système, mémoire, thermique, fréquence, pression mémoire, I/O et réseau collectés ; historique. GPU wait, traduction, interruptions invitées et mesures kernel privilégiées manquent ou ne sont pas exposées. |
 | 26. Mode performance extrême | PARTIEL | Profil et politiques d'allocation/cache/vCPU présents. Aucune promesse de débit n'est faite sans benchmark, et le GPU accéléré dépend du téléphone/runtime. |
@@ -60,7 +60,7 @@ Ce document suit la numérotation originale du cahier, y compris son numéro 32 
 | 34. Gestion des images | PARTIEL | Import ISO/disque, métadonnées et opérations qemu-img. Catalogue de téléchargement OS, vérification complète des images et reprise réseau ne sont pas achevés. |
 | 35. Gestion des licences | PARTIEL | Manifeste amont exact, inventaire upstream, provenance OVMF et Bouncy Castle. Le SBOM complet fichier/version/licence de tous les binaires et notices est encore requis avant toute redistribution publique. |
 | 36. API interne | PARTIEL | API/service/event bus et surfaces Kotlin présents. Contrat complet versionné, IPC robuste, compatibilité et documentation API automatisée restent à achever. |
-| 37. Format de package VM | PARTIEL | Package versionné avec config, disque, NVRAM, snapshots, SHA-256, limites ZIP et signature Ed25519 facultative. Génération/gestion de clés et signature de paquets par défaut, chiffrement et compatibilité de versions restent à compléter. |
+| 37. Format de package VM | PARTIEL | Package versionné avec config, disque, NVRAM, snapshots, SHA-256, limites ZIP et signature Ed25519 automatique à l'export. L'identité de signature est générée par installation, la clé privée est chiffrée via Android Keystore et les sidecars sont publiés transactionnellement ; la gestion de confiance inter-appareils/chiffrement du package reste à compléter. |
 | 38. Recovery / résilience | PARTIEL | Recovery plan, snapshots et remplacement transactionnel du runtime/disque. Récupération après coupure brutale du téléphone et tests d'injection de panne non réalisés. |
 | 39. Logging / diagnostic | PARTIEL | Journaux de service, par VM, niveaux et export diagnostics présents. Rotation, redaction exhaustive des secrets, support bundle sur incident et validation de taille restent incomplets. |
 | 40. Interface utilisateur | PARTIEL | Dashboard et contrôles VM, import ISO, package, snapshots, diagnostics et conseils. Les flux UX complets, accessibilité, état d'installation du runtime facultatif et réglages experts restent à terminer. |
@@ -97,7 +97,9 @@ Ce document suit la numérotation originale du cahier, y compris son numéro 32 
 - QEMU/QMP : arguments validés, contrôle de disponibilité QMP avant l'état RUNNING, pause/reprise/redémarrage/arrêt propre sur QEMU TCG/KVM, requête balloon contrôlée.
 - Disques : tailles RAW correctes, commandes qemu-img avec timeouts et sorties drainées, vérification avant compactage et rollback.
 - Snapshots froids : manifestes, hashes disque/NVRAM, protection, rétention et restauration transactionnelle.
-- Packages VM : limites ZIP, vérification hash, import/export atomique, snapshots portables et Ed25519 en streaming avec fournisseur Bouncy Castle.
+- Packages VM : limites ZIP, vérification hash, import/export atomique, snapshots portables, signature Ed25519 automatique en streaming et identité protégée par Android Keystore.
+- Hyperviseur crosvm : lancement full-system ARM64 réel avec socket de contrôle, commandes pause/reprise/arrêt et fallback vers QEMU lorsque le chemin matériel échoue.
+- Add-ons runtime : installation isolée et transactionnelle de virtiofsd/swtpm avec manifeste SHA-256, dépendances natives séparées et outils de build Android ARM64.
 - Cache metadata L0/L1/L2/L3, fingerprints, validation/invalidation, statistiques, profils et réglage du vrai \`tb-size\` QEMU.
 - Scheduler global branché au lancement, admission RAM multi-VM, compteurs CPU process/système et mesures mémoire/thermique/I/O/réseau.
 - RFB : correction du message SetEncodings et limites de mémoire pour les dimensions framebuffer.
@@ -108,12 +110,12 @@ Ce document suit la numérotation originale du cahier, y compris son numéro 32 
 ## Bloqueurs non physiques qui restent à traiter avant une release logicielle honnête
 
 1. Le runtime QEMU x86_64/i386 n'est pas dans le bundle Android pinned. Le script de build, l'OVMF vérifié, l'archive avec manifeste SHA-256 et l'import UI avec rollback sont présents ; il reste à construire le binaire pour l'environnement Android cible et à tester sa compatibilité dynamique/boot.
-2. Le runtime pinned ne fournit pas virtiofsd ni swtpm ; leurs constructions Android et leur installation en add-ons restent à terminer.
+2. Les mécanismes logiciels de construction/import de virtiofsd et swtpm sont maintenant présents. Il reste à produire les artefacts Android ARM64 vérifiés et à valider leur exécution réelle sur appareil.
 3. Le cache L0/L1/L2/L3 conserve des profils et métadonnées, pas les Translation Blocks compilés ; un vrai cache inter-lancement demanderait une modification TCG/QEMU et une politique de sécurité/invalidation spécifique.
 4. Le moteur JIT personnalisé à plusieurs niveaux n'est pas implémenté ; seule la traduction QEMU TCG réelle et son profilage applicatif sont utilisés.
-5. La signature des packages est vérifiée si sidecars fournis, mais PhoenixVM ne génère pas encore automatiquement une paire de clés et la signature d'export.
+5. La signature d'export est maintenant automatique. Il reste à définir et implémenter une politique de confiance inter-appareils (empreintes/pinning/rotation), sans confondre clé publique embarquée et preuve d'origine.
 6. Le SBOM/licence fichier par fichier de tout le runtime n'est pas encore complet.
-7. Le niveau de qualité Android/Kotlin final doit être prouvé par un run GitHub Actions complet, après les derniers commits.
+7. Le niveau de qualité Android/Kotlin final doit être prouvé par un run GitHub Actions complet sur le dernier commit stable, sans annulation par concurrency.
 
 ## Travaux explicitement exclus car physiques ou liés au matériel
 
