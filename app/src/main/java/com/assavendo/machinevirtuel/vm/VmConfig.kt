@@ -14,6 +14,12 @@ data class PortForward(
     val guestPort: Int,
 )
 
+data class SharedDirectory(
+    val hostPath: String,
+    val tag: String = "shared",
+    val readOnly: Boolean = false,
+)
+
 data class VmConfig(
     val id: String = UUID.randomUUID().toString(),
     var name: String,
@@ -46,6 +52,7 @@ data class VmConfig(
     var sharedDirPath: String = "",
     var sharedDirTag: String = "shared",
     var sharedDirReadOnly: Boolean = false,
+    var sharedDirs: List<SharedDirectory> = emptyList(),
     var backend: BackendKind = BackendKind.QEMU_TCG,
     var mode: VmMode = VmMode.AUTO,
     var performancePreset: PerformancePreset = PerformancePreset.BALANCED,
