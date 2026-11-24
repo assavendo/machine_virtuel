@@ -36,11 +36,14 @@ object DeviceTopology {
             ?: emptyList()
         if (cpus.isEmpty()) return CpuTopology(emptyList(), emptyList(), emptyList())
         val maxCapacity = cpus.mapNotNull { it.capacity }.maxOrNull()
+        val maxFrequency = cpus.mapNotNull { it.maxFrequencyKHz }.maxOrNull()
         val classified = cpus.map {
             val clazz = when {
-                maxCapacity == null -> PerformanceClass.UNKNOWN
-                it.capacity == maxCapacity -> PerformanceClass.PERFORMANCE
-                else -> PerformanceClass.EFFICIENCY
+                maxCapacity != null && it.capacity != null ->
+                    if (it.capacity == maxCapacity) PerformanceClass.PERFORMANCE else PerformanceClass.EFFICIENCY
+                maxFrequency != null && it.maxFrequencyKHz != null ->
+                    if (it.maxFrequencyKHz == maxFrequency) PerformanceClass.PERFORMANCE else PerformanceClass.EFFICIENCY
+                else -> PerformanceClass.UNKNOWN
             }
             it.copy(performanceClass = clazz)
         }
