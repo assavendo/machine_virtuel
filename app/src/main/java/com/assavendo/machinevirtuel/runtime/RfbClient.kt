@@ -100,7 +100,7 @@ class RfbClient(
         output!!.write(format.array())
 
         val encodings = ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN)
-        encodings.put(2.toByte()).put(ByteArray(3)).putShort(1).putInt(0)
+        encodings.put(2.toByte()).put(0.toByte()).putShort(1).putInt(0)
         output!!.write(encodings.array())
 
         sendFramebufferRequest(false)
@@ -122,6 +122,7 @@ class RfbClient(
     private fun readFramebufferUpdate(input: BufferedInputStream) {
         readFixed(input, 1)
         val rectCount = readU16(input)
+        require(rectCount in 0..8192) { "RFB rectangle count exceeds the safety limit." }
         repeat(rectCount) {
             val x = readU16(input)
             val y = readU16(input)
@@ -129,9 +130,14 @@ class RfbClient(
             val h = readU16(input)
             val encoding = readInt(input)
             require(encoding == 0) { "Unsupported RFB encoding: $encoding" }
-            val raw = ByteArray(w * h * 4)
+            require(w > 0 && h > 0 && x + w <= width && y + h <= height) {
+                "RFB rectangle is outside the negotiated framebuffer."
+            }
+            val pixelCount = w.toLong() * h.toLong()
+            require(pixelCount <= 16_777_216L) { "RFB rectangle exceeds the framebuffer memory limit." }
+            val raw = ByteArray((pixelCount * 4L).toInt())
             readFully(input, raw)
-            val pixels = IntArray(w * h)
+            val pixels = IntArray(pixelCount.toInt())
             var p = 0
             for (i in pixels.indices) {
                 val b = raw[p++].toInt() and 255
