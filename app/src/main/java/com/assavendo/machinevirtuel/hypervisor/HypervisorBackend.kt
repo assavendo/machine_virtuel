@@ -18,6 +18,7 @@ data class BackendLaunchSpec(
     val command: List<String>,
     val environment: Map<String, String>,
     val qmpSocket: File?,
+    val controlSocket: File?,
 )
 
 interface HypervisorBackend {
