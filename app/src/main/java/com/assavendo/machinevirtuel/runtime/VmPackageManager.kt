@@ -2,6 +2,7 @@ package com.assavendo.machinevirtuel.runtime
 
 import android.content.Context
 import android.os.StatFs
+import com.assavendo.machinevirtuel.security.PackageSignatureManager
 import com.assavendo.machinevirtuel.security.PackageSignatureVerifier
 import com.assavendo.machinevirtuel.security.SecurityGuards
 import com.assavendo.machinevirtuel.vm.*
@@ -84,7 +85,19 @@ object VmPackageManager {
             .put("vm_config", VmStore(context).encodeConfigForPackage(portableConfig))
 
         val temp = File(parent, output.name + ".pending-" + UUID.randomUUID())
+        val pendingSignature = File(temp.absolutePath + ".sig")
+        val pendingPublicKey = File(temp.absolutePath + ".pub")
         val backup = File(parent, output.name + ".backup-" + UUID.randomUUID())
+        val backupSignature = File(backup.absolutePath + ".sig")
+        val backupPublicKey = File(backup.absolutePath + ".pub")
+        val outputSignature = File(output.absolutePath + ".sig")
+        val outputPublicKey = File(output.absolutePath + ".pub")
+        var packageMoved = false
+        var signatureMoved = false
+        var publicKeyMoved = false
+        var oldSignatureMoved = false
+        var oldPublicKeyMoved = false
+
         try {
             ZipOutputStream(BufferedOutputStream(FileOutputStream(temp), 256 * 1024)).use { zip ->
                 putJson(zip, "manifest.json", manifest)
@@ -109,27 +122,70 @@ object VmPackageManager {
                 }
             }
 
+            // Sign the exact package bytes before any path is published. This makes a successful
+            // export and its signature a single logical transaction.
+            PackageSignatureManager.signFile(context, temp, pendingSignature, pendingPublicKey)
+
             if (output.exists()) {
                 check(output.renameTo(backup)) { "Impossible de sauvegarder l'ancien package." }
-            }
-            if (!temp.renameTo(output)) {
-                if (backup.exists()) check(backup.renameTo(output)) {
-                    "L'export a échoué et l'ancien package n'a pas pu être restauré."
+                packageMoved = true
+                if (outputSignature.exists()) {
+                    check(outputSignature.renameTo(backupSignature)) {
+                        "Impossible de sauvegarder l'ancienne signature du package."
+                    }
+                    oldSignatureMoved = true
                 }
-                error("Impossible de publier le package VM.")
+                if (outputPublicKey.exists()) {
+                    check(outputPublicKey.renameTo(backupPublicKey)) {
+                        "Impossible de sauvegarder l'ancienne clé publique du package."
+                    }
+                    oldPublicKeyMoved = true
+                }
             }
+
+            check(temp.renameTo(output)) {
+                "Impossible de publier le package VM."
+            }
+            packageMoved = false
+
+            check(pendingSignature.renameTo(outputSignature)) {
+                "Impossible de publier la signature du package VM."
+            }
+            signatureMoved = true
+            check(pendingPublicKey.renameTo(outputPublicKey)) {
+                "Impossible de publier la clé publique du package VM."
+            }
+            publicKeyMoved = true
+
             backup.delete()
-            // An old sidecar signature would authenticate different bytes after overwrite.
-            File(output.absolutePath + ".sig").delete()
-            File(output.absolutePath + ".pub").delete()
+            backupSignature.delete()
+            backupPublicKey.delete()
             return output
         } catch (t: Throwable) {
             temp.delete()
-            if (backup.exists() && !output.exists()) backup.renameTo(output)
+            pendingSignature.delete()
+            pendingPublicKey.delete()
+
+            if (packageMoved && !output.exists() && backup.exists()) {
+                backup.renameTo(output)
+            }
+            if (signatureMoved) outputSignature.delete()
+            if (publicKeyMoved) outputPublicKey.delete()
+
+            if (oldSignatureMoved && !outputSignature.exists() && backupSignature.exists()) {
+                backupSignature.renameTo(outputSignature)
+            }
+            if (oldPublicKeyMoved && !outputPublicKey.exists() && backupPublicKey.exists()) {
+                backupPublicKey.renameTo(outputPublicKey)
+            }
             throw t
         } finally {
             temp.delete()
+            pendingSignature.delete()
+            pendingPublicKey.delete()
             if (backup.exists() && output.exists()) backup.delete()
+            if (backupSignature.exists() && outputSignature.exists()) backupSignature.delete()
+            if (backupPublicKey.exists() && outputPublicKey.exists()) backupPublicKey.delete()
         }
     }
 
