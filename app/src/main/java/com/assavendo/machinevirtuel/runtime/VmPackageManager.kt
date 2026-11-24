@@ -58,7 +58,6 @@ object VmPackageManager {
             if (path.isBlank()) return@forEach
             val file = File(path).canonicalFile
             require(file.isFile && file.canRead()) { "Boot artifact introuvable: " + field }
-            artifactFields // keep field/path association explicit for package creation
             bootArtifacts.put(JSONObject().put("field", field).put("package_path", "boot/" + field.removeSuffix("Path") + "-" + file.name).put("size_bytes", file.length()).put("sha256", ImageVerifier.sha256(file)))
         }
 
@@ -250,16 +249,16 @@ object VmPackageManager {
                 val staged = SecurityGuards.canonicalChild(staging, File(staging, a.getString("package_path")))
                 require(staged.isFile && staged.length() == a.getLong("size_bytes")) { "Boot artifact invalide: " + field }
                 require(ImageVerifier.verify(staged, a.getString("sha256"))) { "SHA-256 boot artifact invalide: " + field }
-                val target = File(finalVmDir, "boot/" + field.removeSuffix("Path") + "-" + staged.name)
+                val target = File(tempVmDir, "boot/" + field.removeSuffix("Path") + "-" + staged.name)
                 target.parentFile?.mkdirs()
                 staged.copyTo(target, overwrite = false)
                 when (field) {
-                    "kernelPath" -> vm.kernelPath = target.absolutePath
-                    "initrdPath" -> vm.initrdPath = target.absolutePath
-                    "dtbPath" -> vm.dtbPath = target.absolutePath
-                    "androidSystemPath" -> vm.androidSystemPath = target.absolutePath
-                    "androidVendorPath" -> vm.androidVendorPath = target.absolutePath
-                    "androidUserdataPath" -> vm.androidUserdataPath = target.absolutePath
+                    "kernelPath" -> vm.kernelPath = File(finalVmDir, target.relativeTo(tempVmDir).path).absolutePath
+                    "initrdPath" -> vm.initrdPath = File(finalVmDir, target.relativeTo(tempVmDir).path).absolutePath
+                    "dtbPath" -> vm.dtbPath = File(finalVmDir, target.relativeTo(tempVmDir).path).absolutePath
+                    "androidSystemPath" -> vm.androidSystemPath = File(finalVmDir, target.relativeTo(tempVmDir).path).absolutePath
+                    "androidVendorPath" -> vm.androidVendorPath = File(finalVmDir, target.relativeTo(tempVmDir).path).absolutePath
+                    "androidUserdataPath" -> vm.androidUserdataPath = File(finalVmDir, target.relativeTo(tempVmDir).path).absolutePath
                 }
             }
 
