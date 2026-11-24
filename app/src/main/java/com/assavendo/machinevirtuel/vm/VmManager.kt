@@ -84,12 +84,16 @@ class VmManager(private val context: Context) {
         fun copyManagedArtifact(path: String, targetName: String): String {
             if (path.isBlank()) return ""
             val source = File(path).canonicalFile
-            if (!source.isFile) return path
+            if (!source.exists()) return path
             if (!source.toPath().startsWith(sourceDir.toPath())) return path
             val existing = copied[source.absolutePath]
             if (existing != null) return existing
             val target = File(targetDir, targetName)
-            source.copyTo(target, overwrite = false)
+            if (source.isDirectory) {
+                source.copyRecursively(target, overwrite = false)
+            } else {
+                source.copyTo(target, overwrite = false)
+            }
             copied[source.absolutePath] = target.absolutePath
             return target.absolutePath
         }
