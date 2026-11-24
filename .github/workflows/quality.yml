@@ -1,0 +1,40 @@
+name: Quality and security checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Rust format
+        run: cargo fmt --manifest-path native/phoenixvm-core/Cargo.toml -- --check
+      - name: Rust tests
+        run: cargo test --manifest-path native/phoenixvm-core/Cargo.toml
+      - name: Android unit tests
+        run: ./gradlew testDebugUnitTest
+      - name: Android lint
+        run: ./gradlew lintDebug
+      - name: License tracking files
+        run: |
+          test -f docs/THIRD_PARTY_LICENSES.md
+          test -f THIRD_PARTY/DroidVM-Prebuilts.txt
+      - name: Source policy check
+        run: |
+          if grep -R -nE 'Wine.*VMM|Winlator.*VMM|FEX.*VMM' app native docs; then
+            echo "Forbidden substitution wording detected."
+            exit 1
+          fi
