@@ -180,7 +180,7 @@ class VmRuntimeService : Service() {
                     }
 
                     val spec = backend.launchSpec(paths, vm.copy(backend = backend.kind), qmp, serial, log)
-                    val controlSocket = if (backend is CrosvmBackend) FilePaths.controlSocket(id) else null
+                    val controlSocket = spec.controlSocket
                     controlSocket?.delete()
                     val process = startBackend(spec, dir, paths, vm.arch, log)
                     try {
