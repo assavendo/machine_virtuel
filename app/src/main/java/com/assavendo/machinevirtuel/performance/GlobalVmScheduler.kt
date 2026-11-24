@@ -18,8 +18,10 @@ class GlobalVmScheduler {
     fun schedule(vms: List<VmConfig>, topology: CpuTopology, availableMemoryMb: Long): List<VmScheduleDecision> {
         if (vms.isEmpty()) return emptyList()
         val active = vms.filter { it.state == VmState.RUNNING || it.state == VmState.STARTING }
-        val performanceBudget = max(1, topology.performanceCores.size)
-        val efficiencyBudget = max(0, topology.efficiencyCores.size)
+        val topologyKnown = topology.performanceCores.isNotEmpty() || topology.efficiencyCores.isNotEmpty()
+        val performanceBudget = if (topologyKnown) max(1, topology.performanceCores.size)
+            else max(1, topology.logicalCpuCount)
+        val efficiencyBudget = if (topologyKnown) max(0, topology.efficiencyCores.size) else 0
         val ramBudget = max(1L, availableMemoryMb)
         val targetRamPerVm = max(512L, ramBudget / max(1, active.size))
         return active
