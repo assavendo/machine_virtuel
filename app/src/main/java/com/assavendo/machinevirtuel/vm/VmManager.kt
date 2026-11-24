@@ -6,6 +6,7 @@ import com.assavendo.machinevirtuel.host.HostCapabilityScanner
 import com.assavendo.machinevirtuel.performance.HostMetricsCollector
 import com.assavendo.machinevirtuel.performance.PerformanceAdvisor
 import com.assavendo.machinevirtuel.performance.PerformanceOptimizer
+import com.assavendo.machinevirtuel.performance.ResourceAdmissionController
 import com.assavendo.machinevirtuel.runtime.DiagnosticExporter
 import com.assavendo.machinevirtuel.runtime.DiskManager
 import com.assavendo.machinevirtuel.runtime.ImageVerifier
