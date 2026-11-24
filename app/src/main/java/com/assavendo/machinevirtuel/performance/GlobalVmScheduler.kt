@@ -28,14 +28,18 @@ class GlobalVmScheduler {
         }
         val ramBudget = max(1L, availableMemoryMb)
         val targetRamPerVm = max(512L, ramBudget / max(1, active.size))
-        val ordered = active.sortedWith(compareByDescending<VmConfig> {
-            when (it.performancePreset) {
-                PerformancePreset.ULTRA_PERFORMANCE, PerformancePreset.GAMING -> 4
-                PerformancePreset.PERFORMANCE, PerformancePreset.DEVELOPMENT -> 3
-                PerformancePreset.SERVER -> 2
-                else -> 1
-            }
-        }.thenBy { it.id })
+        val ordered = active.sortedWith(
+            compareByDescending<VmConfig> { it.vmPriority.coerceIn(0, 100) }
+                .thenByDescending {
+                    when (it.performancePreset) {
+                        PerformancePreset.ULTRA_PERFORMANCE, PerformancePreset.GAMING -> 4
+                        PerformancePreset.PERFORMANCE, PerformancePreset.DEVELOPMENT -> 3
+                        PerformancePreset.SERVER -> 2
+                        else -> 1
+                    }
+                }
+                .thenBy { it.id }
+        )
         val baseShare = max(1, totalBudget / max(1, ordered.size))
         val remainder = if (ordered.size <= totalBudget) totalBudget % ordered.size else 0
 
@@ -48,7 +52,8 @@ class GlobalVmScheduler {
             } else {
                 "Marge mémoire acceptable."
             }
-            VmScheduleDecision(vm.id, granted, cpuClass, 100 - index, ramPenalty)
+            val effectivePriority = vm.vmPriority.coerceIn(0, 100)
+            VmScheduleDecision(vm.id, granted, cpuClass, effectivePriority, ramPenalty)
         }
     }
 }
