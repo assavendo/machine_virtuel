@@ -68,7 +68,9 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         actions.addView(actionButton("Analyser", accent) { refresh() })
-        actions.addView(space(10))
+        actions.addView(space(8))
+        actions.addView(actionButton("Diagnostic", Color.rgb(70, 180, 170)) { showRuntimeDiagnostics() })
+        actions.addView(space(8))
         actions.addView(actionButton("Nouvelle VM", violet) { createVm() })
         content.addView(actions)
 
@@ -194,6 +196,19 @@ class MainActivity : Activity() {
                 setMargins(0, 0, 0, 12)
             })
         }
+    }
+
+    private fun showRuntimeDiagnostics() {
+        val diagnostics = runCatching { manager.runtimeDiagnostics() }
+            .getOrElse { listOf(com.assavendo.machinevirtuel.runtime.RuntimeDiagnostic("Runtime", false, it.message ?: "error")) }
+        val body = diagnostics.joinToString("\n") {
+            (if (it.ok) "✓ " else "✗ ") + it.component + " — " + it.detail
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Diagnostic du runtime")
+            .setMessage(body)
+            .setPositiveButton("Fermer", null)
+            .show()
     }
 
     private fun createVm() {
