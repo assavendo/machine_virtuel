@@ -87,8 +87,12 @@ class RfbClient(
 
         width = readU16(input)
         height = readU16(input)
+        require(width in 1..8192 && height in 1..8192 &&
+            width.toLong() * height.toLong() <= 16_777_216L
+        ) { "RFB framebuffer dimensions exceed the configured safety limits." }
         readFixed(input, 16)
         val nameLength = readInt(input)
+        require(nameLength in 0..1_048_576) { "RFB desktop name exceeds the safety limit." }
         if (nameLength > 0) readFixed(input, nameLength)
         listener.onSize(width, height)
 
