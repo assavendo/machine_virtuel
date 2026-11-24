@@ -53,6 +53,7 @@ object VmPackageManager {
             lastStartedAt = null,
         )
         val signingPublicKeyFingerprint = PackageSignatureManager.publicKeyFingerprint(context)
+        PackageTrustStore.trust(context, signingPublicKeyFingerprint)
         val bootArtifacts = JSONArray()
         val artifactFields = listOf(
             "kernelPath" to vm.kernelPath,
@@ -239,6 +240,10 @@ object VmPackageManager {
                 val actualFingerprint = ImageVerifier.sha256(publicKey)
                 require(fingerprint.equals(actualFingerprint, ignoreCase = true)) {
                     "La clé publique externe ne correspond pas à l'identité signée du manifeste."
+                }
+                require(PackageTrustStore.isTrusted(context, fingerprint)) {
+                    "La clé de signature du package n'est pas approuvée sur cet appareil. " +
+                        "Empreinte : " + fingerprint
                 }
                 require(PackageSignatureVerifier.verifyFile(packageFile, signature, publicKey)) {
                     "Signature Ed25519 du package invalide."
