@@ -17,6 +17,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 import org.tukaani.xz.XZInputStream
+import com.assavendo.machinevirtuel.vm.VmStore
+import com.assavendo.machinevirtuel.vm.VmState
+import com.assavendo.machinevirtuel.vm.GuestArch
 
 object RuntimeInstaller {
     private const val RUNTIME_REV = "DroidVM-Prebuilts:c4998e150a08f0e60d141591fd63ea0010eb4f75"
@@ -138,10 +141,8 @@ object RuntimeInstaller {
     fun removeOptionalX86(context: Context) = synchronized(lock) {
         val paths = RuntimePaths(context)
         val activeX86 = VmStore(context).list().any {
-            it.arch != com.assavendo.machinevirtuel.vm.GuestArch.ARM64 &&
-                (it.state == com.assavendo.machinevirtuel.vm.VmState.RUNNING ||
-                    it.state == com.assavendo.machinevirtuel.vm.VmState.STARTING ||
-                    it.state == com.assavendo.machinevirtuel.vm.VmState.PAUSED)
+            it.arch != GuestArch.ARM64 &&
+                (it.state == VmState.RUNNING || it.state == VmState.STARTING || it.state == VmState.PAUSED)
         }
         require(!activeX86) { "Arrêtez toutes les VM x86 avant de retirer le runtime." }
         if (paths.optionalRoot.exists()) {
@@ -446,7 +447,7 @@ object RuntimeInstaller {
                             !linkName.contains('\u0000')
                         ) { "Unsafe runtime symbolic link: " + name }
                         outputFile.parentFile?.mkdirs()
-                        require(!Files.exists(output)) { "Duplicate runtime archive path: " + name }
+                        require(!Files.exists(output.toPath())) { "Duplicate runtime archive path: " + name }
                         val target = output.toPath().parent.resolve(Paths.get(linkName)).normalize()
                         check(target.startsWith(root.canonicalFile.toPath().normalize())) {
                             "Runtime symbolic link escapes staging root: " + name
