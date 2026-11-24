@@ -2,9 +2,9 @@
 set -euo pipefail
 
 SWTPM_VERSION="0.10.2"
-SWTPM_COMMIT="32b5a05"
+SWTPM_COMMIT="32b5a0575991a73398de9749d63cafd847008af2"
 LIBTPMS_VERSION="0.10.2"
-LIBTPMS_COMMIT="03ff248"
+LIBTPMS_COMMIT="03ff2481e133540be3b3ffe3daa1483d2a73d967"
 SWTPM_REPO="https://github.com/stefanberger/swtpm.git"
 LIBTPMS_REPO="https://github.com/stefanberger/libtpms.git"
 PREFIX="${ANDROID_DEPS_PREFIX:-}"
