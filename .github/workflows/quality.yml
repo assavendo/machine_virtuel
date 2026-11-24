@@ -63,6 +63,10 @@ jobs:
       - name: Assemble debug APK
         run: gradle --no-daemon assembleDebug
 
+      - name: Shell script syntax
+        run: |
+          find scripts -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+
       - name: License tracking files
         run: |
           test -f docs/THIRD_PARTY_LICENSES.md
