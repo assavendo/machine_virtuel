@@ -52,6 +52,22 @@ object CrosvmCommandBuilder {
             add("--cpus"); add("num-cores=" + vm.vCpu.coerceIn(1, 256))
             add("--block"); add("path=" + disk.absolutePath)
 
+            when (vm.networkMode) {
+                com.assavendo.machinevirtuel.vm.NetworkMode.DISABLED -> Unit
+                com.assavendo.machinevirtuel.vm.NetworkMode.NAT -> {
+                    // Upstream crosvm's Android/Linux network path uses a preconfigured
+                    // persistent TAP or host-ip/netmask/mac; there is no Android slirp NAT path
+                    // here. Do not silently turn NAT into an unusable or privileged request.
+                }
+                com.assavendo.machinevirtuel.vm.NetworkMode.TAP -> {
+                    require(vm.tapName.matches(Regex("[A-Za-z0-9_.-]{1,15}"))) {
+                        "Le nom de l'interface TAP crosvm est invalide."
+                    }
+                    add("--net")
+                    add("tap-name=" + vm.tapName)
+                }
+            }
+
             if (vm.sharedDirPath.isNotBlank()) {
                 val shared = File(vm.sharedDirPath).canonicalFile
                 require(shared.isDirectory) { "Dossier partagé crosvm introuvable." }
