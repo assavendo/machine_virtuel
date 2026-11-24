@@ -174,7 +174,7 @@ object VmPackageManager {
 
             val store = VmStore(context)
             val configJson = manifest.optJSONObject("vm_config")
-            val vm = if (configJson != null) {
+            val decodedVm = if (configJson != null) {
                 store.decodeConfigFromPackage(configJson)
             } else {
                 VmConfig(
@@ -184,7 +184,7 @@ object VmPackageManager {
                     diskFormat = DiskFormat.valueOf(manifest.optString("disk_format", DiskFormat.RAW.name)),
                 )
             }
-            vm.id = id
+            val vm = decodedVm.copy(id = id)
             vm.name = manifest.optString("name", vm.name).take(120).ifBlank { "Imported VM" }
             vm.state = VmState.OFF
             vm.lastStartedAt = null
@@ -272,7 +272,7 @@ object VmPackageManager {
 
     private fun unzipSafe(zipFile: File, target: File) {
         val available = StatFs(target.absolutePath).availableBytes
-        val totalLimit = minOf(MAX_TOTAL_BYTES, (available * 9L) / 10L)
+        val totalLimit = minOf(MAX_TOTAL_BYTES, (available * 4L) / 10L)
         require(totalLimit > 0L) { "Espace de stockage insuffisant pour importer ce package." }
         val seen = mutableSetOf<String>()
         var entries = 0
@@ -286,7 +286,7 @@ object VmPackageManager {
                     !entry.name.contains('\u0000') && !entry.name.matches(Regex("^[A-Za-z]:.*"))
                 ) { "Chemin ZIP absolu ou invalide." }
                 val normalized = entry.name.trimEnd('/')
-                require(normalized.isNotBlank() && normalized.split('/').none { it == ".." || it == "." }) {
+                require(normalized.isNotBlank() && normalized.split('/').none { it.isBlank() || it == ".." || it == "." }) {
                     "Chemin ZIP avec traversée de répertoires."
                 }
                 require(seen.add(normalized)) { "Entrée ZIP dupliquée: " + normalized }
