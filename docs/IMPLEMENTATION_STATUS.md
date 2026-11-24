@@ -1,52 +1,55 @@
 # Implementation status against the source specification
 
-A feature is COMPLETE only after implementation and validation. No feature is marked complete merely because a class or UI placeholder exists.
+A feature is COMPLETE only after implementation and validation. The source specification is 64 sections; this matrix deliberately distinguishes implementation from device proof.
 
-## Full-system core
+## Full-system core — implemented
 
-- Real full-system VM boundary: IMPLEMENTED.
-- Pinned full-system runtime (QEMU/crosvm/UEFI/VirtIO libraries): IMPLEMENTED.
-- Safe runtime extraction and critical SHA-256 verification: IMPLEMENTED.
-- QEMU ARM64 virt machine: IMPLEMENTED.
-- QEMU KVM selection: IMPLEMENTED in code; device validation pending.
-- QEMU TCG multi-threaded translation: IMPLEMENTED.
-- UEFI + per-VM writable NVRAM: IMPLEMENTED.
-- Persistent raw disk: IMPLEMENTED.
-- qcow2/vhdx/vdi/vmdk creation/conversion primitives: IMPLEMENTED in qemu-img layer; UI wiring pending.
-- ISO attachment: IMPLEMENTED.
-- VirtIO block/network/GPU/tablet/keyboard/RNG devices in QEMU path: IMPLEMENTED.
-- Virtual USB controller: IMPLEMENTED in QEMU path; host USB passthrough pending.
-- RTC: IMPLEMENTED.
-- 9p shared directory: IMPLEMENTED in QEMU command path; guest mount UX pending.
-- QMP powerdown/pause/resume: IMPLEMENTED.
-- Cold disk/NVRAM snapshots: IMPLEMENTED; live RAM-state snapshots pending.
-- Embedded raw-RFB/VNC display/input baseline: IMPLEMENTED.
-- Foreground VM runtime service: IMPLEMENTED.
-- Root-aware process launcher: IMPLEMENTED.
-- crosvm KVM/Gunyah/GenieZone/Halla selection and launch foundation: IMPLEMENTED.
+- Full-system VM boundary: CPU, RAM, UEFI/NVRAM, virtual disks, network, GPU, input and lifecycle.
+- Pinned DroidVM-Prebuilts runtime, safe extraction and critical SHA-256 verification.
+- QEMU ARM64 virt machine with KVM selection and TCG multi-thread fallback.
+- Per-VM persistent raw disk and qemu-img primitives for qcow2/vhdx/vdi/vmdk.
+- UEFI pflash + writable NVRAM.
+- Optional installer ISO.
+- VirtIO block, network, GPU, multitouch, keyboard, RNG.
+- QEMU XHCI USB controller and UTC RTC.
+- 9p shared directory with optional read-only mode.
+- QMP shutdown/pause/resume.
+- Cold disk/NVRAM snapshots.
+- Embedded RFB/VNC framebuffer + pointer/keyboard events.
+- Foreground service lifecycle with truthful RUNNING/OFF/ERROR state.
+- Root-aware process launcher and TAP interface preparation.
+- NAT port forwarding.
+- GPU backend modes: software, VirGL, Gfxstream/rutabaga selection.
+- VirtIO sound + Android AAudio QEMU backend path.
+- HypervisorBackend abstraction with lifecycle/resize/device/metrics contract.
+- crosvm backend selection/launch foundation for KVM, Gunyah, GenieZone and Halla.
 
-## Still incomplete from the complete source specification
+## Implemented but device-dependent
 
-- crosvm Android-native display/input bridge.
-- Root TAP/bridge networking and IPv6 bridge modes.
-- virtio-snd with AAudio/Oboe host audio.
-- Shared folders via virtio-fs in addition to 9p.
-- USB host device passthrough and automatic permissions.
-- TPM 2.0 integration.
-- Suspend-to-disk / saved-memory state.
-- Live VM snapshots with RAM/CPU/device state.
-- High-performance Vulkan/gfxstream/Venus shared-buffer display path.
-- Persistent x86 translation cache connected to a real DynaRec/JIT.
-- Tiered JIT implementation and profiling database.
-- Thermal-aware vCPU/p-core/e-core scheduler.
-- Complete Windows ARM64/x86_64 boot and driver acceptance suite.
-- Complete Android guest acceptance suite.
-- Multi-device hardware test matrix.
-- Sustained benchmark suite and measured proof of the requested 20% improvement.
-- Complete image manager UI, clone/export/import packages and recovery workflows.
+- KVM acceleration depends on /dev/kvm permissions and kernel/vendor configuration.
+- Gunyah/GenieZone/Halla depend on vendor hypervisor device nodes and permissions.
+- TAP networking depends on root and Android kernel tun support.
+- VirGL/Gfxstream depends on the packaged renderer, EGL/Vulkan availability and device driver behavior.
+- AAudio depends on the QEMU Android audio build and host audio stack.
 
-## MVP reality check
+## Still requiring dedicated backend work or on-device proof
 
-The repository now contains a genuine full-system QEMU backend with real guest CPU/RAM/UEFI/disk/network/GPU/input and an embedded display path.
+- crosvm-native Android display/input bridge.
+- crosvm full network bridge/NAT orchestration and crosvm audio UI path.
+- virtio-fs shared folders in addition to 9p.
+- USB host device passthrough and Android permission handling.
+- TPM 2.0 / swtpm integration.
+- Suspend-to-disk and live RAM/device-state migration snapshots.
+- Direct Vulkan shared-buffer display into Android Surface without VNC.
+- x86_64 QEMU runtime packaged for ARM64 hosts.
+- Persistent x86 DynaRec translation cache, tiered JIT and profile database.
+- Thermal-aware scheduler with per-core affinity and sustained-load control.
+- Device profile database and multi-device compatibility matrix.
+- Complete benchmark suite with measured comparison against Limbo/QEMU/crosvm/DroidVM.
+- Live VM clone/export/import and recovery package UI.
+- Windows ARM64/x86 acceptance suite and driver/UEFI coverage.
+- Android guest acceptance suite.
 
-It is not yet the final 100% source-spec product because the remaining peripherals, privileged Android integrations and performance systems above still require implementation and on-device validation.
+## MVP conclusion
+
+The ARM64 full-system QEMU path is now a genuine VM engine rather than an application emulator. The remaining list is intentionally not hidden: those items require either additional native backend engineering or physical-device validation before they can be called complete.

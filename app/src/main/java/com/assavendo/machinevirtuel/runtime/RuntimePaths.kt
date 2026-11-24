@@ -7,6 +7,7 @@ class RuntimePaths(val root: File) {
     constructor(context: Context) : this(File(context.filesDir, "runtime"))
 
     val qemu = File(root, "usr/bin/qemu-system-aarch64")
+    val qemuX86 = File(root, "usr/bin/qemu-system-x86_64")
     val qemuImg = File(root, "usr/bin/qemu-img")
     val crosvm = File(root, "usr/bin/crosvm")
     val libDir = File(root, "usr/lib")
@@ -20,5 +21,6 @@ class RuntimePaths(val root: File) {
         qemu.canExecute() && crosvm.canExecute() && qemuImg.canExecute() &&
             libDir.isDirectory && edk2Qemu.isFile && edk2QemuVars.isFile
 
+    fun hasX86SystemQemu(): Boolean = qemuX86.canExecute()
     fun marker(): File = File(root, ".runtime-version")
 }
