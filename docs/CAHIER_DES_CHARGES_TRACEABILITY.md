@@ -101,6 +101,8 @@ Ce document suit la numérotation originale du cahier, y compris son numéro 32 
 - Hyperviseur crosvm : lancement full-system ARM64 réel avec socket de contrôle, commandes pause/reprise/arrêt et fallback vers QEMU lorsque le chemin matériel échoue.
 - Add-ons runtime : installation isolée et transactionnelle de virtiofsd/swtpm avec manifeste SHA-256, dépendances natives séparées et outils de build Android ARM64.
 - Android guest : persistence des boot artifacts et ADB NAT optionnel dans la configuration/commande QEMU.
+- VM clones : copie des artefacts de boot/Android/TPM gérés par PhoenixVM, sans recopier automatiquement les chemins externes.
+- Snapshots : snapshot froid initial optionnel à l'installation, rétention et restauration avec vérification SHA-256/rollback.
 - Recovery UI : consultation du plan persistant et restauration manuelle d'un snapshot vérifié, sans suppression automatique des données.
 - Supply chain : inventaire SBOM reproductible de 91 fichiers prébuilt et 21 composants/licences déclarés, validé en CI.
 - Cache metadata L0/L1/L2/L3, fingerprints, validation/invalidation, statistiques, profils et réglage du vrai \`tb-size\` QEMU.
