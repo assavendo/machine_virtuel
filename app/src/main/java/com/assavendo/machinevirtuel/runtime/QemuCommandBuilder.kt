@@ -216,7 +216,7 @@ object QemuCommandBuilder {
         args += "-qmp"; args += "unix:" + qmp.absolutePath + ",server=on,wait=off"
         args += "-serial"; args += "file:" + serial.absolutePath
         args += "-D"; args += log.absolutePath
-        args += "-L"; args += paths.qemuShare.absolutePath
+        args += "-L"; args += paths.dataDir(vm.arch).absolutePath
         args += "-no-reboot"
         return args
     }
