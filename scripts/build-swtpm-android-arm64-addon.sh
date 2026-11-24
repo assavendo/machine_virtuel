@@ -60,14 +60,14 @@ make DESTDIR="$SYSROOT" install
 
 cat > "$SYSROOT/lib/pkgconfig/libtpms.pc" <<EOF
 prefix=/usr
-exec_prefix=${prefix}
-libdir=${prefix}/lib
-includedir=${prefix}/include
+exec_prefix=\${prefix}
+libdir=\${prefix}/lib
+includedir=\${prefix}/include
 Name: libtpms
 Description: libtpms for PhoenixVM Android ARM64
 Version: ${LIBTPMS_VERSION}
-Libs: -L${libdir} -ltpms
-Cflags: -I${includedir}
+Libs: -L\${libdir} -ltpms
+Cflags: -I\${includedir}
 EOF
 
 cd "$SWTPM_SRC"
