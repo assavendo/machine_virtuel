@@ -66,10 +66,8 @@ object CrosvmCommandBuilder {
                     ) { "kernelCommandLine invalide." }
                     add("--params"); add(vm.kernelCommandLine)
                 }
-                if (vm.dtbPath.isNotBlank()) {
-                    require(File(vm.dtbPath).isFile) { "DTB guest introuvable." }
-                    add("--device-tree"); add(vm.dtbPath)
-                }
+                // crosvm generates and exposes its own guest FDT on ARM64. The explicit
+                // DTB path remains a QEMU full-system feature in this runtime.
             }
 
             add("--socket")
