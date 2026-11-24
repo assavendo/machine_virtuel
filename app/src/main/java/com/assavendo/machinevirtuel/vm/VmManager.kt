@@ -96,9 +96,9 @@ class VmManager(private val context: Context) {
         require(managedDir.toPath().startsWith(allowedRoot.toPath()) && managedDir != allowedRoot) {
             "Répertoire de VM non sûr."
         }
-        val disk = File(vm.diskPath).takeIf { it.isNotBlank() }?.canonicalFile
-        val firmware = File(vm.firmwarePath).takeIf { it.isNotBlank() }?.canonicalFile
-        val tpm = File(vm.tpmStatePath).takeIf { it.isNotBlank() }?.canonicalFile
+        val disk = vm.diskPath.takeIf { it.isNotBlank() }?.let(::File)?.canonicalFile
+        val firmware = vm.firmwarePath.takeIf { it.isNotBlank() }?.let(::File)?.canonicalFile
+        val tpm = vm.tpmStatePath.takeIf { it.isNotBlank() }?.let(::File)?.canonicalFile
         fun deleteManaged(file: File?) {
             if (file != null && file.toPath().startsWith(managedDir.toPath())) {
                 file.deleteRecursively()
