@@ -22,8 +22,23 @@ data class BackendLaunchSpec(
 
 interface HypervisorBackend {
     val kind: BackendKind
+
     fun detect(host: HostCapabilities, vm: VmConfig): Boolean
     fun capabilities(host: HostCapabilities): BackendCapabilities
+
+    fun createVm(vm: VmConfig) {}
+    fun startVm(vm: VmConfig): BackendLaunchSpec =
+        throw UnsupportedOperationException("startVm must be implemented by the concrete backend")
+    fun stopVm(vm: VmConfig): Boolean = false
+    fun pauseVm(vm: VmConfig): Boolean = false
+    fun resumeVm(vm: VmConfig): Boolean = false
+    fun setMemory(vm: VmConfig, memoryMb: Int): Boolean = false
+    fun setVcpus(vm: VmConfig, vcpus: Int): Boolean = false
+    fun attachDevice(vm: VmConfig, descriptor: String): Boolean = false
+    fun detachDevice(vm: VmConfig, descriptor: String): Boolean = false
+    fun metrics(vm: VmConfig): Map<String, Number> = emptyMap()
+    fun destroyVm(vm: VmConfig) {}
+
     fun launchSpec(
         paths: RuntimePaths,
         vm: VmConfig,
@@ -31,6 +46,7 @@ interface HypervisorBackend {
         serial: File,
         log: File,
     ): BackendLaunchSpec
+
     fun supportsPauseResume(): Boolean = false
     fun supportsResize(): Boolean = false
 }
