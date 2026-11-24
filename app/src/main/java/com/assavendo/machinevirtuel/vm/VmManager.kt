@@ -9,6 +9,7 @@ import com.assavendo.machinevirtuel.runtime.DiagnosticExporter
 import com.assavendo.machinevirtuel.runtime.DiskManager
 import com.assavendo.machinevirtuel.runtime.ImageVerifier
 import com.assavendo.machinevirtuel.runtime.RecoveryManager
+import com.assavendo.machinevirtuel.runtime.RecoveryPlan
 import com.assavendo.machinevirtuel.runtime.RuntimeDiagnostics
 import com.assavendo.machinevirtuel.runtime.RuntimeInstaller
 import com.assavendo.machinevirtuel.runtime.RuntimePaths
