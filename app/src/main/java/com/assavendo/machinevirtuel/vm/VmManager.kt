@@ -48,7 +48,8 @@ class VmManager(private val context: Context) {
     fun create(config: VmConfig): VmConfig {
         val issues = VmSpecValidator.validate(config).filter { it.fatal }
         check(issues.isEmpty()) { issues.joinToString("; ") { it.field + ": " + it.message } }
-        DiskManager.ensureVmStorage(context.filesDir, config)
+        val runtime = if (config.diskFormat == DiskFormat.RAW) null else RuntimeInstaller.ensure(context)
+        DiskManager.ensureVmStorage(context.filesDir, config, runtime)
         store.save(store.list().toMutableList().apply { add(config) })
         return config
     }
@@ -80,14 +81,32 @@ class VmManager(private val context: Context) {
     fun stop(id: String) = store.update(id) { it.state = VmState.OFF }
 
     fun delete(id: String) {
-        val vm = store.list().firstOrNull { it.id == id }
-        store.save(store.list().filterNot { it.id == id })
-        cache.clear(id)
-        vm?.let {
-            File(it.diskPath).takeIf { file -> file.isFile }?.delete()
-            File(it.firmwarePath).takeIf { file -> file.isFile }?.delete()
-            File(it.tpmStatePath).takeIf { file -> file.isFile }?.delete()
+        val vm = store.list().firstOrNull { it.id == id } ?: return
+        require(vm.state == VmState.OFF || vm.state == VmState.ERROR) {
+            "Arrêtez la VM avant de la supprimer."
         }
+        val managedDir = File(context.filesDir, "vms/" + id).canonicalFile
+        val allowedRoot = File(context.filesDir, "vms").canonicalFile
+        require(managedDir.toPath().startsWith(allowedRoot.toPath()) && managedDir != allowedRoot) {
+            "Répertoire de VM non sûr."
+        }
+        val disk = File(vm.diskPath).takeIf { it.isNotBlank() }?.canonicalFile
+        val firmware = File(vm.firmwarePath).takeIf { it.isNotBlank() }?.canonicalFile
+        val tpm = File(vm.tpmStatePath).takeIf { it.isNotBlank() }?.canonicalFile
+        fun deleteManaged(file: File?) {
+            if (file != null && file.toPath().startsWith(managedDir.toPath())) {
+                file.deleteRecursively()
+            }
+        }
+        // Do not delete user-selected files outside PhoenixVM's private VM directory.
+        deleteManaged(disk)
+        deleteManaged(firmware)
+        deleteManaged(tpm)
+        managedDir.deleteRecursively()
+        File(context.filesDir, "snapshots/" + id).deleteRecursively()
+        File(context.filesDir, "logs/" + id).deleteRecursively()
+        cache.clear(id)
+        store.save(store.list().filterNot { it.id == id })
     }
 
     fun selectBackend(id: String): OrchestrationDecision {
