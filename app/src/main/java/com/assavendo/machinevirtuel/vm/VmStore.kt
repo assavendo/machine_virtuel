@@ -92,6 +92,7 @@ class VmStore(context: Context) {
             displayHeight = o.optInt("displayHeight", 720),
             dpi = o.optInt("dpi", 160),
             fullscreen = o.optBoolean("fullscreen", false),
+            headless = o.optBoolean("headless", false),
             audioEnabled = o.optBoolean("audioEnabled", true),
             audioFrequencyHz = o.optInt("audioFrequencyHz", 48000),
             audioChannels = o.optInt("audioChannels", 2),
@@ -135,7 +136,7 @@ class VmStore(context: Context) {
         put("sharedDirPath", vm.sharedDirPath); put("sharedDirTag", vm.sharedDirTag); put("sharedDirReadOnly", vm.sharedDirReadOnly)
         put("backend", vm.backend.name); put("mode", vm.mode.name); put("performancePreset", vm.performancePreset.name)
         put("profile", vm.profile.name); put("gpuBackend", vm.gpuBackend.name)
-        put("displayWidth", vm.displayWidth); put("displayHeight", vm.displayHeight); put("dpi", vm.dpi); put("fullscreen", vm.fullscreen)
+        put("displayWidth", vm.displayWidth); put("displayHeight", vm.displayHeight); put("dpi", vm.dpi); put("fullscreen", vm.fullscreen); put("headless", vm.headless)
         put("audioEnabled", vm.audioEnabled); put("audioFrequencyHz", vm.audioFrequencyHz); put("audioChannels", vm.audioChannels); put("audioBufferMs", vm.audioBufferMs)
         put("balloonEnabled", vm.balloonEnabled); put("memoryPreallocate", vm.memoryPreallocate); put("ioThreads", vm.ioThreads)
         put("networkMode", vm.networkMode.name); put("tapName", vm.tapName)
