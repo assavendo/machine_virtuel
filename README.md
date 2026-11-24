@@ -1,28 +1,35 @@
 # PhoenixVM / machine_virtuel
 
-PhoenixVM is an Android project for a real full-system virtual machine, not a Wine/Winlator application launcher.
+PhoenixVM is an Android full-system virtual machine engine, not a Wine/Winlator application launcher.
 
-The target architecture is:
-- QEMU System AArch64 for the complete compatibility/reference path;
-- KVM acceleration when the host exposes it;
-- crosvm with KVM, Gunyah, GenieZone or Halla when the device exposes those hypervisors;
-- UEFI firmware and per-VM NVRAM;
-- persistent virtual disks;
-- VirtIO block/network/GPU/input devices;
-- QMP lifecycle control;
-- embedded VNC display baseline;
-- persistent translation-cache infrastructure for future x86 DynaRec integration.
+## Architecture
 
-## Important current scope
+- Real full-system QEMU AArch64 reference backend.
+- QEMU x86_64/i386 full-system command path for an Android ARM64 x86 runtime when provisioned.
+- KVM, Gunyah, GenieZone, Halla and AVF capability-aware orchestration.
+- UEFI firmware and per-VM NVRAM.
+- Persistent RAW/qcow2/vhdx/vdi/vmdk storage.
+- VirtIO block/network/GPU/input/RNG, XHCI and RTC.
+- VirtIO-FS with 9p fallback when the verified runtime permits it.
+- Optional TPM 2.0 through verified swtpm.
+- QMP lifecycle control and foreground service.
+- VNC/RFB display baseline.
+- Adaptive scheduler, thermal/memory advisor, metrics history and translation-cache policy.
+- VM package export/import, checksummed cold snapshots and recovery diagnostics.
+- Kotlin API surface plus a native Rust policy core.
 
-The QEMU path is now a real full-system execution path and can boot a guest from a disk/ISO when the host allows the packaged runtime to execute.
+## Important truth boundary
 
-Android vendor permissions are a hard platform boundary: access to KVM/Gunyah/GenieZone/Halla nodes may require root or vendor/system privileges. PhoenixVM detects and reports the available backend rather than faking hardware acceleration.
+A backend is considered usable only when its real executable/device interface is present and can start the VM. PhoenixVM never reports fake KVM, fake GPU acceleration, fake TPM or fake x86 support.
 
-The repository intentionally keeps an implementation-status matrix. A peripheral or optimization is not declared complete until it is implemented and validated on hardware.
+The currently pinned DroidVM-Prebuilts bundle does not contain qemu-system-x86_64, virtiofsd or swtpm. The repository therefore contains explicit optional-runtime provisioning/build paths for those components.
 
 ## Build
 
-GitHub Actions checks out the pinned DroidVM-Prebuilts submodule, builds the native Rust core, runs unit tests/lint, assembles the Android debug APK and uploads it as an artifact.
+GitHub Actions checks out the pinned runtime submodule, builds the Rust native core, runs unit tests/lint and assembles the Android debug APK.
 
-The prebuilt full-system runtime is third-party code. See THIRD_PARTY/DroidVM-Prebuilts.txt for provenance.
+See:
+- docs/IMPLEMENTATION_STATUS.md — source-specification status matrix.
+- docs/FULL_SYSTEM_BACKEND.md — backend architecture.
+- docs/X86_FULL_SYSTEM_RUNTIME.md — x86 runtime provisioning.
+- THIRD_PARTY/DroidVM-Prebuilts.txt — runtime provenance/licensing.

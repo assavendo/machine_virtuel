@@ -1,55 +1,87 @@
 # Implementation status against the source specification
 
-A feature is COMPLETE only after implementation and validation. The source specification is 64 sections; this matrix deliberately distinguishes implementation from device proof.
+A feature is COMPLETE only after implementation and validation. This matrix distinguishes code implementation from device proof and from third-party runtime availability.
 
-## Full-system core — implemented
+## Implemented in code
 
-- Full-system VM boundary: CPU, RAM, UEFI/NVRAM, virtual disks, network, GPU, input and lifecycle.
-- Pinned DroidVM-Prebuilts runtime, safe extraction and critical SHA-256 verification.
-- QEMU ARM64 virt machine with KVM selection and TCG multi-thread fallback.
-- Per-VM persistent raw disk and qemu-img primitives for qcow2/vhdx/vdi/vmdk.
-- UEFI pflash + writable NVRAM.
-- Optional installer ISO.
-- VirtIO block, network, GPU, multitouch, keyboard, RNG.
-- QEMU XHCI USB controller and UTC RTC.
-- 9p shared directory with optional read-only mode.
-- QMP shutdown/pause/resume.
-- Cold disk/NVRAM snapshots.
-- Embedded RFB/VNC framebuffer + pointer/keyboard events.
-- Foreground service lifecycle with truthful RUNNING/OFF/ERROR state.
-- Root-aware process launcher and TAP interface preparation.
-- NAT port forwarding.
-- GPU backend modes: software, VirGL, Gfxstream/rutabaga selection.
-- VirtIO sound + Android AAudio QEMU backend path.
-- HypervisorBackend abstraction with lifecycle/resize/device/metrics contract.
-- crosvm backend selection/launch foundation for KVM, Gunyah, GenieZone and Halla.
+### VM model and orchestration
+- Persistent VM schema with ID, name, description, OS/version, architecture, machine type, firmware/NVRAM, disk format/size, RAM, vCPU, GPU/audio/network/share configuration, security/profile/mode fields, boot order, snapshot policy, monitoring and cache level.
+- Four modes: AUTO, PERFORMANCE, COMPATIBILITY, EXPERT.
+- Nine requested performance presets: Compatibility, Balanced, Performance, Ultra Performance, Battery Saver, Gaming, Office, Server, Development.
+- VM states: OFF, STARTING, RUNNING, PAUSED, SUSPENDED, STOPPING, ERROR, RECOVERY.
+- Backend orchestration with KVM, Gunyah, GenieZone, Halla, AVF capability gating and QEMU TCG fallback.
+- Explicit fail-closed handling when an optional backend or runtime component cannot actually execute.
+- Persistent VM event model and stable engine API.
 
-## Implemented but device-dependent
+### Full-system execution
+- ARM64 QEMU full-system path with virt machine, GIC v3, UEFI pflash/NVRAM, VirtIO block/network/GPU/input/RNG, XHCI and RTC.
+- x86_64/x86-32 command path with q35 + QEMU TCG/MTTCG, ready to use when the optional Android ARM64 QEMU x86 runtime is provisioned.
+- NAT, port forwarding and root/TAP orchestration.
+- 9p shared-folder fallback.
+- VirtIO-FS path when a verified virtiofsd is provisioned, with vhost-user memory-sharing configuration.
+- Optional TPM 2.0 path using verified swtpm, with architecture-correct QEMU TPM device.
+- QMP lifecycle control and foreground-service lifecycle.
+- Real process lifecycle determines RUNNING/OFF/ERROR; the app does not mark a VM running merely because a command was assembled.
 
-- KVM acceleration depends on /dev/kvm permissions and kernel/vendor configuration.
-- Gunyah/GenieZone/Halla depend on vendor hypervisor device nodes and permissions.
-- TAP networking depends on root and Android kernel tun support.
-- VirGL/Gfxstream depends on the packaged renderer, EGL/Vulkan availability and device driver behavior.
-- AAudio depends on the QEMU Android audio build and host audio stack.
+### Storage and state
+- RAW/qcow2/vhdx/vdi/vmdk creation primitives.
+- resize/convert/clone/check/compact through qemu-img.
+- cold snapshots with SHA-256 manifests, protection, retention and atomic restore.
+- VM package export/import with manifest, checksums, firmware/NVRAM and optional snapshots.
+- Safe ZIP extraction and path traversal protection.
+- Crash recovery plan preserving logs and user disks.
 
-## Still requiring dedicated backend work or on-device proof
+### Performance and translation policy
+- CPU topology detection for performance/efficiency capacity.
+- Global multi-VM scheduler policy.
+- Nine performance profiles with resource tuning.
+- Adaptive performance decisions using thermal and memory pressure.
+- Real-time host metrics: process/system CPU, memory, thermal state, temperature, frequency, I/O, network and memory-pressure telemetry.
+- 1/5/30-minute metric history abstraction.
+- Translation COLD/WARM/HOT/VERY_HOT policy and persistent cache metadata with fingerprints, translator version, host features, architecture and cache levels.
+- Native Rust backend-selection and translation-tier policy modules with unit tests.
+- The cache is an orchestration/metadata layer around QEMU TCG; it does not falsely claim to replace QEMU's internal translator.
 
-- crosvm-native Android display/input bridge.
-- crosvm full network bridge/NAT orchestration and crosvm audio UI path.
-- virtio-fs shared folders in addition to 9p.
-- USB host device passthrough and Android permission handling.
-- TPM 2.0 / swtpm integration.
-- Suspend-to-disk and live RAM/device-state migration snapshots.
-- Direct Vulkan shared-buffer display into Android Surface without VNC.
-- x86_64 QEMU runtime packaged for ARM64 hosts.
-- Persistent x86 DynaRec translation cache, tiered JIT and profile database.
-- Thermal-aware scheduler with per-core affinity and sustained-load control.
-- Device profile database and multi-device compatibility matrix.
-- Complete benchmark suite with measured comparison against Limbo/QEMU/crosvm/DroidVM.
-- Live VM clone/export/import and recovery package UI.
-- Windows ARM64/x86 acceptance suite and driver/UEFI coverage.
-- Android guest acceptance suite.
+### Security, images and diagnostics
+- Canonical path validation and allowed-root guards.
+- Explicit security policy flags for root backends, host-path sharing, TAP, package/image verification and per-VM network isolation.
+- SHA-256 image verification and image metadata model.
+- Verified runtime extraction with path traversal protection and critical binary/firmware hashes.
+- Optional runtime status for x86 QEMU, virtiofsd, swtpm, gfxstream and virglrenderer.
+- Diagnostic ZIP export including host data, runtime checks and logs.
+- ERROR/WARN/INFO/DEBUG/TRACE VM logger.
 
-## MVP conclusion
+### Benchmarking and tests
+- CPU, memory and sustained host benchmark primitives.
+- Unit tests for backend selection, VM spec validation, scheduler, image verification, security guards and QEMU command generation.
+- Rust unit tests for backend selection and translation tiers.
+- QEMU command tests cover ARM64, x86_64, NAT/forwarding and Gfxstream.
+- CI builds the native core, runs tests/lint and assembles the Android debug APK.
 
-The ARM64 full-system QEMU path is now a genuine VM engine rather than an application emulator. The remaining list is intentionally not hidden: those items require either additional native backend engineering or physical-device validation before they can be called complete.
+## Implemented but dependent on verified runtime/device capabilities
+
+- KVM, Gunyah, GenieZone, Halla and AVF require real device/vendor/system exposure and permissions.
+- Gfxstream/VirGL acceleration depends on the packaged renderer and Android GPU driver path.
+- VirtIO-FS depends on a compatible Android virtiofsd build and usable host permissions/user-namespace or equivalent isolation.
+- TPM depends on a verified Android swtpm build.
+- TAP/bridge networking depends on root and kernel networking support.
+- AAudio audio depends on the actual QEMU Android audio backend and device audio stack.
+- x86/x86_64 full-system execution is code-ready but the currently pinned DroidVM-Prebuilts bundle does not contain qemu-system-x86_64; the repository now contains a reproducible QEMU 11.1.3 runtime-build recipe.
+
+## Still requires on-device implementation/acceptance before being called complete
+
+- Direct Android Surface presentation with shared GPU buffers and Vulkan/Venus end-to-end; current display baseline remains local VNC/RFB.
+- Complete crosvm display/input/audio/network bridges for every vendor backend.
+- USB host passthrough and Android permission lifecycle.
+- Live suspend/resume with complete device/RAM state, as opposed to cold disk/NVRAM snapshots.
+- Full Windows ARM64/x86 acceptance, VirtIO driver coverage and TPM/Secure Boot validation.
+- Android guest acceptance suite with system/userdata/vendor/kernel/bootloader/ADB.
+- Device capability database covering Snapdragon, Dimensity, Exynos, Tensor and other ARM64 platforms.
+- Measured baseline suite against Limbo/QEMU/crosvm/DroidVM.
+- 100-boot/restore stress, 30/60-minute thermal, GPU, I/O and background-interruption stability runs.
+- Hardware security/sandbox fuzzing and supply-chain verification on representative devices.
+- Release-grade package migration/signing/update policy.
+
+## Honest status rule
+
+The project must not advertise hardware acceleration, GPU acceleration, x86 support, TPM, VirtIO-FS, AVF, native Surface presentation or performance gains unless the corresponding runtime component and physical-device validation are present. Unsupported paths fail closed and report why.

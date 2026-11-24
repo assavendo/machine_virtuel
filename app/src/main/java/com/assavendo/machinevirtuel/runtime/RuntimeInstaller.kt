@@ -1,3 +1,4 @@
+
 package com.assavendo.machinevirtuel.runtime
 
 import android.content.Context
@@ -23,17 +24,13 @@ object RuntimeInstaller {
             "PhoenixVM full runtime currently requires an arm64-v8a host."
         }
         val paths = RuntimePaths(context)
-        if (paths.marker().isFile && paths.marker().readText() == RUNTIME_REV && paths.isComplete()) {
-            return paths
-        }
+        if (paths.marker().isFile && paths.marker().readText() == RUNTIME_REV && paths.isComplete()) return paths
         check(installing.compareAndSet(false, true)) { "Runtime installation is already in progress." }
         try {
             installLocked(context, paths)
             check(paths.isComplete()) { "Required full-system runtime files are missing after extraction." }
             paths
-        } finally {
-            installing.set(false)
-        }
+        } finally { installing.set(false) }
     }
 
     private fun installLocked(context: Context, paths: RuntimePaths) {
@@ -42,40 +39,26 @@ object RuntimeInstaller {
         val staging = File(context.cacheDir, "runtime-staging")
         staging.deleteRecursively()
         val extracted = File(staging, "root").apply { mkdirs() }
-
         context.assets.open(asset).use { raw ->
-            XZInputStream(BufferedInputStream(raw, 128 * 1024)).use { xz ->
-                TarReader(xz).extractTo(extracted)
-            }
+            XZInputStream(BufferedInputStream(raw, 128 * 1024)).use { xz -> TarReader(xz).extractTo(extracted) }
         }
-
         verifyCriticalFiles(extracted)
         verifyCriticalHashes(context, manifestAsset, extracted)
-
         paths.root.deleteRecursively()
         extracted.copyRecursively(paths.root, overwrite = true)
         staging.deleteRecursively()
-        paths.marker().apply {
-            parentFile?.mkdirs()
-            writeText(RUNTIME_REV)
-        }
+        paths.marker().apply { parentFile?.mkdirs(); writeText(RUNTIME_REV) }
     }
 
     private fun verifyCriticalFiles(root: File) {
         listOf(
-            "usr/bin/qemu-system-aarch64",
-            "usr/bin/qemu-img",
-            "usr/bin/crosvm",
-            "usr/share/droidvm/edk2-qemu.fd",
-            "usr/share/droidvm/edk2-qemu.vars.fd",
-            "usr/lib/libgfxstream_backend.so",
-            "usr/lib/libvirglrenderer.so"
+            "usr/bin/qemu-system-aarch64", "usr/bin/qemu-img", "usr/bin/crosvm",
+            "usr/share/droidvm/edk2-qemu.fd", "usr/share/droidvm/edk2-qemu.vars.fd",
+            "usr/lib/libgfxstream_backend.so", "usr/lib/libvirglrenderer.so"
         ).forEach { path ->
             val file = File(root, path)
             check(file.isFile) { "Runtime file missing: $path" }
-            if (path.startsWith("usr/bin/")) {
-                check(file.setExecutable(true, false)) { "Cannot mark runtime executable: $path" }
-            }
+            if (path.startsWith("usr/bin/")) check(file.setExecutable(true, false)) { "Cannot mark runtime executable: $path" }
         }
     }
 
@@ -89,20 +72,26 @@ object RuntimeInstaller {
             val hash = item.optString("sha256")
             if (file.isNotBlank() && hash.isNotBlank()) hashes[file] = hash
         }
-
         listOf(
-            "usr/bin/qemu-system-aarch64",
-            "usr/bin/qemu-img",
-            "usr/bin/crosvm",
-            "usr/share/droidvm/edk2-qemu.fd",
-            "usr/share/droidvm/edk2-qemu.vars.fd"
+            "usr/bin/qemu-system-aarch64", "usr/bin/qemu-img", "usr/bin/crosvm",
+            "usr/share/droidvm/edk2-qemu.fd", "usr/share/droidvm/edk2-qemu.vars.fd"
         ).forEach { name ->
-            val expected = hashes[name] ?: error("Runtime manifest missing $name")
+            val expected = hashes[name] ?: error("Runtime manifest missing " + name)
             val actual = sha256(File(root, name))
-            check(expected.equals(actual, ignoreCase = true)) {
-                "Runtime hash mismatch for $name"
-            }
+            check(expected.equals(actual, ignoreCase = true)) { "Runtime hash mismatch for " + name }
         }
+    }
+
+    fun optionalRuntimeStatus(context: Context): Map<String, Boolean> {
+        val p = RuntimePaths(context)
+        return mapOf(
+            "qemu_arm64" to p.qemu.canExecute(),
+            "qemu_x86_64" to p.hasX86SystemQemu(),
+            "virtiofsd" to p.hasVirtiofsd(),
+            "swtpm" to p.hasSwtpm(),
+            "gfxstream" to File(p.libDir, "libgfxstream_backend.so").isFile,
+            "virglrenderer" to File(p.libDir, "libvirglrenderer.so").isFile,
+        )
     }
 
     private fun sha256(file: File): String {
@@ -126,7 +115,7 @@ object RuntimeInstaller {
                 if (header.all { it == 0.toByte() }) break
                 val name = header.copyOfRange(0, 100).ascii()
                 val prefix = header.copyOfRange(345, 500).ascii()
-                val fullName = if (prefix.isBlank()) name else "$prefix/$name"
+                val fullName = if (prefix.isBlank()) name else prefix + "/" + name
                 val mode = header.copyOfRange(100, 108).ascii().trim().toLongOrNull(8) ?: 0L
                 val size = header.copyOfRange(124, 136).ascii().trim().toLongOrNull(8) ?: 0L
                 val type = header[156].toInt().toChar()
@@ -136,11 +125,10 @@ object RuntimeInstaller {
                     '0', '\u0000' -> {
                         val out = File(root, fullName)
                         out.parentFile?.mkdirs()
-                        FileOutputStream(out).use { output -> copyExactly(input, output, size) }
+                        FileOutputStream(out).use { copyExactly(input, it, size) }
                         out.setReadable(true, false)
-                        if ((mode and 0x49L) != 0L || fullName.startsWith("usr/bin/") || fullName.startsWith("bin/")) {
-                            check(out.setExecutable(true, false)) { "Cannot mark executable: $fullName" }
-                        }
+                        if ((mode and 0x49L) != 0L || fullName.startsWith("usr/bin/") || fullName.startsWith("bin/"))
+                            check(out.setExecutable(true, false)) { "Cannot mark executable: " + fullName }
                     }
                     else -> skipExactly(input, size)
                 }
@@ -150,12 +138,9 @@ object RuntimeInstaller {
         }
 
         private fun validatePath(name: String) {
-            require(name.isNotBlank() && !name.startsWith("/") && !name.contains('\u0000')) {
-                "Unsafe runtime path: $name"
-            }
-            require(name.split('/').none { it == ".." }) { "Path traversal in runtime archive: $name" }
+            require(name.isNotBlank() && !name.startsWith("/") && !name.contains('\u0000')) { "Unsafe runtime path: " + name }
+            require(name.split('/').none { it == ".." }) { "Path traversal in runtime archive: " + name }
         }
-
         private fun readFully(buffer: ByteArray): ByteArray? {
             var count = 0
             while (count < buffer.size) {
@@ -166,7 +151,6 @@ object RuntimeInstaller {
             }
             return buffer
         }
-
         private fun copyExactly(input: InputStream, output: FileOutputStream, length: Long) {
             var remaining = length
             val buffer = ByteArray(128 * 1024)
@@ -177,20 +161,14 @@ object RuntimeInstaller {
                 remaining -= n
             }
         }
-
         private fun skipExactly(input: InputStream, length: Long) {
             var remaining = length
             while (remaining > 0) {
                 val n = input.skip(remaining)
                 if (n > 0) remaining -= n
-                else {
-                    check(input.read() >= 0) { "Truncated tar entry" }
-                    remaining--
-                }
+                else { check(input.read() >= 0) { "Truncated tar entry" }; remaining-- }
             }
         }
-
-        private fun ByteArray.ascii(): String =
-            String(this, Charsets.US_ASCII).trimEnd('\u0000', ' ')
+        private fun ByteArray.ascii(): String = String(this, Charsets.US_ASCII).trimEnd('\u0000', ' ')
     }
 }

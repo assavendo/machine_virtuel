@@ -1,5 +1,29 @@
 package com.assavendo.machinevirtuel.host
+
 data class HostCapabilities(
- val supportedAbis:List<String>,val cpuCount:Int,val maxMemoryMb:Long,val vulkan:Boolean,
- val kvm:Boolean,val gunyah:Boolean,val genieZone:Boolean,val halla:Boolean,val avfHint:Boolean,val rootedHint:Boolean
+    val supportedAbis: List<String>,
+    val cpuCount: Int,
+    val maxMemoryMb: Long,
+    val totalMemoryMb: Long = maxMemoryMb,
+    val availableMemoryMb: Long = maxMemoryMb,
+    val vulkan: Boolean,
+    val vulkanLevel: Int = 0,
+    val openGlEs: Boolean = false,
+    val kvm: Boolean,
+    val gunyah: Boolean,
+    val genieZone: Boolean,
+    val halla: Boolean,
+    val avfHint: Boolean,
+    val avfAvailable: Boolean = false,
+    val rootedHint: Boolean,
+    val selinuxEnforcing: Boolean = true,
+    val kernelVersion: String = "",
+    val apiLevel: Int = 0,
+    val manufacturer: String = "",
+    val model: String = "",
+    val soc: String = "",
+    val usbHost: Boolean = false,
+    val externalDisplayHint: Boolean = false,
+    val storageFreeMb: Long = 0,
+    val thermalStatus: Int = 0,
 )

@@ -1,54 +1,68 @@
 package com.assavendo.machinevirtuel.performance
 
+import com.assavendo.machinevirtuel.vm.PerformancePreset
 import com.assavendo.machinevirtuel.vm.PerformanceProfile
 import com.assavendo.machinevirtuel.vm.VmConfig
+import kotlin.math.max
+import kotlin.math.min
 
 data class OptimizationDecision(
     val vCpu: Int,
     val ramMb: Int,
     val gpuQuality: Int,
     val prefetchAggressiveness: Int,
+    val cpuShare: Int,
+    val monitoringIntervalMs: Long,
     val reason: String,
 )
 
 class PerformanceOptimizer {
     fun decide(vm: VmConfig, metrics: HostMetrics): OptimizationDecision {
-        val cpuCount = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
+        val topology = DeviceTopology.read()
+        val physicalBudget = max(1, topology.cores.size)
+        val profile = PerformanceProfilePolicy.resolve(vm)
+        val cpuLimit = min(vm.vCpu, physicalBudget)
         val safeCpu = when (vm.profile) {
-            PerformanceProfile.AUTO -> minOf(vm.vCpu, cpuCount)
-            PerformanceProfile.STABLE -> minOf(vm.vCpu, maxOf(1, cpuCount / 2))
-            PerformanceProfile.PERFORMANCE -> minOf(vm.vCpu, cpuCount)
-            PerformanceProfile.EXTREME -> minOf(vm.vCpu, cpuCount)
+            PerformanceProfile.STABLE -> min(cpuLimit, max(1, physicalBudget / 2))
+            PerformanceProfile.AUTO, PerformanceProfile.PERFORMANCE, PerformanceProfile.EXTREME -> cpuLimit
         }
 
         return when {
             metrics.isThrottling -> OptimizationDecision(
-                vCpu = maxOf(1, safeCpu - 1),
+                vCpu = max(1, safeCpu - 1),
                 ramMb = (vm.ramMb * 0.85).toInt().coerceAtLeast(768),
-                gpuQuality = 70,
-                prefetchAggressiveness = 40,
+                gpuQuality = min(profile.gpuQuality, 70),
+                prefetchAggressiveness = min(profile.prefetch, 40),
+                cpuShare = min(profile.cpuShare, 85),
+                monitoringIntervalMs = min(profile.monitoringIntervalMs, 500),
                 reason = "Réduction soutenue : throttling thermique détecté.",
             )
-            metrics.availableMemoryMb < 512L -> OptimizationDecision(
-                vCpu = maxOf(1, safeCpu - 1),
+            metrics.availableMemoryMb < 768L -> OptimizationDecision(
+                vCpu = max(1, safeCpu - 1),
                 ramMb = (vm.ramMb * 0.75).toInt().coerceAtLeast(768),
-                gpuQuality = 65,
-                prefetchAggressiveness = 30,
+                gpuQuality = min(profile.gpuQuality, 65),
+                prefetchAggressiveness = min(profile.prefetch, 30),
+                cpuShare = min(profile.cpuShare, 80),
+                monitoringIntervalMs = 500,
                 reason = "Pression mémoire Android élevée.",
             )
-            vm.profile == PerformanceProfile.EXTREME -> OptimizationDecision(
+            vm.profile == PerformanceProfile.EXTREME || vm.performancePreset == PerformancePreset.ULTRA_PERFORMANCE -> OptimizationDecision(
                 vCpu = safeCpu,
                 ramMb = vm.ramMb,
                 gpuQuality = 100,
                 prefetchAggressiveness = 100,
-                reason = "Profil EXTREME : ressources maximisées sous réserve des limites du host.",
+                cpuShare = 100,
+                monitoringIntervalMs = 250,
+                reason = "Profil ultra performance : ressources maximisées sous réserve des limites du host.",
             )
             else -> OptimizationDecision(
                 vCpu = safeCpu,
                 ramMb = vm.ramMb,
-                gpuQuality = 90,
-                prefetchAggressiveness = 70,
-                reason = "Profil stable/performance sans alerte thermique.",
+                gpuQuality = profile.gpuQuality,
+                prefetchAggressiveness = profile.prefetch,
+                cpuShare = profile.cpuShare,
+                monitoringIntervalMs = profile.monitoringIntervalMs,
+                reason = "Profil adaptatif sans alerte thermique ou mémoire.",
             )
         }
     }
