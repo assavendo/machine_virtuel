@@ -238,11 +238,11 @@ object RuntimeInstaller {
                 require(size in 0..MAX_ENTRY_BYTES) { "Runtime archive entry is oversized." }
                 when (type) {
                     'L' -> {
-                        longName = readTextEntry(size)
+                        longName = readTextEntry(size).toString(Charsets.UTF_8).trimEnd('\u0000', '\n')
                         continue
                     }
                     'K' -> {
-                        longLink = readTextEntry(size)
+                        longLink = readTextEntry(size).toString(Charsets.UTF_8).trimEnd('\u0000', '\n')
                         continue
                     }
                     'x' -> {
@@ -279,11 +279,11 @@ object RuntimeInstaller {
                     }
                     '0', '\u0000' -> {
                         outputFile.parentFile?.mkdirs()
-                        require(!Files.exists(output)) { "Duplicate runtime archive path: " + name }
-                        FileOutputStream(output.toFile()).use { copyExactly(size, it) }
-                        output.toFile().setReadable(true, false)
+                        require(!Files.exists(output.toPath())) { "Duplicate runtime archive path: " + name }
+                        FileOutputStream(output).use { copyExactly(size, it) }
+                        output.setReadable(true, false)
                         if ((mode and 0x49L) != 0L || name.startsWith("usr/bin/") || name.startsWith("bin/")) {
-                            check(output.toFile().setExecutable(true, false)) {
+                            check(output.setExecutable(true, false)) {
                                 "Cannot mark runtime executable: " + name
                             }
                         }
@@ -294,11 +294,11 @@ object RuntimeInstaller {
                         ) { "Unsafe runtime symbolic link: " + name }
                         outputFile.parentFile?.mkdirs()
                         require(!Files.exists(output)) { "Duplicate runtime archive path: " + name }
-                        val target = output.parent.resolve(Paths.get(linkName)).normalize()
+                        val target = output.toPath().parent.resolve(Paths.get(linkName)).normalize()
                         check(target.startsWith(root.canonicalFile.toPath().normalize())) {
                             "Runtime symbolic link escapes staging root: " + name
                         }
-                        Files.createSymbolicLink(output, Paths.get(linkName))
+                        Files.createSymbolicLink(output.toPath(), Paths.get(linkName))
                         skipExactly(size)
                     }
                     '1' -> {
@@ -307,9 +307,9 @@ object RuntimeInstaller {
                         ) { "Unsafe runtime hard link: " + name }
                         val target = safeChild(root, linkName)
                         outputFile.parentFile?.mkdirs()
-                        check(Files.isRegularFile(target)) { "Runtime hard-link target is missing: " + linkName }
+                        check(Files.isRegularFile(target.toPath())) { "Runtime hard-link target is missing: " + linkName }
                         require(!Files.exists(output)) { "Duplicate runtime archive path: " + name }
-                        Files.createLink(output, target)
+                        Files.createLink(output.toPath(), target.toPath())
                         skipExactly(size)
                     }
                     else -> error("Unsupported special tar entry type '" + type + "' for " + name)
