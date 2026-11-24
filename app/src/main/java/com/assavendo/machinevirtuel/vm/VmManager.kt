@@ -34,8 +34,14 @@ class VmManager(private val context: Context) {
         val caps = capabilities()
         val seed = VmConfig(name = name, guestOs = "Linux ARM64", arch = GuestArch.ARM64)
         val decision = orchestrator.choose(seed, caps)
+        val budget = com.assavendo.machinevirtuel.performance.ResourceAdmissionController
+            .check(seed.copy(ramMb = 2048), store.list(), caps)
+        val selectedRam = budget.recommendedRamMb
+        require(selectedRam >= 512) {
+            "Mémoire disponible insuffisante pour créer une VM par défaut en sécurité."
+        }
         val vm = seed.copy(
-            ramMb = 2048.coerceAtMost((caps.availableMemoryMb * 70 / 100).toInt().coerceAtLeast(1024)),
+            ramMb = selectedRam,
             vCpu = minOf(4, caps.cpuCount.coerceAtLeast(1)),
             mode = VmMode.AUTO,
             backend = decision.selected,
