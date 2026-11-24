@@ -33,6 +33,8 @@ class AndroidGuestCommandTest {
                 kernelCommandLine = "console=ttyAMA0 androidboot.hardware=generic",
                 androidSystemPath = system.absolutePath,
                 androidUserdataPath = userdata.absolutePath,
+                androidAdbEnabled = true,
+                androidAdbHostPort = 15555,
                 audioEnabled = false,
             )
             val command = QemuCommandBuilder.build(
@@ -42,6 +44,7 @@ class AndroidGuestCommandTest {
             assertTrue(command.contains("console=ttyAMA0 androidboot.hardware=generic"))
             assertTrue(command.any { it.contains("id=android-system") })
             assertTrue(command.any { it.contains("id=android-userdata") })
+            assertTrue(command.any { it == "user,id=net0,hostfwd=tcp::15555-:5555" })
         } finally {
             root.deleteRecursively()
         }
