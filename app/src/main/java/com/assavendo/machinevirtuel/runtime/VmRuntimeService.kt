@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.IBinder
 import com.assavendo.machinevirtuel.host.HostCapabilityScanner
 import com.assavendo.machinevirtuel.performance.HostMetricsCollector
+import com.assavendo.machinevirtuel.performance.ResourceAdmissionController
 import com.assavendo.machinevirtuel.performance.VmMetricsRegistry
 import com.assavendo.machinevirtuel.vm.*
 import java.io.File
@@ -47,6 +48,7 @@ class VmRuntimeService : Service() {
     }
 
     private val executor = Executors.newCachedThreadPool()
+    private val admissionLock = Any()
 
     override fun onCreate() {
         super.onCreate()
@@ -90,10 +92,16 @@ class VmRuntimeService : Service() {
                 }
             }
 
+            val host = HostCapabilityScanner(this).scan()
+            synchronized(admissionLock) {
+                val admission = ResourceAdmissionController.check(vm, store.list(), host)
+                check(admission.allowed) { admission.reason }
+                store.update(id) { it.state = VmState.STARTING }
+            }
+
             DiskManager.ensureVmStorage(filesDir, vm, paths)
             DiskManager.ensureNvram(vm, DiskManager.firmwareTemplate(paths, vm))
 
-            val host = HostCapabilityScanner(this).scan()
             val decision = VmOrchestrator().choose(vm, host)
             val candidates = decision.candidates.map { it.backend }.distinct().filter { backend ->
                 when (backend) {
@@ -196,7 +204,7 @@ class VmRuntimeService : Service() {
     }
 
     private fun monitorVm(id: String, handle: Handle, intervalMs: Long) {
-        val collector = HostMetricsCollector(this)
+        val collector = HostMetricsCollector(this, handle.process.pid())
         while (processes[id] === handle && handle.process.isAlive) {
             runCatching {
                 val sample = collector.sample()
