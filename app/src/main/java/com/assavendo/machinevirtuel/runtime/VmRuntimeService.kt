@@ -71,8 +71,16 @@ class VmRuntimeService : Service() {
         if (processes[id]?.process?.isAlive == true) return
 
         val vm = original.copy()
+        var tapOwned = false
         try {
             val paths = RuntimeInstaller.ensure(this)
+            if (vm.networkMode == com.assavendo.machinevirtuel.vm.NetworkMode.TAP) {
+                val tap = TapNetworkManager()
+                tapOwned = !tap.exists(vm.tapName)
+                check(tap.ensureInterface(vm.tapName)) {
+                    "Impossible de preparer l'interface TAP " + vm.tapName
+                }
+            }
             DiskManager.ensureVmStorage(filesDir, vm, paths)
             DiskManager.ensureNvram(vm, if (vm.backend == BackendKind.GUNYAH) paths.edk2GunyahVars else paths.edk2QemuVars)
             store.save(store.list().map { if (it.id == id) vm else it })
@@ -99,7 +107,7 @@ class VmRuntimeService : Service() {
                     vm.backend = activeBackend
                     process = startQemu(paths, vm, dir, qmp, serial, log)
                 }
-                Handle(process, activeBackend, qmp)
+                Handle(process, activeBackend, qmp, tapOwned)
             }
 
             check(handle.process.isAlive) { "Backend exited immediately; inspect " + log.absolutePath }
@@ -118,6 +126,9 @@ class VmRuntimeService : Service() {
                     VmStore(this).save(current)
                 }
                 processes.remove(id)
+                if (handle.tapOwned) {
+                    TapNetworkManager().removeInterface(vm.tapName)
+                }
                 updateNotification("VM " + vm.name + " stopped • exit " + exit)
             }
         } catch (t: Throwable) {
@@ -156,7 +167,7 @@ class VmRuntimeService : Service() {
             command, dir, mapOf("LD_LIBRARY_PATH" to paths.libDir.absolutePath), preferRoot = true
         )
         attachLogs(process, log)
-        return Handle(process, vm.backend, FilePaths.qmp(vm.id))
+        return Handle(process, vm.backend, FilePaths.qmp(vm.id), tapOwned)
     }
 
     private fun attachLogs(process: Process, log: File) {
@@ -192,6 +203,11 @@ class VmRuntimeService : Service() {
             handle.process.destroy()
         }
         processes.remove(id)
+        if (handle.tapOwned) {
+            VmStore(this).list().firstOrNull { it.id == id }?.tapName?.let {
+                TapNetworkManager().removeInterface(it)
+            }
+        }
         VmStore(this).update(id) { it.state = VmState.OFF }
     }
 
@@ -227,5 +243,6 @@ class VmRuntimeService : Service() {
         val process: Process,
         val backend: BackendKind,
         val qmp: File,
+        val tapOwned: Boolean,
     )
 }
