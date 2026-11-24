@@ -57,13 +57,13 @@ object QemuCommandBuilder {
                 args += "-accel"; args += "kvm"
                 args += "-cpu"; args += "host"
             } else {
-                args += "-accel"; args += "tcg,thread=multi"
+                args += "-accel"; args += "tcg,thread=multi,tb-size=" + tcgTbCacheSizeMb(vm)
                 args += "-cpu"; args += "max"
             }
         } else {
             val machine = if (vm.machineType.isBlank() || vm.machineType == "virt") "q35" else vm.machineType
             args += "-machine"; args += machine
-            args += "-accel"; args += "tcg,thread=multi"
+            args += "-accel"; args += "tcg,thread=multi,tb-size=" + tcgTbCacheSizeMb(vm)
             args += "-cpu"; args += "max"
         }
 
@@ -219,6 +219,27 @@ object QemuCommandBuilder {
         args += "-L"; args += paths.qemuShare.absolutePath
         args += "-no-reboot"
         return args
+    }
+
+    /** QEMU owns executable TB code; this only chooses the size of its in-memory TCG cache. */
+    private fun tcgTbCacheSizeMb(vm: VmConfig): Int {
+        val configured = when (vm.translationCacheLevel.coerceIn(0, 3)) {
+            0 -> 16
+            1 -> 32
+            2 -> 64
+            else -> 128
+        }
+        val presetCap = when (vm.performancePreset) {
+            com.assavendo.machinevirtuel.vm.PerformancePreset.BATTERY_SAVER,
+            com.assavendo.machinevirtuel.vm.PerformancePreset.COMPATIBILITY -> 32
+            com.assavendo.machinevirtuel.vm.PerformancePreset.ULTRA_PERFORMANCE,
+            com.assavendo.machinevirtuel.vm.PerformancePreset.GAMING,
+            com.assavendo.machinevirtuel.vm.PerformancePreset.DEVELOPMENT -> 128
+            else -> 64
+        }
+        // Reserve at least 7/8 of guest RAM for guest memory and Android/runtime overhead.
+        val ramCap = (vm.ramMb / 8).coerceAtLeast(16)
+        return minOf(configured, presetCap, ramCap).coerceIn(16, 128)
     }
 
     private fun qemuKeyValue(value: String, field: String): String {
