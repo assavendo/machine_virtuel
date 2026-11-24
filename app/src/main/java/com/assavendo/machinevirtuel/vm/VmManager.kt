@@ -4,8 +4,9 @@ import android.content.Context
 import com.assavendo.machinevirtuel.cache.TranslationCacheManager
 import com.assavendo.machinevirtuel.host.HostCapabilityScanner
 import com.assavendo.machinevirtuel.runtime.DiskManager
-import com.assavendo.machinevirtuel.runtime.RuntimePaths
+import com.assavendo.machinevirtuel.runtime.RuntimeDiagnostics
 import com.assavendo.machinevirtuel.runtime.RuntimeInstaller
+import com.assavendo.machinevirtuel.runtime.RuntimePaths
 
 class VmManager(private val context: Context) {
     private val store = VmStore(context)
@@ -55,4 +56,7 @@ class VmManager(private val context: Context) {
 
     fun runtimeReady(): Boolean =
         runCatching { RuntimeInstaller.ensure(context); true }.getOrDefault(false)
+
+    fun runtimeDiagnostics() =
+        RuntimeDiagnostics.run(context)
 }
