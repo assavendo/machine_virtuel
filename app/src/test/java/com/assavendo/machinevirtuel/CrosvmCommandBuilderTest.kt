@@ -41,7 +41,7 @@ class CrosvmCommandBuilderTest {
                 backend = BackendKind.GUNYAH,
                 diskPath = f.disk.absolutePath,
                 firmwarePath = f.firmware.absolutePath,
-                audioEnabled = false,
+                audioEnabled = true,
                 networkMode = com.assavendo.machinevirtuel.vm.NetworkMode.DISABLED,
             )
             val socket = File(f.root, "control.sock")
@@ -61,6 +61,8 @@ class CrosvmCommandBuilderTest {
             assertTrue(command.contains(f.paths.edk2Qemu.canonicalPath))
             assertTrue(command.contains("--socket"))
             assertTrue(command.contains(socket.absolutePath))
+            assertTrue(command.contains("--virtio-snd"))
+            assertTrue(command.contains("backend=aaudio,num_output_devices=1,num_input_devices=1"))
         } finally {
             f.root.deleteRecursively()
         }
