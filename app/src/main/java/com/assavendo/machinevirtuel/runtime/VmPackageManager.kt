@@ -197,6 +197,15 @@ object VmPackageManager {
         }
     }
 
+    fun packageKeyFingerprint(packageFile: File): String {
+        require(packageFile.isFile && packageFile.canRead()) { "Package VM introuvable ou illisible." }
+        val publicKey = File(packageFile.absolutePath + ".pub")
+        require(publicKey.isFile && publicKey.length() in 1..4096) {
+            "Clé publique du package absente ou invalide."
+        }
+        return ImageVerifier.sha256(publicKey)
+    }
+
     fun importPackage(context: Context, packageFile: File): VmConfig {
         require(packageFile.isFile && packageFile.canRead()) { "Package VM introuvable ou illisible." }
         val signature = File(packageFile.absolutePath + ".sig")
