@@ -7,6 +7,8 @@ import com.assavendo.machinevirtuel.hypervisor.QemuBackend
 import com.assavendo.machinevirtuel.vm.BackendKind
 import com.assavendo.machinevirtuel.vm.GuestArch
 import com.assavendo.machinevirtuel.vm.VmConfig
+import com.assavendo.machinevirtuel.vm.NetworkMode
+import com.assavendo.machinevirtuel.vm.VmSpecValidator
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -38,3 +40,31 @@ class HypervisorManagerTest {
         assertFalse(CrosvmBackend(BackendKind.KVM).detect(base, vm))
     }
 }
+
+    @Test
+    fun crosvmRequiresHeadlessModeAndNonNatNetworking() {
+        val vm = VmConfig(
+            name = "guest",
+            arch = GuestArch.ARM64,
+            backend = BackendKind.KVM,
+            headless = false,
+            networkMode = NetworkMode.NAT,
+        )
+        val issues = VmSpecValidator.validate(vm)
+        assertTrue(issues.any { it.field == "headless" && it.fatal })
+        assertTrue(issues.any { it.field == "networkMode" && it.fatal })
+    }
+
+    @Test
+    fun crosvmIsAllowedForHeadlessTapGuest() {
+        val vm = VmConfig(
+            name = "guest",
+            arch = GuestArch.ARM64,
+            backend = BackendKind.KVM,
+            headless = true,
+            networkMode = NetworkMode.TAP,
+        )
+        val issues = VmSpecValidator.validate(vm)
+        assertFalse(issues.any { it.field == "headless" && it.fatal })
+        assertFalse(issues.any { it.field == "networkMode" && it.fatal })
+    }
