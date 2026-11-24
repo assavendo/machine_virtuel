@@ -23,7 +23,7 @@ object VmSpecValidator {
             issues += ValidationIssue("backend", "Le guest x86_64 exige actuellement QEMU TCG.", false)
         if (vm.arch == GuestArch.X86_32 && vm.backend != BackendKind.QEMU_TCG)
             issues += ValidationIssue("backend", "Le guest x86 32-bit exige actuellement QEMU TCG.", false)
-        if (vm.backend in setOf(BackendKind.GUNYAH, BackendKind.GENIEZONE, BackendKind.HALLA, BackendKind.KVM) &&
+        if (vm.backend in setOf(BackendKind.GUNYAH, BackendKind.GENIEZONE, BackendKind.HALLA) &&
             !vm.headless
         ) {
             issues += ValidationIssue(
@@ -32,7 +32,7 @@ object VmSpecValidator {
                 true
             )
         }
-        if (vm.backend in setOf(BackendKind.GUNYAH, BackendKind.GENIEZONE, BackendKind.HALLA, BackendKind.KVM) &&
+        if (vm.backend in setOf(BackendKind.GUNYAH, BackendKind.GENIEZONE, BackendKind.HALLA) &&
             vm.networkMode == NetworkMode.NAT
         ) {
             issues += ValidationIssue(
