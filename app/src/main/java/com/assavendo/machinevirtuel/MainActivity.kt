@@ -344,7 +344,8 @@ class MainActivity : Activity() {
             toast(it.message ?: "Optimisation impossible.")
             return
         }
-        AlertDialog.Builder(this)
+        val canApply = vm.state == VmState.OFF || vm.state == VmState.ERROR
+        val builder = AlertDialog.Builder(this)
             .setTitle("Auto Optimizer — " + vm.name)
             .setMessage(
                 "Backend : " + advice.currentBackend + "\n" +
@@ -352,10 +353,22 @@ class MainActivity : Activity() {
                     "RAM recommandée : " + advice.recommendedRamMb + " MB\n" +
                     "GPU : " + advice.recommendedGpuMode + "\n" +
                     "Thermique : " + advice.thermalState + "\n\n" +
-                    advice.actions.joinToString("\n")
+                    advice.actions.joinToString("\n") +
+                    if (canApply) "\n\nLes ressources vCPU/RAM et la fréquence de monitoring peuvent être appliquées à cette VM arrêtée." else
+                        "\n\nLa VM doit être arrêtée pour appliquer automatiquement ces changements."
             )
-            .setPositiveButton("Fermer", null)
-            .show()
+            .setNegativeButton("Fermer", null)
+        if (canApply) {
+            builder.setPositiveButton("Analyser et appliquer") { _, _ ->
+                runCatching { manager.applyOptimization(vm.id) }
+                    .onSuccess {
+                        toast("Optimisation appliquée. Vérifiez le benchmark avant/après.")
+                        refresh()
+                    }
+                    .onFailure { toast("Optimisation : " + (it.message ?: "échec")) }
+            }
+        }
+        builder.show()
     }
 
     private fun exportVm(vm: VmConfig) {
