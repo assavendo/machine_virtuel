@@ -2,11 +2,11 @@
 set -euo pipefail
 
 OVMF_VERSION="2025.02-8+deb13u1"
-OVMF_PACKAGE="ovmf_\${OVMF_VERSION}_all.deb"
-OVMF_URL="https://deb.debian.org/debian/pool/main/e/edk2/\${OVMF_PACKAGE}"
+OVMF_PACKAGE="ovmf_${OVMF_VERSION}_all.deb"
+OVMF_URL="https://deb.debian.org/debian/pool/main/e/edk2/${OVMF_PACKAGE}"
 OVMF_SHA256="78e0d54df11fc77406cb7a0bc9a39e5bca6d1cbe06556b91d9a73491c52decdf"
 
-DESTINATION="\${1:-}"
+DESTINATION="${1:-}"
 if [[ -z "$DESTINATION" ]]; then
   echo "Usage: $0 <runtime-pack-root>" >&2
   exit 2
