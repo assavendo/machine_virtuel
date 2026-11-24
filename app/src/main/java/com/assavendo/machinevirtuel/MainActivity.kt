@@ -1,22 +1,31 @@
 package com.assavendo.machinevirtuel
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.widget.*
-import com.assavendo.machinevirtuel.engine.NativeEngine
+import com.assavendo.machinevirtuel.runtime.VmRuntimeService
+import com.assavendo.machinevirtuel.ui.VmDisplayView
 import com.assavendo.machinevirtuel.vm.VmManager
 import com.assavendo.machinevirtuel.vm.VmState
+import java.io.File
 
 class MainActivity : Activity() {
     private lateinit var manager: VmManager
+    private lateinit var vmContainer: LinearLayout
     private lateinit var capabilityLabel: TextView
     private lateinit var cacheLabel: TextView
-    private lateinit var vmContainer: LinearLayout
+    private val handler = Handler(Looper.getMainLooper())
+    private var isoTargetVm: String? = null
 
     private val bg = Color.rgb(11, 14, 19)
     private val panel = Color.rgb(21, 26, 34)
@@ -30,6 +39,11 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         manager = VmManager(this)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 42)
+        }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -43,7 +57,7 @@ class MainActivity : Activity() {
         scroll.addView(content)
 
         content.addView(title("PhoenixVM", 30f))
-        content.addView(subtitle("Machine virtuelle complète Android • orchestrateur multi-backend"))
+        content.addView(subtitle("Full-system VM Android • QEMU + crosvm • UEFI • VirtIO • cache persistant"))
 
         content.addView(sectionTitle("Hôte"))
         capabilityLabel = cardText()
@@ -66,13 +80,8 @@ class MainActivity : Activity() {
         cacheLabel = cardText()
         content.addView(cacheLabel)
 
-        content.addView(sectionTitle("Moteur natif"))
-        content.addView(cardText().apply {
-            text = "Core natif : " + NativeEngine.version()
-        })
-
         content.addView(TextView(this).apply {
-            text = "Aucune VM n'est annoncée comme active tant qu'un runtime QEMU/crosvm réellement exécutable n'est pas installé. Cette règle évite les faux positifs."
+            text = "Architecture : vraie VM complète. Le cœur ne repose pas sur Wine/Winlator. Le runtime QEMU/crosvm est extrait, vérifié par SHA-256 et exécuté comme backend réel."
             setTextColor(muted)
             textSize = 12f
             setPadding(4, 22, 4, 0)
@@ -81,6 +90,16 @@ class MainActivity : Activity() {
         root.addView(scroll, LinearLayout.LayoutParams(-1, -1))
         setContentView(root)
         refresh()
+        scheduleRefresh()
+    }
+
+    private fun scheduleRefresh() {
+        handler.postDelayed(object : Runnable {
+            override fun run() {
+                refresh()
+                handler.postDelayed(this, 1000)
+            }
+        }, 1000)
     }
 
     private fun refresh() {
@@ -94,11 +113,10 @@ class MainActivity : Activity() {
                 .append("   Gunyah : ").append(yesNo(caps.gunyah)).append('\n')
             append("GenieZone : ").append(yesNo(caps.genieZone))
                 .append("   Halla : ").append(yesNo(caps.halla))
-                .append("   AVF possible : ").append(yesNo(caps.avfHint)).append('\n')
-            append("Indice root : ").append(yesNo(caps.rootedHint))
+                .append("   AVF possible : ").append(yesNo(caps.avfHint))
         }
         val stats = manager.cacheStats()
-        cacheLabel.text = "Fichiers persistants : " + stats.files + " • Taille : " + (stats.bytes / 1024) + " KiB"
+        cacheLabel.text = "Fichiers : " + stats.files + " • Taille : " + (stats.bytes / 1024) + " KiB"
         renderVms()
     }
 
@@ -107,7 +125,7 @@ class MainActivity : Activity() {
         val vms = manager.list()
         if (vms.isEmpty()) {
             vmContainer.addView(cardText().apply {
-                text = "Aucune VM. Crée un profil ARM64 pour commencer la validation de l'orchestrateur."
+                text = "Aucune VM. Crée une VM puis sélectionne une ISO Linux/Windows/Android lorsque nécessaire."
             })
             return
         }
@@ -123,27 +141,35 @@ class MainActivity : Activity() {
                 vm.guestOs + " • " + vm.arch.label + " • " + vm.ramMb + " MB • " +
                     vm.vCpu + " vCPU • backend " + vm.backend.label
             ))
-            card.addView(subtitle("État : " + vm.state.name + " • profil : " + vm.profile.name))
+            card.addView(subtitle(
+                "État : " + vm.state.name +
+                    " • disque : " + File(vm.diskPath).name +
+                    " • ISO : " + if (vm.isoPath.isBlank()) "aucune" else File(vm.isoPath).name
+            ))
 
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            if (vm.state == VmState.RUNNING) {
-                row.addView(actionButton("Arrêter", bad) {
-                    manager.stop(vm.id)
-                    refresh()
-                })
-            } else {
-                row.addView(actionButton("Démarrer", good) {
-                    when (val result = manager.start(vm.id)) {
-                        is com.assavendo.machinevirtuel.vm.StartResult.Started ->
-                            toast("Backend sélectionné : " + result.backend.label)
-                        is com.assavendo.machinevirtuel.vm.StartResult.NotReady ->
-                            toast(result.reason)
+            when (vm.state) {
+                VmState.RUNNING, VmState.STARTING -> {
+                    row.addView(actionButton("Arrêter", bad) {
+                        VmRuntimeService.stop(this@MainActivity, vm.id)
+                    })
+                    if (vm.state == VmState.RUNNING) {
+                        row.addView(space(8))
+                        row.addView(actionButton("Écran", accent) { showDisplay(vm.id) })
                     }
-                    refresh()
-                })
+                }
+                else -> {
+                    row.addView(actionButton("Démarrer", good) {
+                        manager.markStarting(vm.id)
+                        VmRuntimeService.start(this@MainActivity, vm.id)
+                    })
+                }
             }
             row.addView(space(8))
+            row.addView(actionButton("ISO", violet) { chooseIso(vm.id) })
+            row.addView(space(8))
             row.addView(actionButton("Supprimer", Color.rgb(95, 104, 118)) {
+                VmRuntimeService.stop(this@MainActivity, vm.id)
                 manager.delete(vm.id)
                 refresh()
             })
@@ -162,7 +188,7 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this)
             .setTitle("Nouvelle machine virtuelle")
-            .setMessage("Création d'un profil ARM64 complet. Le disque, l'ISO et le runtime backend seront reliés aux vrais moteurs dans les prochaines étapes.")
+            .setMessage("Création d'un PC virtuel complet avec disque 16 GiB sparse, UEFI/NVRAM persistants et backend auto.")
             .setView(input)
             .setNegativeButton("Annuler", null)
             .setPositiveButton("Créer") { _, _ ->
@@ -172,8 +198,50 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun yesNo(value: Boolean) = if (value) "oui" else "non"
+    private fun chooseIso(vmId: String) {
+        isoTargetVm = vmId
+        startActivityForResult(
+            Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                type = "application/octet-stream"
+                addCategory(Intent.CATEGORY_OPENABLE)
+            },
+            701,
+        )
+    }
 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != 701 || resultCode != RESULT_OK) return
+        val vmId = isoTargetVm ?: return
+        val uri = data?.data ?: return
+        val target = File(filesDir, "vms/" + vmId + "/installer.iso").apply {
+            parentFile?.mkdirs()
+        }
+        contentResolver.openInputStream(uri)?.use { input ->
+            target.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
+        } ?: return
+        manager.setIso(vmId, target.absolutePath)
+        refresh()
+        Toast.makeText(this, "ISO importée et stockée localement.", Toast.LENGTH_LONG).show()
+    }
+
+    private fun showDisplay(vmId: String) {
+        val view = VmDisplayView(this)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Écran VM")
+            .setView(view)
+            .setPositiveButton("Fermer", null)
+            .create()
+        dialog.setOnDismissListener { view.disconnect() }
+        dialog.setOnShowListener {
+            view.postDelayed({
+                view.connect(VmRuntimeService.vncPort(vmId))
+            }, 1200)
+        }
+        dialog.show()
+    }
+
+    private fun yesNo(value: Boolean) = if (value) "oui" else "non"
     private fun title(value: String, size: Float) = TextView(this).apply {
         text = value
         textSize = size
@@ -181,21 +249,18 @@ class MainActivity : Activity() {
         setTypeface(null, Typeface.BOLD)
         setPadding(0, 0, 0, 8)
     }
-
     private fun subtitle(value: String) = TextView(this).apply {
         text = value
         textSize = 13f
         setTextColor(muted)
         setPadding(0, 0, 0, 8)
     }
-
     private fun cardText() = TextView(this).apply {
         textSize = 13f
         setTextColor(textColor)
         setPadding(18, 18, 18, 18)
         background = rounded(panel)
     }
-
     private fun sectionTitle(value: String) = TextView(this).apply {
         text = value
         textSize = 15f
@@ -203,7 +268,6 @@ class MainActivity : Activity() {
         setTypeface(null, Typeface.BOLD)
         setPadding(2, 18, 2, 10)
     }
-
     private fun actionButton(label: String, color: Int, action: () -> Unit) =
         Button(this).apply {
             text = label
@@ -211,17 +275,15 @@ class MainActivity : Activity() {
             setBackgroundColor(color)
             setOnClickListener { action() }
         }
-
-    private fun rounded(color: Int) = GradientDrawable().apply {
+    private fun rounded(color: Int) = android.graphics.drawable.GradientDrawable().apply {
         setColor(color)
         cornerRadius = 24f
     }
-
     private fun space(width: Int) = Space(this).apply {
         layoutParams = LinearLayout.LayoutParams(width, 1)
     }
-
-    private fun toast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        super.onDestroy()
     }
 }

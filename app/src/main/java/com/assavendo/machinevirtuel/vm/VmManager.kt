@@ -3,17 +3,13 @@ package com.assavendo.machinevirtuel.vm
 import android.content.Context
 import com.assavendo.machinevirtuel.cache.TranslationCacheManager
 import com.assavendo.machinevirtuel.host.HostCapabilityScanner
-import com.assavendo.machinevirtuel.runtime.RuntimeRegistry
+import com.assavendo.machinevirtuel.runtime.DiskManager
+import com.assavendo.machinevirtuel.runtime.RuntimePaths
+import com.assavendo.machinevirtuel.runtime.RuntimeInstaller
 
-sealed class StartResult {
-    data class Started(val processId: Long?, val backend: BackendKind) : StartResult()
-    data class NotReady(val reason: String, val backend: BackendKind) : StartResult()
-}
-
-class VmManager(context: Context) {
+class VmManager(private val context: Context) {
     private val store = VmStore(context)
     private val scanner = HostCapabilityScanner(context)
-    private val runtimeRegistry = RuntimeRegistry(context)
     private val cache = TranslationCacheManager(context)
 
     fun list(): List<VmConfig> = store.list()
@@ -26,53 +22,37 @@ class VmManager(context: Context) {
             name = name,
             guestOs = "Linux ARM64",
             arch = GuestArch.ARM64,
-            ramMb = 2048.coerceAtMost((caps.maxMemoryMb / 2).toInt().coerceAtLeast(768)),
-            vCpu = 2.coerceAtMost(caps.cpuCount.coerceAtLeast(1)),
+            ramMb = 2048.coerceAtMost((caps.maxMemoryMb / 2).toInt().coerceAtLeast(1024)),
+            vCpu = minOf(4, caps.cpuCount.coerceAtLeast(1)),
             backend = BackendSelector.select(GuestArch.ARM64, caps),
         )
+        DiskManager.ensureVmStorage(context.filesDir, vm)
         val items = store.list()
         items += vm
         store.save(items)
         return vm
     }
 
-    fun start(id: String): StartResult {
-        val items = store.list()
-        val vm = items.firstOrNull { it.id == id }
-            ?: return StartResult.NotReady("VM introuvable", BackendKind.QEMU_TCG)
+    fun setIso(id: String, path: String): VmConfig? =
+        store.update(id) { it.isoPath = path }
 
-        val backend = BackendSelector.select(vm.arch, capabilities())
-        vm.backend = backend
-
-        if (!runtimeRegistry.isInstalled(backend)) {
-            vm.state = VmState.OFF
-            store.save(items)
-            return StartResult.NotReady(
-                "Runtime " + backend.label + " absent. Installe un runtime QEMU/crosvm réellement compatible avant de démarrer une VM.",
-                backend,
-            )
-        }
-
-        vm.state = VmState.OFF
-        store.save(items)
-        return StartResult.NotReady(
-            "Runtime " + backend.label + " détecté, mais le pipeline de lancement full-system n'est pas encore branché. La VM reste volontairement OFF pour éviter un faux démarrage.",
-            backend,
-        )
-    }
+    fun markStarting(id: String): VmConfig? =
+        store.update(id) { it.state = VmState.STARTING }
 
     fun stop(id: String) {
-        val items = store.list()
-        items.firstOrNull { it.id == id }?.let {
-            it.state = VmState.OFF
-            store.save(items)
-        }
+        store.update(id) { it.state = VmState.OFF }
     }
 
     fun delete(id: String) {
+        val vm = store.list().firstOrNull { it.id == id }
         store.save(store.list().filterNot { it.id == id })
         cache.clear(id)
+        vm?.diskPath?.takeIf { it.isNotBlank() }?.let { java.io.File(it).delete() }
+        vm?.firmwarePath?.takeIf { it.isNotBlank() }?.let { java.io.File(it).delete() }
     }
 
-    fun runtimeRoot(): String = runtimeRegistry.rootPath()
+    fun runtimeRoot(): String = RuntimePaths(context).root.absolutePath
+
+    fun runtimeReady(): Boolean =
+        runCatching { RuntimeInstaller.ensure(context); true }.getOrDefault(false)
 }

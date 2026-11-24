@@ -1,0 +1,10 @@
+Component: DroidVM-Prebuilts
+Source: https://github.com/Droid-VM/DroidVM-Prebuilts
+Pinned commit: c4998e150a08f0e60d141591fd63ea0010eb4f75
+Consumed artifact: prebuilt-arm64-v8a.tar.xz
+
+The pinned archive provides the ARM64 full-system runtime used by PhoenixVM, including crosvm, qemu-system-aarch64, qemu-img, UEFI firmware and GPU/virtio libraries.
+
+PhoenixVM consumes these upstream binaries unmodified through the git submodule. Upstream licensing and notices remain applicable. This file is an attribution/provenance record, not a relicensing notice.
+
+Critical runtime files are verified against the upstream SHA-256 manifest before installation.
