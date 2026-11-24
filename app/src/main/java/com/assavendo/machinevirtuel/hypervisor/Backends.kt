@@ -62,9 +62,12 @@ class CrosvmBackend(private val backendKind: BackendKind) : HypervisorBackend {
         BackendCapabilities(
             hardwareAccelerated = true,
             fullSystem = true,
-            gpu = true,
-            network = true,
-            audio = true,
+            // crosvm is now wired as a real launch backend, but PhoenixVM does not yet
+            // provision an Android display/audio/network bridge for it. Reporting those
+            // capabilities as enabled here would be misleading.
+            gpu = false,
+            network = false,
+            audio = false,
         )
 
     override fun launchSpec(
