@@ -201,6 +201,9 @@ class VmRuntimeService : Service() {
                 updateNotification("VM " + vm.name + " stopped • exit " + exit)
             }
         } catch (t: Throwable) {
+            if (tapOwned && vm.tapName.isNotBlank()) {
+                runCatching { TapNetworkManager().removeInterface(vm.tapName) }
+            }
             logger.error("VM start failed", t)
             vm.state = VmState.ERROR
             store.save(store.list().map { if (it.id == id) vm else it })
