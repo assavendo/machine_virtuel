@@ -23,6 +23,24 @@ object VmSpecValidator {
             issues += ValidationIssue("backend", "Le guest x86_64 exige actuellement QEMU TCG.", false)
         if (vm.arch == GuestArch.X86_32 && vm.backend != BackendKind.QEMU_TCG)
             issues += ValidationIssue("backend", "Le guest x86 32-bit exige actuellement QEMU TCG.", false)
+        if (vm.backend in setOf(BackendKind.GUNYAH, BackendKind.GENIEZONE, BackendKind.HALLA, BackendKind.KVM) &&
+            !vm.headless
+        ) {
+            issues += ValidationIssue(
+                "headless",
+                "Le backend crosvm/hyperviseur matériel configuré ici est réservé au mode headless tant que le bridge d'affichage Android n'est pas installé.",
+                true
+            )
+        }
+        if (vm.backend in setOf(BackendKind.GUNYAH, BackendKind.GENIEZONE, BackendKind.HALLA, BackendKind.KVM) &&
+            vm.networkMode == NetworkMode.NAT
+        ) {
+            issues += ValidationIssue(
+                "networkMode",
+                "Le chemin crosvm Android ne fournit pas de NAT utilisateur portable; utilisez TAP ou QEMU.",
+                true
+            )
+        }
         if (vm.diskPath.isNotBlank() && !File(vm.diskPath).exists())
             issues += ValidationIssue("diskPath", "L'image disque est introuvable.", true)
         return issues
