@@ -481,12 +481,7 @@ class MainActivity : Activity() {
                     local.delete()
                     refresh()
                 }
-                .setNeutralButton("Révoquer") { _, _ ->
-                    PackageTrustStore.revoke(this, fingerprint)
-                    local.delete()
-                    toast("Clé non approuvée.")
-                }
-                .show()
+.show()
         }
     }
 
@@ -532,6 +527,30 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this).setTitle("Diagnostic du runtime").setMessage(body)
             .setPositiveButton("Fermer", null).show()
+    }
+
+    private fun showTrustedPackageKeys() {
+        val keys = PackageTrustStore.trusted(this)
+        if (keys.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("Clés packages")
+                .setMessage("Aucune clé de signature approuvée sur cet appareil.")
+                .setPositiveButton("Fermer", null)
+                .show()
+            return
+        }
+        val labels = keys.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Clés packages approuvées")
+            .setMultiChoiceItems(labels, null) { _, which, checked ->
+                if (!checked) {
+                    PackageTrustStore.revoke(this, labels[which])
+                    toast("Clé révoquée.")
+                }
+            }
+            .setPositiveButton("Fermer", null)
+            .setMessage("Décochez une empreinte pour révoquer immédiatement son approbation.")
+            .show()
     }
 
     private fun showRecovery(vm: VmConfig) {
