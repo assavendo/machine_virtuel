@@ -6,6 +6,7 @@ import java.io.File
 object QemuImageManager {
     fun create(runtime: RuntimePaths, path: File, format: DiskFormat, gib: Long) {
         require(format != DiskFormat.RAW)
+        require(gib in 1L..4096L)
         path.parentFile?.mkdirs()
         val command = listOf(
             runtime.qemuImg.absolutePath,
@@ -24,6 +25,9 @@ object QemuImageManager {
         target: File,
         targetFormat: DiskFormat,
     ) {
+        require(source.isFile && source.canRead())
+        require(source.canonicalFile != target.canonicalFile)
+        target.parentFile?.mkdirs()
         val command = listOf(
             runtime.qemuImg.absolutePath,
             "convert", "-p",
@@ -32,19 +36,26 @@ object QemuImageManager {
             source.absolutePath,
             target.absolutePath,
         )
-        runTool(runtime, command, "qemu-img convert")
+        runTool(runtime, command, "qemu-img convert", 30L * 60L * 1000L)
+        check(target.isFile && target.length() > 0L) { "qemu-img convert did not create a valid image." }
     }
 
-    private fun runTool(runtime: RuntimePaths, command: List<String>, description: String) {
-        val process = RootProcessLauncher.start(
+    private fun runTool(
+        runtime: RuntimePaths,
+        command: List<String>,
+        description: String,
+        timeoutMs: Long = 120_000L,
+    ) {
+        require(runtime.qemuImg.canExecute()) { "qemu-img is unavailable." }
+        val result = ProcessCommandRunner.run(
             command = command,
             workingDir = runtime.root,
             environment = mapOf("LD_LIBRARY_PATH" to runtime.libDir.absolutePath),
-            preferRoot = true,
+            preferRoot = false,
+            timeoutMs = timeoutMs,
         )
-        val output = process.inputStream.bufferedReader().readText()
-        val error = process.errorStream.bufferedReader().readText()
-        val exit = process.waitFor()
-        check(exit == 0) { description + " failed: " + (output + error) }
+        check(result.exitCode == 0) {
+            description + " failed (exit " + result.exitCode + "): " + result.stderr.ifBlank { result.stdout }
+        }
     }
 }
