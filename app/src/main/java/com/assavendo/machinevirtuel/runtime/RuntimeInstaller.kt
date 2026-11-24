@@ -9,6 +9,8 @@ import java.io.FileOutputStream
 import java.io.InputStream
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
+import org.json.JSONArray
+import org.json.JSONObject
 import org.tukaani.xz.XZInputStream
 
 object RuntimeInstaller {
@@ -79,25 +81,27 @@ object RuntimeInstaller {
 
     private fun verifyCriticalHashes(context: Context, manifestAsset: String, root: File) {
         val json = context.assets.open(manifestAsset).bufferedReader().use { it.readText() }
-        val names = listOf(
+        val entries = JSONObject(json).optJSONArray("hash") ?: JSONArray()
+        val hashes = mutableMapOf<String, String>()
+        for (index in 0 until entries.length()) {
+            val item = entries.optJSONObject(index) ?: continue
+            val file = item.optString("file")
+            val hash = item.optString("sha256")
+            if (file.isNotBlank() && hash.isNotBlank()) hashes[file] = hash
+        }
+
+        listOf(
             "usr/bin/qemu-system-aarch64",
             "usr/bin/qemu-img",
             "usr/bin/crosvm",
             "usr/share/droidvm/edk2-qemu.fd",
             "usr/share/droidvm/edk2-qemu.vars.fd"
-        )
-        names.forEach { name ->
-            val marker = ""file": "$name""
-            val start = json.indexOf(marker)
-            check(start >= 0) { "Runtime manifest missing $name" }
-            val shaKey = ""sha256": ""
-            val hashStart = json.indexOf(shaKey, start)
-            check(hashStart >= 0) { "Runtime manifest missing hash for $name" }
-            val begin = hashStart + shaKey.length
-            val end = json.indexOf('"', begin)
-            val expected = json.substring(begin, end)
+        ).forEach { name ->
+            val expected = hashes[name] ?: error("Runtime manifest missing $name")
             val actual = sha256(File(root, name))
-            check(expected.equals(actual, ignoreCase = true)) { "Runtime hash mismatch for $name" }
+            check(expected.equals(actual, ignoreCase = true)) {
+                "Runtime hash mismatch for $name"
+            }
         }
     }
 
