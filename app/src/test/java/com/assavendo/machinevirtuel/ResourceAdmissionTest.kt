@@ -39,7 +39,7 @@ class ResourceAdmissionTest {
     }
 
     @Test fun subtractsOtherActiveVmCommitmentsFromAggregateBudget() {
-        val active = VmConfig(name = "active", ramMb = 4096).apply { state = VmState.RUNNING }
+        val active = VmConfig(name = "active", ramMb = 2048).apply { state = VmState.RUNNING }
         val vm = VmConfig(name = "new", ramMb = 2048)
         val result = ResourceAdmissionController.check(vm, listOf(active), host(8192, 7000))
         assertTrue(result.allowed)
