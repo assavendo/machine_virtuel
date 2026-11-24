@@ -66,6 +66,13 @@ class VmStore(context: Context) {
             diskFormat = enumOr(DiskFormat.RAW) { DiskFormat.valueOf(o.optString("diskFormat", DiskFormat.RAW.name)) },
             diskSizeGiB = o.optLong("diskSizeGiB", 16L),
             isoPath = o.optString("isoPath"),
+            kernelPath = o.optString("kernelPath"),
+            initrdPath = o.optString("initrdPath"),
+            dtbPath = o.optString("dtbPath"),
+            kernelCommandLine = o.optString("kernelCommandLine"),
+            androidSystemPath = o.optString("androidSystemPath"),
+            androidVendorPath = o.optString("androidVendorPath"),
+            androidUserdataPath = o.optString("androidUserdataPath"),
             firmwarePath = o.optString("firmwarePath"),
             firmwareKind = o.optString("firmwareKind", "UEFI"),
             secureBoot = o.optBoolean("secureBoot", false),
@@ -118,7 +125,9 @@ class VmStore(context: Context) {
         put("guestOs", vm.guestOs); put("guestVersion", vm.guestVersion); put("arch", vm.arch.name)
         put("machineType", vm.machineType); put("ramMb", vm.ramMb); put("vCpu", vm.vCpu)
         put("diskPath", vm.diskPath); put("diskFormat", vm.diskFormat.name); put("diskSizeGiB", vm.diskSizeGiB)
-        put("isoPath", vm.isoPath); put("firmwarePath", vm.firmwarePath); put("firmwareKind", vm.firmwareKind)
+        put("isoPath", vm.isoPath); put("kernelPath", vm.kernelPath); put("initrdPath", vm.initrdPath); put("dtbPath", vm.dtbPath)
+        put("kernelCommandLine", vm.kernelCommandLine); put("androidSystemPath", vm.androidSystemPath); put("androidVendorPath", vm.androidVendorPath); put("androidUserdataPath", vm.androidUserdataPath)
+        put("firmwarePath", vm.firmwarePath); put("firmwareKind", vm.firmwareKind)
         put("secureBoot", vm.secureBoot); put("tpmEnabled", vm.tpmEnabled); put("tpmStatePath", vm.tpmStatePath)
         put("sharedDirPath", vm.sharedDirPath); put("sharedDirTag", vm.sharedDirTag); put("sharedDirReadOnly", vm.sharedDirReadOnly)
         put("backend", vm.backend.name); put("mode", vm.mode.name); put("performancePreset", vm.performancePreset.name)
