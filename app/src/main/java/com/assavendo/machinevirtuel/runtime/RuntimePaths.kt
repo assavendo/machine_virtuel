@@ -20,12 +20,17 @@ class RuntimePaths(val root: File) {
     val edk2QemuVars = File(root, "usr/share/droidvm/edk2-qemu.vars.fd")
     val edk2Gunyah = File(root, "usr/share/droidvm/edk2-gunyah.fd")
     val edk2GunyahVars = File(root, "usr/share/droidvm/edk2-gunyah.vars.fd")
+    val edk2X86Code = File(root, "usr/share/droidvm/edk2-x86_64-code.fd")
+    val edk2X86Vars = File(root, "usr/share/droidvm/edk2-x86_64-vars.fd")
 
     fun isComplete(): Boolean =
         qemu.canExecute() && crosvm.canExecute() && qemuImg.canExecute() &&
             libDir.isDirectory && edk2Qemu.isFile && edk2QemuVars.isFile
 
-    fun hasX86SystemQemu(): Boolean = qemuX86.canExecute() || qemuX86Headless.canExecute() || qemuI386.canExecute()
+    fun hasX86SystemQemu(): Boolean =
+        qemuX86.canExecute() || qemuX86Headless.canExecute() || qemuI386.canExecute()
+
+    fun hasX86Uefi(): Boolean = edk2X86Code.isFile && edk2X86Vars.isFile
     fun hasVirtiofsd(): Boolean = virtiofsd.canExecute()
     fun hasSwtpm(): Boolean = swtpm.canExecute()
     fun marker(): File = File(root, ".runtime-version")
