@@ -1,6 +1,7 @@
 package com.assavendo.machinevirtuel.runtime
 
 import android.content.Context
+import com.assavendo.machinevirtuel.security.PackageSignatureVerifier
 import com.assavendo.machinevirtuel.security.SecurityGuards
 import com.assavendo.machinevirtuel.vm.*
 import java.io.File
