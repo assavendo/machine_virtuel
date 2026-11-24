@@ -91,10 +91,7 @@ class VmRuntimeService : Service() {
             }
 
             DiskManager.ensureVmStorage(filesDir, vm, paths)
-            DiskManager.ensureNvram(
-                vm,
-                if (vm.backend == BackendKind.GUNYAH) paths.edk2GunyahVars else paths.edk2QemuVars
-            )
+            DiskManager.ensureNvram(vm, DiskManager.firmwareTemplate(paths, vm))
 
             val host = HostCapabilityScanner(this).scan()
             val decision = VmOrchestrator().choose(vm, host)
