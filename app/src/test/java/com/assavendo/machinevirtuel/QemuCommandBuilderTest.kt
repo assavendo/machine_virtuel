@@ -172,4 +172,45 @@ class QemuCommandBuilderTest {
     }
 
     private fun <T> List<T>.windowed(): List<List<T>> = windowed(2)
+    @Test
+    fun multipleSharedDirectoriesAreEmittedWithDistinctTags() {
+        val root = createTempDir(prefix = "qemu-shares-")
+        try {
+            val paths = RuntimePaths(root)
+            paths.qemu.parentFile.mkdirs()
+            paths.qemu.writeText("")
+            paths.qemu.setExecutable(true, false)
+            paths.edk2Qemu.parentFile.mkdirs()
+            paths.edk2Qemu.writeText("uefi")
+            val disk = File(root, "disk.raw").apply { writeText("guest") }
+            val nvram = File(root, "nvram.fd").apply { writeText("vars") }
+            val a = File(root, "share-a").apply { mkdirs() }
+            val b = File(root, "share-b").apply { mkdirs() }
+            val vm = VmConfig(
+                name = "shares",
+                arch = GuestArch.ARM64,
+                backend = BackendKind.QEMU_TCG,
+                diskPath = disk.absolutePath,
+                firmwarePath = nvram.absolutePath,
+                sharedDirs = listOf(
+                    SharedDirectory(a.absolutePath, "data", false),
+                    SharedDirectory(b.absolutePath, "readonly", true),
+                ),
+                sharedDirPath = "",
+                audioEnabled = false,
+                networkMode = NetworkMode.DISABLED,
+            )
+            val command = QemuCommandBuilder.build(
+                paths, vm, File(root, "qmp.sock"), File(root, "serial.log"), File(root, "qemu.log")
+            )
+            assertTrue(command.windowedContains("-virtfs"))
+            assertTrue(command.any { it.contains("mount_tag=data") })
+            assertTrue(command.any { it.contains("mount_tag=readonly") && it.contains("readonly=on") })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    private fun List<String>.windowedContains(value: String): Boolean = any { it == value }
+
 }
