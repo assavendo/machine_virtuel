@@ -29,12 +29,18 @@ object DeviceProfileDatabase {
     fun all(): List<DeviceProfile> = profiles
 
     fun match(manufacturer: String, model: String, soc: String): DeviceProfile {
-        return profiles.firstOrNull { profile ->
-            wildcard(profile.vendor, manufacturer) ||
-                wildcard(profile.modelPattern, model) ||
-                wildcard(profile.socPattern, soc)
-        } ?: profiles.last()
-    }
+        return profiles
+            .map { profile ->
+                val score =
+                    (if (wildcard(profile.vendor, manufacturer)) 1 else 0) +
+                    (if (wildcard(profile.modelPattern, model)) 3 else 0) +
+                    (if (wildcard(profile.socPattern, soc)) 3 else 0)
+                profile to score
+            }
+            .filter { it.second > 0 }
+            .maxByOrNull { it.second }
+            ?.first
+            ?: profiles.last()
 
     private fun wildcard(pattern: String, value: String): Boolean {
         val parts = pattern.lowercase().split("*")
