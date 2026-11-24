@@ -43,6 +43,35 @@ object VmSpecValidator {
         }
         if (vm.diskPath.isNotBlank() && !File(vm.diskPath).exists())
             issues += ValidationIssue("diskPath", "L'image disque est introuvable.", true)
+
+        if (vm.guestOs.contains("android", ignoreCase = true)) {
+            if (vm.androidSystemPath.isBlank() || !File(vm.androidSystemPath).isFile) {
+                issues += ValidationIssue("androidSystemPath", "Un guest Android complet exige une image system.", true)
+            }
+            if (vm.androidUserdataPath.isBlank() || !File(vm.androidUserdataPath).isFile) {
+                issues += ValidationIssue("androidUserdataPath", "Un guest Android complet exige une image userdata.", true)
+            }
+            if (vm.kernelPath.isBlank() || !File(vm.kernelPath).isFile) {
+                issues += ValidationIssue("kernelPath", "Un guest Android complet exige un kernel explicite.", true)
+            }
+            if (vm.androidAdbEnabled && vm.networkMode != NetworkMode.NAT) {
+                issues += ValidationIssue(
+                    "androidAdbEnabled",
+                    "ADB réseau exige actuellement le mode NAT QEMU.",
+                    true
+                )
+            }
+            if (vm.androidAdbEnabled && vm.androidAdbHostPort !in 1..65535) {
+                issues += ValidationIssue("androidAdbHostPort", "Port ADB hôte hors plage 1..65535.", true)
+            }
+            if (vm.androidAdbEnabled && vm.portForwards.any { it.hostPort == vm.androidAdbHostPort }) {
+                issues += ValidationIssue(
+                    "androidAdbHostPort",
+                    "Le port ADB hôte est déjà utilisé par une redirection.",
+                    true
+                )
+            }
+        }
         return issues
     }
 }
