@@ -21,6 +21,48 @@ data class BenchmarkCase(
     val availableWithoutPhysicalGuest: Boolean,
 )
 
+data class BenchmarkComparison(
+    val baselineScore: Double,
+    val optimizedScore: Double,
+    val deltaPercent: Double,
+    val memoryDeltaMb: Long = 0,
+    val temperatureDeltaC: Double? = null,
+    val stabilityPassed: Boolean = true,
+    val compatibilityPassed: Boolean = true,
+) {
+    val accepted: Boolean
+        get() = optimizedScore > 0.0 &&
+            deltaPercent >= 0.0 &&
+            stabilityPassed &&
+            compatibilityPassed
+}
+
+object BenchmarkAcceptance {
+    fun compare(
+        baselineScore: Double,
+        optimizedScore: Double,
+        baselineMemoryMb: Long = 0,
+        optimizedMemoryMb: Long = 0,
+        baselineTemperatureC: Double? = null,
+        optimizedTemperatureC: Double? = null,
+        stabilityPassed: Boolean = true,
+        compatibilityPassed: Boolean = true,
+    ): BenchmarkComparison {
+        require(baselineScore > 0.0 && optimizedScore >= 0.0)
+        val delta = (optimizedScore - baselineScore) / baselineScore * 100.0
+        return BenchmarkComparison(
+            baselineScore = baselineScore,
+            optimizedScore = optimizedScore,
+            deltaPercent = delta,
+            memoryDeltaMb = optimizedMemoryMb - baselineMemoryMb,
+            temperatureDeltaC = if (baselineTemperatureC != null && optimizedTemperatureC != null)
+                optimizedTemperatureC - baselineTemperatureC else null,
+            stabilityPassed = stabilityPassed,
+            compatibilityPassed = compatibilityPassed,
+        )
+    }
+}
+
 object BenchmarkCatalog {
     val cases = listOf(
         BenchmarkCase("cpu-single", "CPU", "Integer/SHA single-thread", 1, true),
