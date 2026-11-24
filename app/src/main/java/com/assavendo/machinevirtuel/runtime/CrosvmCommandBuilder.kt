@@ -19,11 +19,14 @@ object CrosvmCommandBuilder {
             "Le disque virtuel est introuvable ou vide."
         }
 
-        val firmware = vm.firmwarePath.takeIf { it.isNotBlank() }?.let { File(it).canonicalFile }
-        if (vm.kernelPath.isBlank()) {
-            require(firmware != null && firmware.isFile) {
-                "Un firmware est requis lorsque crosvm démarre sans noyau direct."
+        val firmware = if (vm.kernelPath.isBlank()) {
+            val code = paths.edk2Qemu.canonicalFile
+            require(code.isFile && code.length() > 0L) {
+                "Le firmware UEFI crosvm ARM64 est absent."
             }
+            code
+        } else {
+            null
         }
         vm.kernelPath.takeIf { it.isNotBlank() }?.let {
             require(File(it).isFile && File(it).length() > 0L) { "Noyau guest introuvable ou vide." }
