@@ -57,12 +57,7 @@ class TranslationEngine(private val cache: TranslationCacheManager) {
                 key,
                 TranslationCacheManager.TranslationProfile(
                     state = existing.tier.name,
-                    hotBlocks = when (existing.tier) {
-                        TranslationTier.COLD -> 0L
-                        TranslationTier.WARM -> 1L
-                        TranslationTier.HOT -> 10L
-                        TranslationTier.VERY_HOT -> 100L
-                    },
+                    hotBlocks = 0L,
                     coldBlocks = 0L,
                     executionCount = existing.executions,
                     lastSeenMs = System.currentTimeMillis(),
