@@ -73,13 +73,17 @@ if [[ -f "$PREFIX/bin/qemu-system-i386" ]]; then
   cp "$PREFIX/bin/qemu-system-i386" "$RUNTIME_PACK/usr/bin/"
 fi
 cp "$PREFIX/bin/qemu-img" "$RUNTIME_PACK/usr/bin/"
+mkdir -p "$RUNTIME_PACK/usr/share/licenses/qemu"
+for license in COPYING COPYING.LIB LICENSE; do
+  if [[ -f "$SRC/$license" ]]; then cp "$SRC/$license" "$RUNTIME_PACK/usr/share/licenses/qemu/"; fi
+done
 if [[ -d "$PREFIX/lib" ]]; then cp -a "$PREFIX/lib/." "$RUNTIME_PACK/usr/lib/"; fi
 if [[ -d "$PREFIX/share/qemu" ]]; then cp -a "$PREFIX/share/qemu/." "$RUNTIME_PACK/usr/share/qemu/"; fi
 
 "$PROJECT_ROOT/scripts/provision-x86-ovmf.sh" "$RUNTIME_PACK"
 
 (
-  cd "$PREFIX/runtime-pack"
+  cd "$RUNTIME_PACK"
   find usr -type f -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
   tar -cJf "$ROOT/phoenixvm-x86-runtime.tar.xz" SHA256SUMS usr
   sha256sum "$ROOT/phoenixvm-x86-runtime.tar.xz" > "$ROOT/phoenixvm-x86-runtime.tar.xz.sha256"
