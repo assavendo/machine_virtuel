@@ -131,13 +131,16 @@ object SnapshotManager {
         val meta = JSONObject(manifest.readText())
         require(meta.optString("vmId") == vm.id) { "Ce snapshot appartient à une autre VM." }
 
-        val diskName = meta.getString("diskFileName")
+        val diskName = meta.optString("diskFileName").takeIf { it.isNotBlank() }
+            ?: canonical.listFiles()?.firstOrNull { it.name.endsWith(".snapshot") }?.name
+            ?: error("Nom de disque snapshot absent.")
         require(diskName.isNotBlank() && File(diskName).name == diskName) {
             "Nom de disque snapshot invalide."
         }
         val snapshotDisk = File(canonical, diskName)
         require(snapshotDisk.isFile) { "Disque snapshot introuvable." }
-        check(snapshotDisk.length() == meta.getLong("diskSizeBytes")) {
+        val expectedDiskSize = meta.optLong("diskSizeBytes", snapshotDisk.length())
+        check(snapshotDisk.length() == expectedDiskSize) {
             "Snapshot corrompu: taille disque invalide."
         }
         check(meta.getString("diskSha256").equals(sha256(snapshotDisk), ignoreCase = true)) {
@@ -145,13 +148,22 @@ object SnapshotManager {
         }
 
         val nvramName = meta.optString("nvramFileName").takeIf { it.isNotBlank() && it != "null" }
+            ?: if (File(canonical, "nvram.fd").isFile) "nvram.fd" else null
         val snapshotNvram = nvramName?.let {
             require(it == File(it).name) { "Nom NVRAM snapshot invalide." }
             File(canonical, it).also { file ->
                 require(file.isFile) { "NVRAM snapshot introuvable." }
                 val expected = meta.optString("nvramSha256")
-                require(expected.matches(Regex("[A-Fa-f0-9]{64}"))) { "SHA-256 NVRAM snapshot invalide." }
-                check(expected.equals(sha256(file), ignoreCase = true)) { "Snapshot corrompu: SHA-256 NVRAM invalide." }
+                if (expected.isNotBlank() && expected != "null") {
+                    require(expected.matches(Regex("[A-Fa-f0-9]{64}"))) { "SHA-256 NVRAM snapshot invalide." }
+                    check(expected.equals(sha256(file), ignoreCase = true)) {
+                        "Snapshot corrompu: SHA-256 NVRAM invalide."
+                    }
+                } else {
+                    require(meta.optInt("format_version", 1) < FORMAT_VERSION) {
+                        "SHA-256 NVRAM absent d'un snapshot récent."
+                    }
+                }
             }
         }
 
