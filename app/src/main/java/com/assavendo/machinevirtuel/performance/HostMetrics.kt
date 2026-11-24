@@ -30,7 +30,7 @@ data class HostMetrics(
 
 class HostMetricsCollector(
     private val context: Context,
-    private val targetPid: Long = android.os.Process.myPid().toLong(),
+    private val targetPid: Long? = android.os.Process.myPid().toLong(),
 ) {
     private data class CpuTimes(val total: Long, val idle: Long)
 
@@ -112,7 +112,8 @@ class HostMetricsCollector(
     }
 
     private fun readProcessCpuTimeNs(): Long? {
-        val file = File("/proc/" + targetPid + "/stat")
+        val pid = targetPid ?: return null
+        val file = File("/proc/" + pid + "/stat")
         if (!file.isFile) return null
         val line = runCatching { file.readText() }.getOrNull() ?: return null
         val endOfCommand = line.lastIndexOf(')')
@@ -126,7 +127,8 @@ class HostMetricsCollector(
     }
 
     private fun readProcessRssMb(): Long {
-        val status = File("/proc/" + targetPid + "/status")
+        val pid = targetPid ?: return 0L
+        val status = File("/proc/" + pid + "/status")
         if (!status.isFile) return 0L
         val line = runCatching {
             status.useLines { lines -> lines.firstOrNull { it.startsWith("VmRSS:") } }
