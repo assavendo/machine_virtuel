@@ -13,6 +13,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import org.json.JSONObject
+import org.json.JSONArray
 
 object VmPackageManager {
     private const val FORMAT_VERSION = 2
@@ -44,6 +45,23 @@ object VmPackageManager {
             state = VmState.OFF,
             lastStartedAt = null,
         )
+        val bootArtifacts = JSONArray()
+        val artifactFields = listOf(
+            "kernelPath" to vm.kernelPath,
+            "initrdPath" to vm.initrdPath,
+            "dtbPath" to vm.dtbPath,
+            "androidSystemPath" to vm.androidSystemPath,
+            "androidVendorPath" to vm.androidVendorPath,
+            "androidUserdataPath" to vm.androidUserdataPath,
+        )
+        artifactFields.forEach { (field, path) ->
+            if (path.isBlank()) return@forEach
+            val file = File(path).canonicalFile
+            require(file.isFile && file.canRead()) { "Boot artifact introuvable: " + field }
+            artifactFields // keep field/path association explicit for package creation
+            bootArtifacts.put(JSONObject().put("field", field).put("package_path", "boot/" + field.removeSuffix("Path") + "-" + file.name).put("size_bytes", file.length()).put("sha256", ImageVerifier.sha256(file)))
+        }
+
         val manifest = JSONObject()
             .put("format_version", FORMAT_VERSION)
             .put("vm_id", vm.id)
@@ -57,6 +75,7 @@ object VmPackageManager {
             .put("nvram_present", firmware != null)
             .put("nvram_size_bytes", firmware?.length() ?: 0L)
             .put("sha256_nvram", firmware?.let { ImageVerifier.sha256(it) } ?: JSONObject.NULL)
+            .put("boot_artifacts", bootArtifacts)
             .put("vm_config", VmStore(context).encodeConfigForPackage(portableConfig))
 
         val temp = File(parent, output.name + ".pending-" + UUID.randomUUID())
@@ -66,6 +85,11 @@ object VmPackageManager {
                 putJson(zip, "manifest.json", manifest)
                 putFile(zip, "disk/" + manifest.getString("disk_file_name"), disk)
                 if (firmware != null) putFile(zip, "firmware/nvram.fd", firmware)
+                for (i in 0 until bootArtifacts.length()) {
+                    val a = bootArtifacts.getJSONObject(i)
+                    val source = artifactFields.first { it.first == a.getString("field") }.second
+                    putFile(zip, a.getString("package_path"), File(source))
+                }
                 if (includeSnapshots) {
                     SnapshotManager.list(context.filesDir, vm.id).forEach { snapshot ->
                         require(snapshot.directory.name.matches(Regex("[A-Za-z0-9._-]{1,160}"))) {
@@ -212,6 +236,32 @@ object VmPackageManager {
             if (firmware != null) firmware.copyTo(varsTarget, overwrite = false)
             vm.diskPath = File(finalVmDir, diskTarget.name).absolutePath
             vm.firmwarePath = File(finalVmDir, "nvram.fd").absolutePath
+            vm.kernelPath = ""
+            vm.initrdPath = ""
+            vm.dtbPath = ""
+            vm.androidSystemPath = ""
+            vm.androidVendorPath = ""
+            vm.androidUserdataPath = ""
+            val artifactManifest = manifest.optJSONArray("boot_artifacts") ?: JSONArray()
+            for (i in 0 until artifactManifest.length()) {
+                val a = artifactManifest.getJSONObject(i)
+                val field = a.getString("field")
+                require(field in setOf("kernelPath", "initrdPath", "dtbPath", "androidSystemPath", "androidVendorPath", "androidUserdataPath"))
+                val staged = SecurityGuards.canonicalChild(staging, File(staging, a.getString("package_path")))
+                require(staged.isFile && staged.length() == a.getLong("size_bytes")) { "Boot artifact invalide: " + field }
+                require(ImageVerifier.verify(staged, a.getString("sha256"))) { "SHA-256 boot artifact invalide: " + field }
+                val target = File(finalVmDir, "boot/" + field.removeSuffix("Path") + "-" + staged.name)
+                target.parentFile?.mkdirs()
+                staged.copyTo(target, overwrite = false)
+                when (field) {
+                    "kernelPath" -> vm.kernelPath = target.absolutePath
+                    "initrdPath" -> vm.initrdPath = target.absolutePath
+                    "dtbPath" -> vm.dtbPath = target.absolutePath
+                    "androidSystemPath" -> vm.androidSystemPath = target.absolutePath
+                    "androidVendorPath" -> vm.androidVendorPath = target.absolutePath
+                    "androidUserdataPath" -> vm.androidUserdataPath = target.absolutePath
+                }
+            }
 
             val stagedSnapshots = File(staging, "snapshots")
             if (stagedSnapshots.isDirectory) {
