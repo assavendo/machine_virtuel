@@ -593,18 +593,6 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK || data?.data == null) return
         val uri = data.data!!
-        if (requestCode == 702) {
-            val staging = File(cacheDir, "import-" + System.currentTimeMillis() + ".vmxpack")
-            contentResolver.openInputStream(uri)?.use { input ->
-                staging.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
-            }
-            runCatching { manager.importVm(staging) }
-                .onFailure { toast("Import package : " + (it.message ?: "échec")) }
-                .onSuccess { toast("Package importé.") }
-            staging.delete()
-            refresh()
-            return
-        }
         if (requestCode == 703) {
             Thread({
                 val result = runCatching { RuntimeInstaller.installOptionalX86(this, uri) }
