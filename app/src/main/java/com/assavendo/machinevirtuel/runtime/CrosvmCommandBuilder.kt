@@ -71,6 +71,13 @@ object CrosvmCommandBuilder {
                 add("--bios"); add(firmware.absolutePath)
             }
 
+            if (vm.audioEnabled) {
+                // Requires the crosvm Android AAudio build feature. If the selected runtime
+                // lacks it, backend startup fails cleanly and the orchestrator can fall back.
+                add("--virtio-snd")
+                add("backend=aaudio,num_output_devices=1,num_input_devices=1")
+            }
+
             if (vm.kernelPath.isNotBlank()) {
                 add(vm.kernelPath)
                 if (vm.initrdPath.isNotBlank()) {
