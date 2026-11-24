@@ -213,7 +213,7 @@ class VmRuntimeService : Service() {
     }
 
     private fun monitorVm(id: String, handle: Handle, intervalMs: Long) {
-        val collector = HostMetricsCollector(this, handle.process.pid())
+        val collector = HostMetricsCollector(this, findQemuPid(handle.qmp))
         while (processes[id] === handle && handle.process.isAlive) {
             runCatching {
                 val sample = collector.sample()
@@ -242,6 +242,19 @@ class VmRuntimeService : Service() {
         }
         error("QEMU ne fournit pas de réponse QMP après 15 secondes; VM non publiée comme démarrée. Dernier état: " +
             (lastStatus ?: "aucune réponse"))
+    }
+
+    private fun findQemuPid(qmp: File): Long? {
+        val entries = File("/proc").listFiles() ?: return null
+        for (entry in entries) {
+            if (!entry.name.all { it.isDigit() }) continue
+            val cmdline = runCatching { File(entry, "cmdline").readBytes().toString(Charsets.UTF_8) }
+                .getOrNull() ?: continue
+            if (cmdline.contains("qemu-system") && cmdline.contains(qmp.absolutePath)) {
+                return entry.name.toLongOrNull()
+            }
+        }
+        return null
     }
 
     private fun startQemu(
