@@ -3,7 +3,9 @@ package com.assavendo.machinevirtuel.runtime
 import com.assavendo.machinevirtuel.vm.VmConfig
 import com.assavendo.machinevirtuel.vm.VmState
 import java.io.File
+import java.io.FileOutputStream
 import java.security.MessageDigest
+import java.util.UUID
 import org.json.JSONObject
 
 data class SnapshotInfo(
@@ -17,40 +19,70 @@ data class SnapshotInfo(
 )
 
 object SnapshotManager {
+    private const val FORMAT_VERSION = 2
+
     fun createColdSnapshot(base: File, vm: VmConfig, label: String): File {
-        require(vm.state != VmState.RUNNING && vm.state != VmState.STARTING) {
-            "Cold snapshot requires a stopped VM."
+        require(vm.state == VmState.OFF || vm.state == VmState.ERROR) {
+            "Une capture à froid exige une VM complètement arrêtée."
         }
-        val source = File(vm.diskPath)
-        require(source.isFile) { "Disque VM introuvable." }
-        val safe = label.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "snapshot" }
-        val id = System.currentTimeMillis().toString()
-        val dir = File(base, "snapshots/" + vm.id + "/" + id + "-" + safe).apply { mkdirs() }
-        val targetDisk = File(dir, source.name + ".snapshot")
-        source.copyTo(targetDisk, overwrite = false)
-        val nvram = File(vm.firmwarePath)
-        if (nvram.isFile) nvram.copyTo(File(dir, "nvram.fd"), overwrite = false)
-        val meta = JSONObject()
-            .put("id", id)
-            .put("vmId", vm.id)
-            .put("name", safe)
-            .put("createdAt", System.currentTimeMillis())
-            .put("protected", false)
-            .put("diskSha256", sha256(targetDisk))
-        File(dir, "manifest.json").writeText(meta.toString(2))
-        return dir
+        require(vm.id.matches(Regex("[A-Za-z0-9-]{1,64}"))) { "Identifiant VM invalide." }
+        val source = File(vm.diskPath).canonicalFile
+        require(source.isFile && source.canRead()) { "Disque VM introuvable ou illisible." }
+
+        val safe = label.replace(Regex("[^A-Za-z0-9._-]"), "_").take(64).ifBlank { "snapshot" }
+        val id = UUID.randomUUID().toString()
+        val snapshotRoot = File(base, "snapshots/" + vm.id).apply {
+            check(mkdirs() || isDirectory) { "Impossible de créer le répertoire snapshots." }
+        }
+        val staging = File(snapshotRoot, ".pending-" + id).apply {
+            check(mkdirs()) { "Impossible de créer le répertoire temporaire du snapshot." }
+        }
+        val finalDir = File(snapshotRoot, System.currentTimeMillis().toString() + "-" + safe + "-" + id.take(8))
+
+        try {
+            val diskName = source.name + ".snapshot"
+            val targetDisk = File(staging, diskName)
+            source.copyTo(targetDisk, overwrite = false)
+            val nvram = File(vm.firmwarePath).takeIf { it.isFile && it.canRead() }
+            val targetNvram = nvram?.let {
+                File(staging, "nvram.fd").also { target -> it.copyTo(target, overwrite = false) }
+            }
+
+            val createdAt = System.currentTimeMillis()
+            val manifest = JSONObject()
+                .put("format_version", FORMAT_VERSION)
+                .put("id", id)
+                .put("vmId", vm.id)
+                .put("name", safe)
+                .put("createdAt", createdAt)
+                .put("protected", false)
+                .put("diskFileName", diskName)
+                .put("diskSizeBytes", targetDisk.length())
+                .put("diskSha256", sha256(targetDisk))
+                .put("nvramFileName", if (targetNvram != null) "nvram.fd" else JSONObject.NULL)
+                .put("nvramSha256", targetNvram?.let { sha256(it) } ?: JSONObject.NULL)
+            writeDurable(File(staging, "manifest.json"), manifest.toString(2))
+            check(staging.renameTo(finalDir)) { "Impossible de publier le snapshot complet." }
+            return finalDir
+        } catch (t: Throwable) {
+            staging.deleteRecursively()
+            throw t
+        }
     }
 
     fun list(base: File, vmId: String): List<SnapshotInfo> {
+        require(vmId.matches(Regex("[A-Za-z0-9-]{1,64}"))) { "Identifiant VM invalide." }
         val root = File(base, "snapshots/" + vmId)
-        return root.listFiles()?.filter { it.isDirectory }?.mapNotNull { dir ->
+        return root.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".pending-") }?.mapNotNull { dir ->
             runCatching {
-                val meta = JSONObject(File(dir, "manifest.json").readText())
+                val canonical = requireSnapshotDirectory(vmId, dir)
+                val meta = JSONObject(File(canonical, "manifest.json").readText())
+                require(meta.getString("vmId") == vmId)
                 SnapshotInfo(
                     id = meta.getString("id"),
-                    vmId = meta.getString("vmId"),
+                    vmId = vmId,
                     name = meta.getString("name"),
-                    directory = dir,
+                    directory = canonical,
                     createdAt = meta.getLong("createdAt"),
                     protected = meta.optBoolean("protected", false),
                     diskSha256 = meta.getString("diskSha256"),
@@ -60,55 +92,148 @@ object SnapshotManager {
     }
 
     fun protect(snapshotDir: File, value: Boolean) {
-        val manifest = File(snapshotDir, "manifest.json")
+        val vmId = snapshotDir.canonicalFile.parentFile?.name
+            ?: error("Répertoire snapshot invalide.")
+        val canonical = requireSnapshotDirectory(vmId, snapshotDir)
+        val manifest = File(canonical, "manifest.json")
         require(manifest.isFile) { "Snapshot manifest introuvable." }
-        val meta = JSONObject(manifest.readText()).put("protected", value)
-        manifest.writeText(meta.toString(2))
+        val meta = JSONObject(manifest.readText())
+        require(meta.optString("vmId") == vmId) { "Le snapshot ne correspond pas à cette VM." }
+        meta.put("protected", value)
+        writeDurable(manifest, meta.toString(2))
     }
 
     fun delete(snapshotDir: File) {
-        val manifest = File(snapshotDir, "manifest.json")
-        if (manifest.isFile && JSONObject(manifest.readText()).optBoolean("protected", false)) {
+        val vmId = snapshotDir.canonicalFile.parentFile?.name
+            ?: error("Répertoire snapshot invalide.")
+        val canonical = requireSnapshotDirectory(vmId, snapshotDir)
+        val manifest = File(canonical, "manifest.json")
+        require(manifest.isFile) { "Snapshot manifest introuvable." }
+        if (JSONObject(manifest.readText()).optBoolean("protected", false)) {
             error("Snapshot protégé.")
         }
-        require(snapshotDir.canonicalFile.toPath().nameCount > 2) { "Répertoire snapshot non sûr." }
-        snapshotDir.deleteRecursively()
+        check(canonical.deleteRecursively()) { "Impossible de supprimer le snapshot." }
     }
 
     fun enforceRetention(base: File, vm: VmConfig) {
-        val snapshots = list(base, vm.id)
         val keep = vm.maxSnapshots.coerceAtLeast(1)
-        snapshots.drop(keep).filterNot { it.protected }.forEach { delete(it.directory) }
+        val unprotected = list(base, vm.id).filterNot { it.protected }
+        unprotected.drop(keep).forEach { delete(it.directory) }
     }
 
     fun restoreColdSnapshot(vm: VmConfig, snapshotDir: File) {
-        require(vm.state != VmState.RUNNING && vm.state != VmState.STARTING) {
-            "Restore requires a stopped VM."
+        require(vm.state == VmState.OFF || vm.state == VmState.ERROR) {
+            "La restauration exige une VM complètement arrêtée."
         }
-        val manifest = File(snapshotDir, "manifest.json")
+        val canonical = requireSnapshotDirectory(vm.id, snapshotDir)
+        val manifest = File(canonical, "manifest.json")
         require(manifest.isFile) { "Snapshot manifest introuvable." }
         val meta = JSONObject(manifest.readText())
-        val snapshotDisk = snapshotDir.listFiles()?.firstOrNull { it.name.endsWith(".snapshot") }
-            ?: error("Disque snapshot introuvable.")
+        require(meta.optString("vmId") == vm.id) { "Ce snapshot appartient à une autre VM." }
+
+        val diskName = meta.getString("diskFileName")
+        require(diskName.isNotBlank() && File(diskName).name == diskName) {
+            "Nom de disque snapshot invalide."
+        }
+        val snapshotDisk = File(canonical, diskName)
+        require(snapshotDisk.isFile) { "Disque snapshot introuvable." }
+        check(snapshotDisk.length() == meta.getLong("diskSizeBytes")) {
+            "Snapshot corrompu: taille disque invalide."
+        }
         check(meta.getString("diskSha256").equals(sha256(snapshotDisk), ignoreCase = true)) {
-            "Snapshot corrompu: SHA-256 invalide."
+            "Snapshot corrompu: SHA-256 du disque invalide."
         }
-        val target = File(vm.diskPath)
-        val temp = File(target.parentFile, target.name + ".restore.tmp")
-        snapshotDisk.copyTo(temp, overwrite = true)
-        if (!temp.renameTo(target)) {
-            target.delete()
-            check(temp.renameTo(target)) { "Impossible de restaurer le disque." }
-        }
-        val snapshotNvram = File(snapshotDir, "nvram.fd")
-        if (snapshotNvram.isFile) {
-            val nvram = File(vm.firmwarePath)
-            val tempNvram = File(nvram.parentFile, nvram.name + ".restore.tmp")
-            snapshotNvram.copyTo(tempNvram, overwrite = true)
-            if (!tempNvram.renameTo(nvram)) {
-                nvram.delete()
-                check(tempNvram.renameTo(nvram)) { "Impossible de restaurer NVRAM." }
+
+        val nvramName = meta.optString("nvramFileName").takeIf { it.isNotBlank() && it != "null" }
+        val snapshotNvram = nvramName?.let {
+            require(it == File(it).name) { "Nom NVRAM snapshot invalide." }
+            File(canonical, it).also { file ->
+                require(file.isFile) { "NVRAM snapshot introuvable." }
+                val expected = meta.optString("nvramSha256")
+                require(expected.matches(Regex("[A-Fa-f0-9]{64}"))) { "SHA-256 NVRAM snapshot invalide." }
+                check(expected.equals(sha256(file), ignoreCase = true)) { "Snapshot corrompu: SHA-256 NVRAM invalide." }
             }
+        }
+
+        val diskTarget = File(vm.diskPath).canonicalFile
+        require(diskTarget.parentFile?.isDirectory == true) { "Répertoire du disque cible indisponible." }
+        val diskTemp = File(diskTarget.parentFile, diskTarget.name + ".restore-" + UUID.randomUUID())
+        val diskBackup = File(diskTarget.parentFile, diskTarget.name + ".backup-" + UUID.randomUUID())
+
+        val nvramTarget = if (snapshotNvram != null) File(vm.firmwarePath).canonicalFile else null
+        require(nvramTarget == null || nvramTarget.parentFile?.isDirectory == true) {
+            "Répertoire NVRAM cible indisponible."
+        }
+        require(nvramTarget == null || nvramTarget != diskTarget) { "Le disque et la NVRAM ne peuvent pas partager le même fichier." }
+        val nvramTemp = nvramTarget?.let { File(it.parentFile, it.name + ".restore-" + UUID.randomUUID()) }
+        val nvramBackup = nvramTarget?.let { File(it.parentFile, it.name + ".backup-" + UUID.randomUUID()) }
+
+        var diskBackedUp = false
+        var diskInstalled = false
+        var nvramBackedUp = false
+        var nvramInstalled = false
+
+        try {
+            snapshotDisk.copyTo(diskTemp, overwrite = false)
+            check(sha256(diskTemp).equals(meta.getString("diskSha256"), ignoreCase = true)) {
+                "Copie temporaire du disque snapshot invalide."
+            }
+            if (snapshotNvram != null && nvramTemp != null) {
+                snapshotNvram.copyTo(nvramTemp, overwrite = false)
+                check(sha256(nvramTemp).equals(meta.getString("nvramSha256"), ignoreCase = true)) {
+                    "Copie temporaire NVRAM invalide."
+                }
+            }
+
+            if (diskTarget.exists()) {
+                check(diskTarget.renameTo(diskBackup)) { "Impossible de sauvegarder le disque actuel." }
+                diskBackedUp = true
+            }
+            if (nvramTarget != null && nvramBackup != null && nvramTarget.exists()) {
+                check(nvramTarget.renameTo(nvramBackup)) { "Impossible de sauvegarder la NVRAM actuelle." }
+                nvramBackedUp = true
+            }
+
+            check(diskTemp.renameTo(diskTarget)) { "Impossible d'installer le disque restauré." }
+            diskInstalled = true
+            if (nvramTarget != null && nvramTemp != null) {
+                check(nvramTemp.renameTo(nvramTarget)) { "Impossible d'installer la NVRAM restaurée." }
+                nvramInstalled = true
+            }
+
+            diskBackup.delete()
+            nvramBackup?.delete()
+        } catch (t: Throwable) {
+            if (diskInstalled) diskTarget.delete()
+            if (nvramInstalled) nvramTarget?.delete()
+            if (diskBackedUp) check(diskBackup.renameTo(diskTarget)) { "Rollback disque impossible: " + diskBackup.absolutePath }
+            if (nvramBackedUp && nvramBackup != null && nvramTarget != null) {
+                check(nvramBackup.renameTo(nvramTarget)) { "Rollback NVRAM impossible: " + nvramBackup.absolutePath }
+            }
+            throw t
+        } finally {
+            diskTemp.delete()
+            nvramTemp?.delete()
+        }
+    }
+
+    private fun requireSnapshotDirectory(vmId: String, directory: File): File {
+        require(vmId.matches(Regex("[A-Za-z0-9-]{1,64}"))) { "Identifiant VM invalide." }
+        val canonical = directory.canonicalFile
+        val root = canonical.parentFile ?: error("Répertoire snapshot invalide.")
+        require(root.name == vmId && root.parentFile?.name == "snapshots") {
+            "Le snapshot doit appartenir au répertoire snapshots de la VM."
+        }
+        require(canonical != root && canonical.isDirectory) { "Répertoire snapshot invalide." }
+        return canonical
+    }
+
+    private fun writeDurable(file: File, value: String) {
+        file.parentFile?.mkdirs()
+        FileOutputStream(file).use { output ->
+            output.write(value.toByteArray(Charsets.UTF_8))
+            output.flush()
+            output.fd.sync()
         }
     }
 
