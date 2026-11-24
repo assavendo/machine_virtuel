@@ -32,6 +32,10 @@ class VmStore(context: Context) {
         return vm
     }
 
+    fun encodeConfigForPackage(vm: VmConfig): JSONObject = encode(vm)
+
+    fun decodeConfigFromPackage(json: JSONObject): VmConfig = decode(json)
+
     private fun decode(o: JSONObject): VmConfig {
         val forwards = mutableListOf<PortForward>()
         o.optJSONArray("portForwards")?.let { pf ->
