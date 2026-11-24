@@ -123,6 +123,30 @@ class CrosvmCommandBuilderTest {
     }
 
     @Test
+    fun tapNetworkUsesCrosvmNetParameter() {
+        val f = fixture()
+        try {
+            val vm = VmConfig(
+                name = "network",
+                arch = GuestArch.ARM64,
+                backend = BackendKind.GUNYAH,
+                headless = true,
+                diskPath = f.disk.absolutePath,
+                firmwarePath = f.firmware.absolutePath,
+                networkMode = com.assavendo.machinevirtuel.vm.NetworkMode.TAP,
+                tapName = "pvmtap0",
+                audioEnabled = false,
+            )
+            val command = CrosvmCommandBuilder.build(f.paths, vm, File(f.root, "control.sock"))
+            val i = command.indexOf("--net")
+            assertTrue(i >= 0)
+            assertEquals("tap-name=pvmtap0", command[i + 1])
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun firmwareCodeIsRequiredWithoutDirectKernel() {
         val f = fixture()
         try {
