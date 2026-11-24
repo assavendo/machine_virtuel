@@ -7,6 +7,7 @@ import com.assavendo.machinevirtuel.vm.VmConfig
 import java.io.File
 
 interface VmEngineApi {
+    fun apiVersion(): Int = API_VERSION
     fun create(config: VmConfig): VmConfig
     fun start(id: String)
     fun stop(id: String)
@@ -24,7 +25,10 @@ interface VmEngineApi {
     fun optimize(id: String): PerformanceAdvice
 }
 
+const val API_VERSION = 1
+
 enum class EngineEventType {
     VM_STARTED, VM_STOPPED, VM_PAUSED, VM_ERROR, VM_BACKEND_CHANGED,
     GPU_ERROR, STORAGE_ERROR, THERMAL_WARNING, MEMORY_WARNING, FALLBACK_ACTIVATED,
+    RECOVERY_AVAILABLE,
 }
