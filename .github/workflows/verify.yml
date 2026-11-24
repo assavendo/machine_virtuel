@@ -1,0 +1,20 @@
+name: Verify native core
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --manifest-path native/phoenixvm-core/Cargo.toml -- --check
+      - run: cargo test --manifest-path native/phoenixvm-core/Cargo.toml

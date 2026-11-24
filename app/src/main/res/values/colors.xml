@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="phoenix_bg">#0B0E13</color>
+    <color name="phoenix_panel">#151A22</color>
+    <color name="phoenix_accent">#72A7FF</color>
+</resources>

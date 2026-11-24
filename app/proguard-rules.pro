@@ -1,0 +1,2 @@
+-keep class com.assavendo.machinevirtuel.engine.NativeEngine { *; }
+-keep class com.assavendo.machinevirtuel.vm.** { *; }
