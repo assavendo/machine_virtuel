@@ -52,6 +52,20 @@ object CrosvmCommandBuilder {
             add("--cpus"); add("num-cores=" + vm.vCpu.coerceIn(1, 256))
             add("--block"); add("path=" + disk.absolutePath)
 
+            if (vm.sharedDirPath.isNotBlank()) {
+                val shared = File(vm.sharedDirPath).canonicalFile
+                require(shared.isDirectory) { "Dossier partagé crosvm introuvable." }
+                require(!vm.sharedDirReadOnly) {
+                    "Le partage crosvm natif n'expose pas encore une politique read-only garantie."
+                }
+                val tag = vm.sharedDirTag
+                require(tag.matches(Regex("[A-Za-z0-9_.-]{1,36}"))) {
+                    "Tag de partage invalide."
+                }
+                add("--shared-dir")
+                add(shared.absolutePath + ":" + tag + ":type=fs")
+            }
+
             if (firmware != null) {
                 require(firmware.isFile) { "Firmware crosvm introuvable." }
                 add("--bios"); add(firmware.absolutePath)
