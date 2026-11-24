@@ -41,6 +41,7 @@ class QemuBackend(private val backendKind: BackendKind) : HypervisorBackend {
             "QEMU_AUDIO_DRV" to "none",
         ),
         qmpSocket = qmp,
+        controlSocket = null,
     )
 
     override fun supportsPauseResume() = true
@@ -76,11 +77,15 @@ class CrosvmBackend(private val backendKind: BackendKind) : HypervisorBackend {
         qmp: File,
         serial: File,
         log: File,
-    ): BackendLaunchSpec = BackendLaunchSpec(
-        command = CrosvmCommandBuilder.build(paths, vm.copy(backend = backendKind)),
-        environment = mapOf("LD_LIBRARY_PATH" to paths.libDir.absolutePath),
-        qmpSocket = null,
-    )
+    ): BackendLaunchSpec {
+        val controlSocket = FilePaths.controlSocket(vm.id)
+        return BackendLaunchSpec(
+            command = CrosvmCommandBuilder.build(paths, vm.copy(backend = backendKind), controlSocket),
+            environment = mapOf("LD_LIBRARY_PATH" to paths.libDir.absolutePath),
+            qmpSocket = null,
+            controlSocket = controlSocket,
+        )
+    }
 }
 
 class HypervisorManager(private val host: HostCapabilities) {
