@@ -37,6 +37,20 @@ class VmStore(context: Context) {
     fun decodeConfigFromPackage(json: JSONObject): VmConfig = decode(json)
 
     private fun decode(o: JSONObject): VmConfig {
+        val sharedDirs = mutableListOf<SharedDirectory>()
+        o.optJSONArray("sharedDirs")?.let { shares ->
+            for (j in 0 until shares.length()) {
+                val item = shares.optJSONObject(j) ?: continue
+                val path = item.optString("hostPath")
+                if (path.isBlank()) continue
+                sharedDirs += SharedDirectory(
+                    hostPath = path,
+                    tag = item.optString("tag", "shared"),
+                    readOnly = item.optBoolean("readOnly", false),
+                )
+            }
+        }
+
         val forwards = mutableListOf<PortForward>()
         o.optJSONArray("portForwards")?.let { pf ->
             for (j in 0 until pf.length()) {
@@ -83,6 +97,7 @@ class VmStore(context: Context) {
             sharedDirPath = o.optString("sharedDirPath"),
             sharedDirTag = o.optString("sharedDirTag", "shared"),
             sharedDirReadOnly = o.optBoolean("sharedDirReadOnly", false),
+            sharedDirs = sharedDirs,
             backend = enumOr(BackendKind.QEMU_TCG) { BackendKind.valueOf(o.optString("backend", BackendKind.QEMU_TCG.name)) },
             mode = enumOr(VmMode.AUTO) { VmMode.valueOf(o.optString("mode", VmMode.AUTO.name)) },
             performancePreset = enumOr(PerformancePreset.BALANCED) { PerformancePreset.valueOf(o.optString("performancePreset", PerformancePreset.BALANCED.name)) },
@@ -134,6 +149,15 @@ class VmStore(context: Context) {
         put("firmwarePath", vm.firmwarePath); put("firmwareKind", vm.firmwareKind)
         put("secureBoot", vm.secureBoot); put("tpmEnabled", vm.tpmEnabled); put("tpmStatePath", vm.tpmStatePath)
         put("sharedDirPath", vm.sharedDirPath); put("sharedDirTag", vm.sharedDirTag); put("sharedDirReadOnly", vm.sharedDirReadOnly)
+        val shares = JSONArray()
+        vm.sharedDirs.forEach { share ->
+            shares.put(JSONObject().apply {
+                put("hostPath", share.hostPath)
+                put("tag", share.tag)
+                put("readOnly", share.readOnly)
+            })
+        }
+        put("sharedDirs", shares)
         put("backend", vm.backend.name); put("mode", vm.mode.name); put("performancePreset", vm.performancePreset.name)
         put("profile", vm.profile.name); put("gpuBackend", vm.gpuBackend.name)
         put("displayWidth", vm.displayWidth); put("displayHeight", vm.displayHeight); put("dpi", vm.dpi); put("fullscreen", vm.fullscreen); put("headless", vm.headless)
