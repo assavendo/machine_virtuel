@@ -255,7 +255,7 @@ class VmRuntimeService : Service() {
 
     private fun pauseVm(id: String) {
         val handle = processes[id] ?: return
-        if (handle.backend == BackendKind.QEMU_TCG && QmpController.pause(handle.qmp)) {
+        if (qmpControlled(handle.backend) && QmpController.pause(handle.qmp)) {
             VmStore(this).update(id) { it.state = VmState.PAUSED }
             VmEventBus.emit(VmEvent(id, VmEventType.VM_PAUSED))
             updateNotification("VM paused")
@@ -264,7 +264,7 @@ class VmRuntimeService : Service() {
 
     private fun resumeVm(id: String) {
         val handle = processes[id] ?: return
-        if (handle.backend == BackendKind.QEMU_TCG && QmpController.resume(handle.qmp)) {
+        if (qmpControlled(handle.backend) && QmpController.resume(handle.qmp)) {
             VmStore(this).update(id) { it.state = VmState.RUNNING }
             VmEventBus.emit(VmEvent(id, VmEventType.VM_RESUMED))
             updateNotification("VM resumed")
@@ -273,7 +273,7 @@ class VmRuntimeService : Service() {
 
     private fun rebootVm(id: String) {
         val handle = processes[id] ?: return
-        if (handle.backend == BackendKind.QEMU_TCG && QmpController.reset(handle.qmp)) {
+        if (qmpControlled(handle.backend) && QmpController.reset(handle.qmp)) {
             updateNotification("VM reboot requested")
         } else {
             updateNotification("Reboot unavailable for current backend")
@@ -283,7 +283,7 @@ class VmRuntimeService : Service() {
     private fun stopVm(id: String, force: Boolean) {
         val handle = processes[id] ?: return
         VmStore(this).update(id) { it.state = VmState.STOPPING }
-        val clean = !force && handle.backend == BackendKind.QEMU_TCG &&
+        val clean = !force && qmpControlled(handle.backend) &&
             QmpController.systemPowerdown(handle.qmp)
         if (clean) {
             if (!handle.process.waitFor(10, TimeUnit.SECONDS)) handle.process.destroy()
@@ -301,6 +301,9 @@ class VmRuntimeService : Service() {
         VmStore(this).update(id) { it.state = VmState.OFF }
         VmEventBus.emit(VmEvent(id, VmEventType.VM_STOPPED))
     }
+
+    private fun qmpControlled(backend: BackendKind): Boolean =
+        backend == BackendKind.QEMU_TCG || backend == BackendKind.KVM
 
     private fun createChannel() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
