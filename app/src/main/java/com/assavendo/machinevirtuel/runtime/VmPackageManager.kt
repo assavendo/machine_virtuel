@@ -92,11 +92,12 @@ object VmPackageManager {
         val backupPublicKey = File(backup.absolutePath + ".pub")
         val outputSignature = File(output.absolutePath + ".sig")
         val outputPublicKey = File(output.absolutePath + ".pub")
-        var packageMoved = false
-        var signatureMoved = false
-        var publicKeyMoved = false
+        var oldPackageMoved = false
         var oldSignatureMoved = false
         var oldPublicKeyMoved = false
+        var newPackagePublished = false
+        var newSignaturePublished = false
+        var newPublicKeyPublished = false
 
         try {
             ZipOutputStream(BufferedOutputStream(FileOutputStream(temp), 256 * 1024)).use { zip ->
@@ -122,13 +123,11 @@ object VmPackageManager {
                 }
             }
 
-            // Sign the exact package bytes before any path is published. This makes a successful
-            // export and its signature a single logical transaction.
             PackageSignatureManager.signFile(context, temp, pendingSignature, pendingPublicKey)
 
             if (output.exists()) {
                 check(output.renameTo(backup)) { "Impossible de sauvegarder l'ancien package." }
-                packageMoved = true
+                oldPackageMoved = true
                 if (outputSignature.exists()) {
                     check(outputSignature.renameTo(backupSignature)) {
                         "Impossible de sauvegarder l'ancienne signature du package."
@@ -143,19 +142,18 @@ object VmPackageManager {
                 }
             }
 
-            check(temp.renameTo(output)) {
-                "Impossible de publier le package VM."
-            }
-            packageMoved = false
+            check(temp.renameTo(output)) { "Impossible de publier le package VM." }
+            newPackagePublished = true
 
             check(pendingSignature.renameTo(outputSignature)) {
                 "Impossible de publier la signature du package VM."
             }
-            signatureMoved = true
+            newSignaturePublished = true
+
             check(pendingPublicKey.renameTo(outputPublicKey)) {
                 "Impossible de publier la clé publique du package VM."
             }
-            publicKeyMoved = true
+            newPublicKeyPublished = true
 
             backup.delete()
             backupSignature.delete()
@@ -166,17 +164,24 @@ object VmPackageManager {
             pendingSignature.delete()
             pendingPublicKey.delete()
 
-            if (packageMoved && !output.exists() && backup.exists()) {
-                backup.renameTo(output)
-            }
-            if (signatureMoved) outputSignature.delete()
-            if (publicKeyMoved) outputPublicKey.delete()
+            if (newPublicKeyPublished) outputPublicKey.delete()
+            if (newSignaturePublished) outputSignature.delete()
+            if (newPackagePublished) output.delete()
 
-            if (oldSignatureMoved && !outputSignature.exists() && backupSignature.exists()) {
-                backupSignature.renameTo(outputSignature)
+            if (oldPackageMoved && backup.exists()) {
+                check(backup.renameTo(output)) {
+                    "Export échoué et restauration du package précédent impossible."
+                }
             }
-            if (oldPublicKeyMoved && !outputPublicKey.exists() && backupPublicKey.exists()) {
-                backupPublicKey.renameTo(outputPublicKey)
+            if (oldSignatureMoved && backupSignature.exists()) {
+                check(backupSignature.renameTo(outputSignature)) {
+                    "Export échoué et restauration de l'ancienne signature impossible."
+                }
+            }
+            if (oldPublicKeyMoved && backupPublicKey.exists()) {
+                check(backupPublicKey.renameTo(outputPublicKey)) {
+                    "Export échoué et restauration de l'ancienne clé publique impossible."
+                }
             }
             throw t
         } finally {
