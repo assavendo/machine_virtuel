@@ -542,7 +542,7 @@ class MainActivity : Activity() {
         val labels = keys.toTypedArray()
         AlertDialog.Builder(this)
             .setTitle("Clés packages approuvées")
-            .setMultiChoiceItems(labels, null) { _, which, checked ->
+            .setMultiChoiceItems(labels, BooleanArray(labels.size) { true }) { _, which, checked ->
                 if (!checked) {
                     PackageTrustStore.revoke(this, labels[which])
                     toast("Clé révoquée.")
