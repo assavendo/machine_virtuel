@@ -4,8 +4,8 @@ import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
 import android.os.Debug
+import android.os.PowerManager
 import android.os.SystemClock
-import android.os.ThermalManager
 import java.io.File
 import kotlin.math.max
 
@@ -50,10 +50,14 @@ class HostMetricsCollector(private val context: Context) {
         val memory = ActivityManager.MemoryInfo()
         activity.getMemoryInfo(memory)
 
-        val thermalStatus = if (Build.VERSION.SDK_INT >= 29) {
-            context.getSystemService(ThermalManager::class.java)?.currentThermalStatus ?: 0
-        } else 0
-        val severeThreshold = if (Build.VERSION.SDK_INT >= 29) ThermalManager.THERMAL_STATUS_SEVERE else Int.MAX_VALUE
+        val thermalStatus = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val power = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            runCatching { power?.currentThermalStatus ?: PowerManager.THERMAL_STATUS_NONE }
+                .getOrDefault(PowerManager.THERMAL_STATUS_NONE)
+        } else {
+            PowerManager.THERMAL_STATUS_NONE
+        }
+        val severeThreshold = PowerManager.THERMAL_STATUS_SEVERE
 
         val io = readIoBytes()
         val net = readNetworkBytes()
@@ -86,19 +90,23 @@ class HostMetricsCollector(private val context: Context) {
     }
 
     private fun readSystemCpuPercent(): Double {
-        val line = runCatching { File("/proc/stat").useLines { it.firstOrNull { line -> line.startsWith("cpu ") } } }.getOrNull()
-            ?: return 0.0
-        val v = line.trim().split(Regex("\\s+")).drop(1).mapNotNull { it.toLongOrNull() }
-        if (v.size < 4) return 0.0
-        val idle = v[3]
-        val total = v.sum()
+        val line = runCatching {
+            File("/proc/stat").useLines { it.firstOrNull { line -> line.startsWith("cpu ") } }
+        }.getOrNull() ?: return 0.0
+        val values = line.trim().split(Regex("\\s+")).drop(1).mapNotNull { it.toLongOrNull() }
+        if (values.size < 4) return 0.0
+        val idle = values[3]
+        val total = values.sum()
         return if (total > 0) ((total - idle).toDouble() / total.toDouble()) * 100.0 else 0.0
     }
 
     private fun readCpuFrequency(): Long? {
         val root = File("/sys/devices/system/cpu")
         return root.listFiles()?.asSequence()
-            ?.mapNotNull { cpu -> File(cpu, "cpufreq/scaling_cur_freq").takeIf { it.isFile }?.let { runCatching { it.readText().trim().toLong() }.getOrNull() } }
+            ?.mapNotNull { cpu ->
+                File(cpu, "cpufreq/scaling_cur_freq").takeIf { it.isFile }
+                    ?.let { runCatching { it.readText().trim().toLong() }.getOrNull() }
+            }
             ?.maxOrNull()
     }
 
@@ -115,10 +123,10 @@ class HostMetricsCollector(private val context: Context) {
         var reads = 0L
         var writes = 0L
         file.forEachLine { line ->
-            val p = line.trim().split(Regex("\\s+"))
-            if (p.size >= 10) {
-                val sectorsRead = p[5].toLongOrNull() ?: 0L
-                val sectorsWritten = p[9].toLongOrNull() ?: 0L
+            val parts = line.trim().split(Regex("\\s+"))
+            if (parts.size >= 10) {
+                val sectorsRead = parts[5].toLongOrNull() ?: 0L
+                val sectorsWritten = parts[9].toLongOrNull() ?: 0L
                 reads += sectorsRead * 512L
                 writes += sectorsWritten * 512L
             }
@@ -150,7 +158,7 @@ class HostMetricsCollector(private val context: Context) {
         for (path in candidates) {
             val file = File(path)
             if (!file.isFile) continue
-            val value = file.readText().trim().toDoubleOrNull() ?: continue
+            val value = runCatching { file.readText().trim().toDoubleOrNull() }.getOrNull() ?: continue
             return if (value > 1000.0) value / 1000.0 else value
         }
         return null
