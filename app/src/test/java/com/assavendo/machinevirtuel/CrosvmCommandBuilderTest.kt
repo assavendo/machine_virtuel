@@ -58,7 +58,7 @@ class CrosvmCommandBuilderTest {
             assertTrue(command.contains("--block"))
             assertTrue(command.contains("path=" + f.disk.canonicalPath))
             assertTrue(command.contains("--bios"))
-            assertTrue(command.contains(f.firmware.canonicalPath))
+            assertTrue(command.contains(f.paths.edk2Qemu.canonicalPath))
             assertTrue(command.contains("--socket"))
             assertTrue(command.contains(socket.absolutePath))
         } finally {
@@ -97,9 +97,10 @@ class CrosvmCommandBuilderTest {
     }
 
     @Test
-    fun firmwareIsRequiredWithoutDirectKernel() {
+    fun firmwareCodeIsRequiredWithoutDirectKernel() {
         val f = fixture()
         try {
+            f.paths.edk2Qemu.delete()
             val vm = VmConfig(
                 name = "no-firmware",
                 arch = GuestArch.ARM64,
