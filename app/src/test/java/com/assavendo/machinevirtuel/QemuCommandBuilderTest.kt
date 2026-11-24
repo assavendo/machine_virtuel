@@ -91,6 +91,28 @@ class QemuCommandBuilderTest {
         }
     }
 
+    @Test fun tcgUsesConfiguredInMemoryTranslationBlockCacheSize() {
+        val f = runtime()
+        try {
+            val vm = VmConfig(
+                name = "tcg-cache", diskPath = f.disk.absolutePath, firmwarePath = f.nvram.absolutePath,
+                audioEnabled = false, translationCacheLevel = 0,
+            )
+            val command = QemuCommandBuilder.build(
+                f.paths, vm, File(f.root, "qmp.sock"), File(f.root, "serial.log"), File(f.root, "qemu.log")
+            )
+            assertTrue(command.contains("tcg,thread=multi,tb-size=16"))
+            vm.translationCacheLevel = 3
+            vm.performancePreset = PerformancePreset.ULTRA_PERFORMANCE
+            val high = QemuCommandBuilder.build(
+                f.paths, vm, File(f.root, "qmp.sock"), File(f.root, "serial.log"), File(f.root, "qemu.log")
+            )
+            assertTrue(high.contains("tcg,thread=multi,tb-size=128"))
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
     @Test fun x86NeverReceivesArm64Firmware() {
         val f = runtime()
         try {
