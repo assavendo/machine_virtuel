@@ -98,7 +98,7 @@ class VmRuntimeService : Service() {
                 vm.backend == BackendKind.GENIEZONE ||
                 vm.backend == BackendKind.HALLA
             ) {
-                startCrosvm(paths, vm, dir, log)
+                startCrosvm(paths, vm, dir, log, tapOwned)
             } else {
                 var activeBackend = vm.backend
                 var process = startQemu(paths, vm, dir, qmp, serial, log)
@@ -149,7 +149,6 @@ class VmRuntimeService : Service() {
         val command = QemuCommandBuilder.build(paths, vm, qmp, serial, log)
         val env = mapOf(
             "LD_LIBRARY_PATH" to paths.libDir.absolutePath,
-            "QEMU_AUDIO_DRV" to "none",
         )
         val process = RootProcessLauncher.start(command, dir, env, preferRoot = true)
         attachLogs(process, log)
@@ -161,6 +160,7 @@ class VmRuntimeService : Service() {
         vm: com.assavendo.machinevirtuel.vm.VmConfig,
         dir: File,
         log: File,
+        tapOwned: Boolean,
     ): Handle {
         val command = CrosvmCommandBuilder.build(paths, vm)
         val process = RootProcessLauncher.start(
