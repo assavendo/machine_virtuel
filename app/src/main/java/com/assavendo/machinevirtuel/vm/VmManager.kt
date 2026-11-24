@@ -70,14 +70,41 @@ class VmManager(private val context: Context) {
             lastStartedAt = null,
             state = VmState.OFF,
         )
-        val sourceDisk = File(source.diskPath)
+        val sourceDir = File(context.filesDir, "vms/" + source.id).canonicalFile
+        val sourceDisk = File(source.diskPath).canonicalFile
         require(sourceDisk.isFile) { "Disque source introuvable." }
+        val allowedRoot = File(context.filesDir, "vms").canonicalFile
+        require(sourceDir.toPath().startsWith(allowedRoot.toPath()) && sourceDir.isDirectory) {
+            "Répertoire source de VM invalide."
+        }
+
         val targetDir = File(context.filesDir, "vms/" + clone.id).apply { mkdirs() }
+        val copied = mutableMapOf<String, String>()
+
+        fun copyManagedArtifact(path: String, targetName: String): String {
+            if (path.isBlank()) return ""
+            val source = File(path).canonicalFile
+            if (!source.isFile) return path
+            if (!source.toPath().startsWith(sourceDir.toPath())) return path
+            val existing = copied[source.absolutePath]
+            if (existing != null) return existing
+            val target = File(targetDir, targetName)
+            source.copyTo(target, overwrite = false)
+            copied[source.absolutePath] = target.absolutePath
+            return target.absolutePath
+        }
+
         val targetDisk = File(targetDir, "disk." + DiskManager.extension(source.diskFormat))
         sourceDisk.copyTo(targetDisk, overwrite = false)
         clone.diskPath = targetDisk.absolutePath
-        clone.firmwarePath = File(targetDir, "nvram.fd").absolutePath
-        File(source.firmwarePath).takeIf { it.isFile }?.copyTo(File(clone.firmwarePath), overwrite = true)
+        clone.firmwarePath = copyManagedArtifact(source.firmwarePath, "nvram.fd")
+        clone.kernelPath = copyManagedArtifact(source.kernelPath, "kernel.Image")
+        clone.initrdPath = copyManagedArtifact(source.initrdPath, "initrd")
+        clone.dtbPath = copyManagedArtifact(source.dtbPath, "guest.dtb")
+        clone.androidSystemPath = copyManagedArtifact(source.androidSystemPath, "android-system.img")
+        clone.androidVendorPath = copyManagedArtifact(source.androidVendorPath, "android-vendor.img")
+        clone.androidUserdataPath = copyManagedArtifact(source.androidUserdataPath, "android-userdata.img")
+        clone.tpmStatePath = copyManagedArtifact(source.tpmStatePath, "tpm-state")
         store.save(store.list().toMutableList().apply { add(clone) })
         return clone
     }
