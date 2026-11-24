@@ -30,6 +30,12 @@ object VirtioFsManager {
         val process = ProcessBuilder(command)
             .directory(runtimeDir)
             .redirectErrorStream(true)
+            .also {
+                val current = it.environment()["LD_LIBRARY_PATH"].orEmpty()
+                it.environment()["LD_LIBRARY_PATH"] =
+                    paths.virtiofsdLibDir.absolutePath +
+                        if (current.isBlank()) "" else File.pathSeparator + current
+            }
             .start()
         Thread {
             process.inputStream.use { input ->
