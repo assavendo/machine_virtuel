@@ -19,6 +19,12 @@ object RootProcessLauncher {
         environment: Map<String, String>,
         preferRoot: Boolean,
     ): Process {
+        require(command.isNotEmpty()) { "Commande vide." }
+        require(command.none { it.indexOf('\u0000') >= 0 }) { "Commande contenant un caractère NUL." }
+        require(environment.keys.all { it.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) }) {
+            "Nom de variable d'environnement invalide."
+        }
+        require(workingDir.isDirectory) { "Répertoire de travail introuvable." }
         if (preferRoot && hasRoot()) {
             return startViaSu(command, workingDir, environment)
         }
@@ -44,15 +50,13 @@ object RootProcessLauncher {
         val shell = buildString {
             append("cd ")
             append(shellQuote(workingDir.absolutePath))
-            append(" && ")
             environment.forEach { (key, value) ->
-                append("export ")
+                append(" && export ")
                 append(key)
                 append("=")
                 append(shellQuote(value))
-                append(" && ")
             }
-            append("exec ")
+            append(" && exec ")
             append(command.joinToString(" ") { shellQuote(it) })
         }
 
@@ -64,5 +68,5 @@ object RootProcessLauncher {
     }
 
     private fun shellQuote(value: String): String =
-        "'" + value.replace("'", "'"'"'") + "'"
+        "'" + value.replace("'", "'\\''") + "'"
 }
