@@ -68,18 +68,28 @@ object CrosvmCommandBuilder {
                 }
             }
 
-            if (vm.sharedDirPath.isNotBlank()) {
-                val shared = File(vm.sharedDirPath).canonicalFile
-                require(shared.isDirectory) { "Dossier partagé crosvm introuvable." }
-                require(!vm.sharedDirReadOnly) {
+            val shares = buildList {
+                if (vm.sharedDirPath.isNotBlank()) {
+                    add(com.assavendo.machinevirtuel.vm.SharedDirectory(
+                        hostPath = vm.sharedDirPath,
+                        tag = vm.sharedDirTag,
+                        readOnly = vm.sharedDirReadOnly,
+                    ))
+                }
+                addAll(vm.sharedDirs)
+            }.distinctBy { it.tag }
+
+            shares.forEach { share ->
+                val shared = File(share.hostPath).canonicalFile
+                require(shared.isDirectory) { "Dossier partagé crosvm introuvable: " + shared }
+                require(!share.readOnly) {
                     "Le partage crosvm natif n'expose pas encore une politique read-only garantie."
                 }
-                val tag = vm.sharedDirTag
-                require(tag.matches(Regex("[A-Za-z0-9_.-]{1,36}"))) {
+                require(share.tag.matches(Regex("[A-Za-z0-9_.-]{1,36}"))) {
                     "Tag de partage invalide."
                 }
                 add("--shared-dir")
-                add(shared.absolutePath + ":" + tag + ":type=fs")
+                add(shared.absolutePath + ":" + share.tag + ":type=fs")
             }
 
             if (firmware != null) {
