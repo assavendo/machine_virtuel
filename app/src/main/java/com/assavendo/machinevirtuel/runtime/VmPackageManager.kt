@@ -48,6 +48,7 @@ object VmPackageManager {
             tpmEnabled = false,
             tpmStatePath = "",
             sharedDirPath = "",
+            sharedDirs = emptyList(),
             tapName = "",
             state = VmState.OFF,
             lastStartedAt = null,
