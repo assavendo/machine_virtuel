@@ -41,6 +41,16 @@ The following names and SPDX-like identifiers are transcribed from the upstream 
 | linux-boot-extractor | GPL-3.0 | https://github.com/Droid-VM/linux-boot-extractor |
 | bridgedhcp | GPL-3.0 | https://github.com/Droid-VM/bridgedhcp |
 
+## Additional application and optional-runtime dependencies
+
+| Component | Version / pin | Declared license | Usage / status |
+|---|---|---|---|
+| Bouncy Castle `bcprov-jdk18on` | 1.87 | Bouncy Castle License, based on the MIT X Consortium license | Bundled JCA provider for Ed25519 package verification on supported Android versions. Project: https://github.com/bcgit/bc-java |
+| Debian OVMF package | `2025.02-8+deb13u1`, SHA-256 `78e0d54df11fc77406cb7a0bc9a39e5bca6d1cbe06556b91d9a73491c52decdf` | EDK2/OVMF component notices; the full Debian `copyright` file is copied into the optional runtime package | Provisioned by `scripts/provision-x86-ovmf.sh`; not part of the default ARM64 runtime. Source package: https://packages.debian.org/trixie/ovmf |
+| QEMU x86_64/i386 Android runtime | QEMU 11.1.3 source archive with pinned SHA-256 in `scripts/build-qemu-android-x86-runtime.sh` | QEMU GPL terms and notices for every linked component | Optional user-built runtime add-on; the builder includes QEMU license files and generates a per-file SHA-256 list. |
+
+The OVMF firmware can contain components with different upstream notices. The script preserves the Debian package copyright file; this table must not be treated as a substitute for reviewing those component notices. The x86 add-on hash list provides integrity against accidental corruption, not publisher authentication. The UI therefore warns users to install only an archive they built themselves or obtained from a trusted release.
+
 ## Binary payload coverage
 
 The pinned SHA-256 manifest enumerates the archive files by path and digest. It includes (among others) QEMU system/image binaries, crosvm, helper networking tools, graphics libraries, VNC/USB/SLIRP dependencies, EDK2 firmware, Android-specific kernel modules, a kernel/initramfs and utility binaries.
