@@ -52,6 +52,7 @@ object VmPackageManager {
             state = VmState.OFF,
             lastStartedAt = null,
         )
+        val signingPublicKeyFingerprint = PackageSignatureManager.publicKeyFingerprint(context)
         val bootArtifacts = JSONArray()
         val artifactFields = listOf(
             "kernelPath" to vm.kernelPath,
@@ -82,6 +83,7 @@ object VmPackageManager {
             .put("nvram_size_bytes", firmware?.length() ?: 0L)
             .put("sha256_nvram", firmware?.let { ImageVerifier.sha256(it) } ?: JSONObject.NULL)
             .put("boot_artifacts", bootArtifacts)
+            .put("signing_public_key_sha256", signingPublicKeyFingerprint)
             .put("vm_config", VmStore(context).encodeConfigForPackage(portableConfig))
 
         val temp = File(parent, output.name + ".pending-" + UUID.randomUUID())
@@ -199,14 +201,6 @@ object VmPackageManager {
         val signature = File(packageFile.absolutePath + ".sig")
         val publicKey = File(packageFile.absolutePath + ".pub")
         require(signature.isFile == publicKey.isFile) { "La paire de signature du package est incomplète." }
-        if (signature.isFile && publicKey.isFile) {
-            require(signature.length() in 1..4096 && publicKey.length() in 1..4096) {
-                "Fichiers de signature anormalement volumineux."
-            }
-            require(PackageSignatureVerifier.verifyFile(packageFile, signature, publicKey)) {
-                "Signature Ed25519 du package invalide."
-            }
-        }
 
         val id = UUID.randomUUID().toString()
         val staging = File(context.cacheDir, "vm-import-" + id).apply {
@@ -230,6 +224,30 @@ object VmPackageManager {
             val manifest = JSONObject(manifestFile.readText())
             val version = manifest.optInt("format_version", -1)
             require(version in 1..FORMAT_VERSION) { "Version de package VM non supportée." }
+
+            if (version >= 2) {
+                require(signature.isFile && publicKey.isFile) {
+                    "Un package VM v2 doit avoir sa signature et sa clé publique."
+                }
+                require(signature.length() in 1..4096 && publicKey.length() in 1..4096) {
+                    "Fichiers de signature anormalement volumineux."
+                }
+                val fingerprint = manifest.optString("signing_public_key_sha256")
+                require(fingerprint.matches(Regex("[A-Fa-f0-9]{64}"))) {
+                    "Empreinte de clé de signature absente ou invalide."
+                }
+                val actualFingerprint = ImageVerifier.sha256(publicKey)
+                require(fingerprint.equals(actualFingerprint, ignoreCase = true)) {
+                    "La clé publique externe ne correspond pas à l'identité signée du manifeste."
+                }
+                require(PackageSignatureVerifier.verifyFile(packageFile, signature, publicKey)) {
+                    "Signature Ed25519 du package invalide."
+                }
+            } else if (signature.isFile && publicKey.isFile) {
+                require(PackageSignatureVerifier.verifyFile(packageFile, signature, publicKey)) {
+                    "Signature Ed25519 du package invalide."
+                }
+            }
 
             val originalVmId = manifest.optString("vm_id")
             require(originalVmId.matches(Regex("[A-Za-z0-9-]{1,64}"))) {
