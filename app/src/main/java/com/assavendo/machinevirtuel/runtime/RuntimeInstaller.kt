@@ -2,6 +2,7 @@
 package com.assavendo.machinevirtuel.runtime
 
 import android.content.Context
+import android.net.Uri
 import android.os.Build
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
@@ -42,6 +43,158 @@ object RuntimeInstaller {
         } finally {
             installing.set(false)
         }
+    }
+
+    /**
+     * Installs a separately built ARM-hosted x86 full-system QEMU add-on.
+     * The user must select an archive they built from scripts/build-qemu-android-x86-runtime.sh
+     * or obtained from a trusted project release. SHA-256 inside the archive detects corruption,
+     * but it is not a publisher signature; the UI must present this trust warning before import.
+     */
+    fun installOptionalX86(context: Context, archiveUri: Uri): RuntimePaths = synchronized(lock) {
+        require(Build.SUPPORTED_ABIS.any { it == "arm64-v8a" }) {
+            "L'extension QEMU x86 est compilée pour un hôte Android ARM64."
+        }
+        check(installing.compareAndSet(false, true)) { "Une installation du runtime est déjà en cours." }
+        val paths = RuntimePaths(context)
+        val staging = File(context.filesDir, "runtime-addons-staging")
+        val extracted = File(staging, "root")
+        val candidate = File(context.filesDir, "runtime-addons.next")
+        val previous = File(context.filesDir, "runtime-addons.previous")
+        val archive = File(context.cacheDir, "phoenixvm-x86-runtime-" + System.currentTimeMillis() + ".tar.xz")
+        try {
+            staging.deleteRecursively()
+            candidate.deleteRecursively()
+            check(extracted.mkdirs()) { "Impossible de créer le staging du runtime x86." }
+
+            val input = context.contentResolver.openInputStream(archiveUri)
+                ?: error("Impossible d'ouvrir l'archive sélectionnée.")
+            input.use { source ->
+                FileOutputStream(archive).use { target ->
+                    val buffer = ByteArray(128 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val count = source.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        check(total <= 1_073_741_824L) {
+                            "L'archive x86 dépasse la limite compressée de 1 Gio."
+                        }
+                        target.write(buffer, 0, count)
+                    }
+                    target.fd.sync()
+                }
+            }
+            check(archive.isFile && archive.length() > 0L) { "Archive runtime x86 vide." }
+
+            XZInputStream(BufferedInputStream(FileInputStream(archive), 128 * 1024)).use { xz ->
+                TarReader(xz).extractTo(extracted)
+            }
+            verifyOptionalX86Package(extracted)
+            check(extracted.renameTo(candidate)) {
+                "Impossible de préparer atomiquement le runtime x86 vérifié."
+            }
+            File(candidate, ".addon-version").writeText("PhoenixVM x86 add-on format 1\n")
+
+            if (paths.optionalRoot.exists()) {
+                if (previous.exists()) {
+                    require(File(previous, ".addon-version").isFile) {
+                        "Une sauvegarde précédente non vérifiée existe; elle ne sera pas écrasée."
+                    }
+                    previous.deleteRecursively()
+                }
+                check(paths.optionalRoot.renameTo(previous)) {
+                    "Impossible de sauvegarder l'extension x86 actuelle."
+                }
+            }
+            if (!candidate.renameTo(paths.optionalRoot)) {
+                if (previous.exists()) check(previous.renameTo(paths.optionalRoot)) {
+                    "Échec d'installation et restauration de l'extension précédente impossible."
+                }
+                error("Impossible d'activer le runtime x86.")
+            }
+
+            val installed = RuntimePaths(context)
+            if (!installed.hasX86SystemQemu() || !installed.hasX86Uefi() ||
+                !installed.x86LibDir.isDirectory || !installed.qemuShareX86.isDirectory ||
+                !File(installed.optionalRoot, ".addon-version").isFile
+            ) {
+                paths.optionalRoot.deleteRecursively()
+                if (previous.exists()) check(previous.renameTo(paths.optionalRoot)) {
+                    "Runtime x86 invalide; restauration de l'extension précédente impossible."
+                }
+                error("La vérification finale du runtime x86 a échoué.")
+            }
+            previous.deleteRecursively()
+            installed
+        } finally {
+            archive.delete()
+            staging.deleteRecursively()
+            candidate.deleteRecursively()
+            installing.set(false)
+        }
+    }
+
+    fun removeOptionalX86(context: Context) = synchronized(lock) {
+        val paths = RuntimePaths(context)
+        val activeX86 = VmStore(context).list().any {
+            it.arch != com.assavendo.machinevirtuel.vm.GuestArch.ARM64 &&
+                (it.state == com.assavendo.machinevirtuel.vm.VmState.RUNNING ||
+                    it.state == com.assavendo.machinevirtuel.vm.VmState.STARTING ||
+                    it.state == com.assavendo.machinevirtuel.vm.VmState.PAUSED)
+        }
+        require(!activeX86) { "Arrêtez toutes les VM x86 avant de retirer le runtime." }
+        if (paths.optionalRoot.exists()) {
+            require(File(paths.optionalRoot, ".addon-version").isFile) {
+                "Le dossier d'extension ne possède pas de marqueur PhoenixVM; suppression refusée."
+            }
+            check(paths.optionalRoot.deleteRecursively()) { "Impossible de retirer le runtime x86." }
+        }
+    }
+
+    private fun verifyOptionalX86Package(root: File) {
+        val manifest = safeChild(root, "SHA256SUMS")
+        require(manifest.isFile && manifest.length() in 1..1_048_576L) {
+            "Le manifeste SHA256SUMS est absent ou trop volumineux."
+        }
+        val entries = manifest.readLines()
+        require(entries.isNotEmpty() && entries.size <= MAX_ENTRIES) {
+            "Le manifeste SHA256SUMS est vide ou contient trop d'entrées."
+        }
+        val seen = mutableSetOf<String>()
+        entries.forEach { line ->
+            val pair = line.trim().split(Regex("\\s+"), limit = 2)
+            require(pair.size == 2 && pair[0].matches(Regex("[A-Fa-f0-9]{64}"))) {
+                "Ligne SHA-256 invalide dans l'extension x86."
+            }
+            val relative = pair[1].removePrefix("*")
+            require(relative.startsWith("usr/") && seen.add(relative)) {
+                "Chemin absent de usr/ ou dupliqué dans le manifeste x86."
+            }
+            val file = safeChild(root, relative)
+            check(file.isFile) { "Fichier absent du runtime x86: " + relative }
+            check(pair[0].equals(sha256(file), ignoreCase = true)) {
+                "SHA-256 invalide pour le fichier runtime x86: " + relative
+            }
+        }
+        val required = listOf(
+            "usr/bin/qemu-system-x86_64",
+            "usr/share/droidvm/edk2-x86_64-code.fd",
+            "usr/share/droidvm/edk2-x86_64-vars.fd",
+        )
+        required.forEach { path ->
+            check(seen.contains(path)) { "Entrée essentielle absente du manifeste x86: " + path }
+            val file = safeChild(root, path)
+            check(file.isFile && file.length() > 0L) { "Fichier essentiel x86 absent: " + path }
+        }
+        val qemu = safeChild(root, "usr/bin/qemu-system-x86_64")
+        check(qemu.setExecutable(true, false)) { "Impossible d'activer l'exécutable QEMU x86_64." }
+        val i386 = safeChild(root, "usr/bin/qemu-system-i386")
+        if (i386.isFile) check(i386.setExecutable(true, false)) {
+            "Impossible d'activer l'exécutable QEMU i386."
+        }
+        check(safeChild(root, "usr/lib").isDirectory) { "Les bibliothèques du runtime x86 sont absentes." }
+        check(safeChild(root, "usr/share/qemu").isDirectory) { "Les données QEMU x86 sont absentes." }
     }
 
     private fun recoverInterruptedSwap(context: Context, paths: RuntimePaths) {
