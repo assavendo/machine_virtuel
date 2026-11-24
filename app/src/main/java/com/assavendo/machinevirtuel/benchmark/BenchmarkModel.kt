@@ -29,7 +29,13 @@ data class BenchmarkComparison(
     val temperatureDeltaC: Double? = null,
     val stabilityPassed: Boolean = true,
     val compatibilityPassed: Boolean = true,
+    val targetPercent: Double = 20.0,
 ) {
+    val targetMet: Boolean
+        get() = deltaPercent >= targetPercent &&
+            stabilityPassed &&
+            compatibilityPassed
+
     val accepted: Boolean
         get() = optimizedScore > 0.0 &&
             deltaPercent >= 0.0 &&
@@ -47,7 +53,9 @@ object BenchmarkAcceptance {
         optimizedTemperatureC: Double? = null,
         stabilityPassed: Boolean = true,
         compatibilityPassed: Boolean = true,
+        targetPercent: Double = 20.0,
     ): BenchmarkComparison {
+        require(targetPercent >= 0.0) { "targetPercent must be non-negative." }
         require(baselineScore > 0.0 && optimizedScore >= 0.0)
         val delta = (optimizedScore - baselineScore) / baselineScore * 100.0
         return BenchmarkComparison(
@@ -59,6 +67,7 @@ object BenchmarkAcceptance {
                 optimizedTemperatureC - baselineTemperatureC else null,
             stabilityPassed = stabilityPassed,
             compatibilityPassed = compatibilityPassed,
+            targetPercent = targetPercent,
         )
     }
 }
