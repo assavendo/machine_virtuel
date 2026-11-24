@@ -21,6 +21,7 @@ import com.assavendo.machinevirtuel.migration.VmMigrationManager
 import com.assavendo.machinevirtuel.runtime.SnapshotManager
 import com.assavendo.machinevirtuel.runtime.RuntimeInstaller
 import com.assavendo.machinevirtuel.runtime.VmRuntimeService
+import com.assavendo.machinevirtuel.runtime.RecoveryPlanStore
 import com.assavendo.machinevirtuel.security.ThirdPartyLicenseManifest
 import com.assavendo.machinevirtuel.ui.VmDisplayView
 import com.assavendo.machinevirtuel.vm.*
@@ -214,6 +215,11 @@ class MainActivity : Activity() {
                 }
                 VmState.STARTING, VmState.STOPPING -> {
                     row1.addView(actionButton("Force Stop", bad) { VmRuntimeService.forceStop(this@MainActivity, vm.id) })
+                }
+                VmState.ERROR -> {
+                    row1.addView(actionButton("Récupération", teal) { showRecovery(vm) })
+                    row1.addView(space(6))
+                    row1.addView(actionButton("Démarrer", good) { VmRuntimeService.start(this@MainActivity, vm.id) })
                 }
                 else -> row1.addView(actionButton("Démarrer", good) { VmRuntimeService.start(this@MainActivity, vm.id) })
             }
@@ -469,6 +475,53 @@ class MainActivity : Activity() {
         }
         AlertDialog.Builder(this).setTitle("Diagnostic du runtime").setMessage(body)
             .setPositiveButton("Fermer", null).show()
+    }
+
+    private fun showRecovery(vm: VmConfig) {
+        val plan = RecoveryPlanStore.read(filesDir, vm.id)
+        if (plan == null) {
+            toast("Aucun plan de récupération disponible pour cette VM.")
+            return
+        }
+        val message = buildString {
+            append("La VM a terminé en erreur. Aucune donnée ne sera supprimée automatiquement.\n\n")
+            plan.actions.forEachIndexed { index, action ->
+                append(index + 1).append(". ").append(action).append('\n')
+            }
+            plan.safeSnapshot?.let {
+                append("\nSnapshot recommandé : ").append(it.name)
+            }
+        }
+        val builder = AlertDialog.Builder(this)
+            .setTitle("Récupération — " + vm.name)
+            .setMessage(message)
+            .setNegativeButton("Fermer", null)
+            .setPositiveButton("Retenter", null)
+
+        if (plan.safeSnapshot?.isDirectory == true) {
+            builder.setNeutralButton("Restaurer snapshot") { _, _ ->
+                runCatching {
+                    VmManager(this).restoreSnapshot(vm.id, plan.safeSnapshot)
+                    RecoveryPlanStore.clear(filesDir, vm.id)
+                }
+                    .onSuccess {
+                        toast("Snapshot restauré. Vérifiez la configuration puis redémarrez la VM.")
+                        refresh()
+                    }
+                    .onFailure { toast("Restauration : " + (it.message ?: "échec")) }
+            }
+        }
+
+        val dialog = builder.create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                RecoveryPlanStore.clear(filesDir, vm.id)
+                toast("Plan effacé : le prochain démarrage utilisera la sélection automatique actuelle.")
+                refresh()
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
     }
 
     private fun chooseIso(vmId: String) {
