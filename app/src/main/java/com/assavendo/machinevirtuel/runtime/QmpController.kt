@@ -28,6 +28,14 @@ object QmpController {
     fun queryStatus(socketFile: File): String? =
         executeForResponse(socketFile, """{"execute":"query-status"}""")
 
+    fun setBalloonTarget(socketFile: File, targetBytes: Long): Boolean {
+        require(targetBytes >= 256L * 1024L * 1024L) { "Balloon target must preserve at least 256 MiB." }
+        return execute(
+            socketFile,
+            """{"execute":"balloon","arguments":{"value":$targetBytes}}"""
+        )
+    }
+
     private fun execute(socketFile: File, command: String): Boolean =
         executeForResponse(socketFile, command) != null
 
