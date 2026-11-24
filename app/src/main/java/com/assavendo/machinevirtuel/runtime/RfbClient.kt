@@ -93,14 +93,14 @@ class RfbClient(
         listener.onSize(width, height)
 
         val format = ByteBuffer.allocate(20).order(ByteOrder.BIG_ENDIAN)
-        format.put(0).put(ByteArray(3))
-        format.put(32).put(24).put(0).put(1)
+        format.put(0.toByte()).put(ByteArray(3))
+        format.put(32.toByte()).put(24.toByte()).put(0.toByte()).put(1.toByte())
         format.putShort(255).putShort(255).putShort(255)
-        format.put(16).put(8).put(0).put(ByteArray(3))
+        format.put(16.toByte()).put(8.toByte()).put(0.toByte()).put(ByteArray(3))
         output!!.write(format.array())
 
         val encodings = ByteBuffer.allocate(8).order(ByteOrder.BIG_ENDIAN)
-        encodings.put(2).put(ByteArray(3)).putShort(1).putInt(0)
+        encodings.put(2.toByte()).put(ByteArray(3)).putShort(1).putInt(0)
         output!!.write(encodings.array())
 
         sendFramebufferRequest(false)
@@ -148,8 +148,8 @@ class RfbClient(
         val out = output ?: return
         synchronized(out) {
             val request = ByteBuffer.allocate(10).order(ByteOrder.BIG_ENDIAN)
-                .put(3)
-                .put(if (incremental) 1 else 0)
+                 .put(3.toByte())
+                .put(if (incremental) 1.toByte() else 0.toByte())
                 .putShort(0).putShort(0)
                 .putShort(width.toShort()).putShort(height.toShort())
                 .array()
