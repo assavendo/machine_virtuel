@@ -462,7 +462,7 @@ object RuntimeInstaller {
                         val target = safeChild(root, linkName)
                         outputFile.parentFile?.mkdirs()
                         check(Files.isRegularFile(target.toPath())) { "Runtime hard-link target is missing: " + linkName }
-                        require(!Files.exists(output)) { "Duplicate runtime archive path: " + name }
+                        require(!Files.exists(output.toPath())) { "Duplicate runtime archive path: " + name }
                         Files.createLink(output.toPath(), target.toPath())
                         skipExactly(size)
                     }
