@@ -206,23 +206,39 @@ object QemuCommandBuilder {
         }
         args += "-rtc"; args += "base=utc"
 
-        if (virtioFsSocket != null && vm.sharedDirPath.isNotBlank()) {
-            require(!vm.sharedDirReadOnly) {
+        val shares = buildList {
+            if (vm.sharedDirPath.isNotBlank()) {
+                add(com.assavendo.machinevirtuel.vm.SharedDirectory(
+                    hostPath = vm.sharedDirPath,
+                    tag = vm.sharedDirTag,
+                    readOnly = vm.sharedDirReadOnly,
+                ))
+            }
+            addAll(vm.sharedDirs)
+        }.distinctBy { it.tag }
+
+        if (virtioFsSocket != null && shares.size == 1) {
+            val share = shares.single()
+            require(!share.readOnly) {
                 "Le partage virtio-fs en lecture seule n'est pas activé dans ce runtime."
             }
+            require(File(share.hostPath).isDirectory) { "Dossier partagé introuvable." }
             val socket = qemuKeyValue(virtioFsSocket.absolutePath, "virtioFsSocket")
-            val tag = safeTag(vm.sharedDirTag)
+            val tag = safeTag(share.tag)
             args += "-object"; args += "memory-backend-memfd,id=mem,share=on,size=" + vm.ramMb + "M"
             args += "-numa"; args += "node,memdev=mem"
             args += "-chardev"; args += "socket,id=vfs0,path=" + socket
             args += "-device"; args += "vhost-user-fs-pci,queue-size=1024,chardev=vfs0,tag=" + tag
-        } else if (vm.sharedDirPath.isNotBlank()) {
-            require(File(vm.sharedDirPath).isDirectory) { "Dossier partagé introuvable." }
-            val shared = qemuKeyValue(vm.sharedDirPath, "sharedDirPath")
-            val tag = safeTag(vm.sharedDirTag)
-            var fs = "local,path=" + shared + ",mount_tag=" + tag + ",security_model=mapped-xattr"
-            if (vm.sharedDirReadOnly) fs += ",readonly=on"
-            args += "-virtfs"; args += fs
+        } else {
+            shares.forEachIndexed { index, share ->
+                require(File(share.hostPath).isDirectory) { "Dossier partagé introuvable: " + share.hostPath }
+                val shared = qemuKeyValue(share.hostPath, "sharedDirPath")
+                val tag = safeTag(share.tag)
+                val id = "fs" + index
+                var fs = "local,path=" + shared + ",mount_tag=" + tag + ",security_model=mapped-xattr"
+                if (share.readOnly) fs += ",readonly=on"
+                args += "-virtfs"; args += fs
+            }
         }
 
         if (tpmHandle != null) {
