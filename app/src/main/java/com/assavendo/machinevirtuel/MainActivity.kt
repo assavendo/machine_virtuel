@@ -19,6 +19,7 @@ import com.assavendo.machinevirtuel.device.DeviceProfileDatabase
 import com.assavendo.machinevirtuel.guest.GuestCompatibilityCatalog
 import com.assavendo.machinevirtuel.migration.VmMigrationManager
 import com.assavendo.machinevirtuel.runtime.SnapshotManager
+import com.assavendo.machinevirtuel.runtime.RuntimeInstaller
 import com.assavendo.machinevirtuel.runtime.VmRuntimeService
 import com.assavendo.machinevirtuel.security.ThirdPartyLicenseManifest
 import com.assavendo.machinevirtuel.ui.VmDisplayView
@@ -89,6 +90,8 @@ class MainActivity : Activity() {
         projectActions.addView(actionButton("Nouvelle VM", violet) { createVm() })
         projectActions.addView(space(8))
         projectActions.addView(actionButton("Importer .vmxpack", accent) { importVmPackage() })
+        projectActions.addView(space(8))
+        projectActions.addView(actionButton("Runtime x86", teal) { chooseX86Runtime() })
         projectActions.addView(space(8))
         projectActions.addView(actionButton("Licence", teal) { showLicenses() })
         content.addView(projectActions)
@@ -350,6 +353,35 @@ class MainActivity : Activity() {
             .onFailure { toast(it.message ?: "Export impossible.") }
     }
 
+    private fun chooseX86Runtime() {
+        AlertDialog.Builder(this)
+            .setTitle("Installer le runtime x86")
+            .setMessage(
+                "Cette extension ajoute QEMU x86_64/i386 et le firmware OVMF au moteur. " +
+                    "Elle exécute du code natif sur l'appareil. Choisissez uniquement une archive " +
+                    "que vous avez construite avec scripts/build-qemu-android-x86-runtime.sh " +
+                    "ou obtenue depuis une source de confiance. Les SHA-256 internes détectent " +
+                    "la corruption, mais ne constituent pas une signature du distributeur."
+            )
+            .setNegativeButton("Annuler", null)
+            .setPositiveButton("Choisir l'archive") { _, _ ->
+                startActivityForResult(
+                    Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        type = "application/x-xz"
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                    },
+                    703
+                )
+            }
+            .setNeutralButton("Retirer l'extension") { _, _ ->
+                runCatching { RuntimeInstaller.removeOptionalX86(this) }
+                    .onSuccess { toast("Runtime x86 retiré.") }
+                    .onFailure { toast(it.message ?: "Retrait impossible.") }
+                refresh()
+            }
+            .show()
+    }
+
     private fun importVmPackage() {
         startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             type = "application/octet-stream"
@@ -423,6 +455,17 @@ class MainActivity : Activity() {
                 .onSuccess { toast("Package importé.") }
             staging.delete()
             refresh()
+            return
+        }
+        if (requestCode == 703) {
+            Thread({
+                val result = runCatching { RuntimeInstaller.installOptionalX86(this, uri) }
+                handler.post {
+                    result.onSuccess { toast("Runtime x86 installé et vérifié. Le guest Windows/Linux reste à valider sur cet appareil.") }
+                        .onFailure { toast("Installation runtime x86 : " + (it.message ?: "échec")) }
+                    refresh()
+                }
+            }, "phoenixvm-x86-addon-install").start()
             return
         }
         if (requestCode != 701) return
