@@ -41,6 +41,7 @@ object DeviceProfileDatabase {
             .maxByOrNull { it.second }
             ?.first
             ?: profiles.last()
+    }
 
     private fun wildcard(pattern: String, value: String): Boolean {
         val parts = pattern.lowercase().split("*")
