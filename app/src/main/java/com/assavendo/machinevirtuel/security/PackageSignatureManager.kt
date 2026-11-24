@@ -107,15 +107,17 @@ object PackageSignatureManager {
         val target = File(identityDir, PRIVATE_FILE)
         val temporary = File(target.parentFile, target.name + ".tmp-" + SecureRandom().nextLong())
         try {
-            DataOutputStream(FileOutputStream(temporary)).use { output ->
-                output.writeInt(MAGIC)
-                output.writeByte(VERSION)
-                output.writeInt(cipher.iv.size)
-                output.write(cipher.iv)
-                output.writeInt(ciphertext.size)
-                output.write(ciphertext)
-                output.flush()
-                output.fd.sync()
+            FileOutputStream(temporary).use { raw ->
+                DataOutputStream(raw).use { output ->
+                    output.writeInt(MAGIC)
+                    output.writeByte(VERSION)
+                    output.writeInt(cipher.iv.size)
+                    output.write(cipher.iv)
+                    output.writeInt(ciphertext.size)
+                    output.write(ciphertext)
+                    output.flush()
+                    raw.fd.sync()
+                }
             }
             check(temporary.renameTo(target)) { "Impossible de publier la clé privée chiffrée." }
         } finally {
