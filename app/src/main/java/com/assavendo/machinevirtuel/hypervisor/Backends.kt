@@ -53,10 +53,10 @@ class CrosvmBackend(private val backendKind: BackendKind) : HypervisorBackend {
 
     override fun detect(host: HostCapabilities, vm: VmConfig): Boolean =
         when (backendKind) {
-            BackendKind.GUNYAH -> host.gunyah && vm.arch == GuestArch.ARM64
-            BackendKind.GENIEZONE -> host.genieZone && vm.arch == GuestArch.ARM64
-            BackendKind.HALLA -> host.halla && vm.arch == GuestArch.ARM64
-            BackendKind.KVM -> host.kvm && vm.arch == GuestArch.ARM64
+            BackendKind.GUNYAH -> host.gunyah && vm.arch == GuestArch.ARM64 && vm.headless && vm.networkMode != com.assavendo.machinevirtuel.vm.NetworkMode.NAT
+            BackendKind.GENIEZONE -> host.genieZone && vm.arch == GuestArch.ARM64 && vm.headless && vm.networkMode != com.assavendo.machinevirtuel.vm.NetworkMode.NAT
+            BackendKind.HALLA -> host.halla && vm.arch == GuestArch.ARM64 && vm.headless && vm.networkMode != com.assavendo.machinevirtuel.vm.NetworkMode.NAT
+            BackendKind.KVM -> host.kvm && vm.arch == GuestArch.ARM64 && vm.headless && vm.networkMode != com.assavendo.machinevirtuel.vm.NetworkMode.NAT
             else -> false
         }
 
@@ -68,7 +68,7 @@ class CrosvmBackend(private val backendKind: BackendKind) : HypervisorBackend {
             // provision an Android display/audio/network bridge for it. Reporting those
             // capabilities as enabled here would be misleading.
             gpu = false,
-            network = false,
+            network = true,
             audio = false,
         )
 
