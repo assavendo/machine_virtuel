@@ -5,6 +5,7 @@ import com.assavendo.machinevirtuel.cache.TranslationCacheManager
 import com.assavendo.machinevirtuel.host.HostCapabilityScanner
 import com.assavendo.machinevirtuel.performance.HostMetricsCollector
 import com.assavendo.machinevirtuel.performance.PerformanceAdvisor
+import com.assavendo.machinevirtuel.performance.PerformanceOptimizer
 import com.assavendo.machinevirtuel.runtime.DiagnosticExporter
 import com.assavendo.machinevirtuel.runtime.DiskManager
 import com.assavendo.machinevirtuel.runtime.ImageVerifier
@@ -25,6 +26,7 @@ class VmManager(private val context: Context) {
     private val orchestrator = VmOrchestrator()
     private val metrics = HostMetricsCollector(context)
     private val advisor = PerformanceAdvisor()
+    private val optimizer = PerformanceOptimizer()
 
     fun list(): List<VmConfig> = store.list()
     fun capabilities() = scanner.scan()
@@ -149,6 +151,32 @@ class VmManager(private val context: Context) {
     fun selectBackend(id: String): OrchestrationDecision {
         val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
         return orchestrator.choose(vm, capabilities())
+    }
+
+    fun optimizationDecision(id: String): com.assavendo.machinevirtuel.performance.OptimizationDecision {
+        val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
+        return optimizer.decide(vm, metrics.sample())
+    }
+
+    fun applyOptimization(id: String): VmConfig {
+        val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
+        require(vm.state == VmState.OFF || vm.state == VmState.ERROR) {
+            "Appliquer une optimisation de ressources exige une VM arrêtée."
+        }
+        val decision = optimizer.decide(vm, metrics.sample())
+        val admission = ResourceAdmissionController.check(
+            vm.copy(ramMb = decision.ramMb, vCpu = decision.vCpu),
+            store.list(),
+            capabilities(),
+        )
+        require(admission.allowed) {
+            "Optimisation refusée par le contrôle de ressources : " + admission.reason
+        }
+        return store.update(id) {
+            it.vCpu = decision.vCpu
+            it.ramMb = decision.ramMb
+            it.monitoringIntervalMs = decision.monitoringIntervalMs
+        } ?: error("VM introuvable.")
     }
 
     fun optimize(id: String) = advisor.advise(
