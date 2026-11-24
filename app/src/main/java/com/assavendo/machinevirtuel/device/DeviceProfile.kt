@@ -1,7 +1,6 @@
 package com.assavendo.machinevirtuel.device
 
 enum class DeviceFamily { QUALCOMM_SNAPDRAGON, MEDIATEK_DIMENSITY, SAMSUNG_EXYNOS, GOOGLE_TENSOR, OTHER_ARM64 }
-
 enum class ValidationLevel { TESTED, THEORETICAL, UNKNOWN }
 
 data class DeviceProfile(
@@ -30,16 +29,16 @@ object DeviceProfileDatabase {
     fun all(): List<DeviceProfile> = profiles
 
     fun match(manufacturer: String, model: String, soc: String): DeviceProfile {
-        val normalized = listOf(manufacturer, model, soc).joinToString(" ").lowercase()
         return profiles.firstOrNull { profile ->
-            wildcard(profile.vendor, normalized) ||
-                wildcard(profile.modelPattern, model.lowercase()) ||
-                wildcard(profile.socPattern, soc.lowercase())
+            wildcard(profile.vendor, manufacturer) ||
+                wildcard(profile.modelPattern, model) ||
+                wildcard(profile.socPattern, soc)
         } ?: profiles.last()
     }
 
     private fun wildcard(pattern: String, value: String): Boolean {
-        val regex = Regex("^" + Regex.escape(pattern.lowercase()).replace("\\*", ".*") + "$")
-        return regex.matches(value)
+        val parts = pattern.lowercase().split("*")
+        val expression = parts.joinToString(".*") { Regex.escape(it) }
+        return Regex("^" + expression + "$").matches(value.lowercase())
     }
 }
