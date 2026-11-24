@@ -160,8 +160,8 @@ class VmRuntimeService : Service() {
     }
 
     private fun attachLogs(process: Process, log: File) {
-        Thread { process.inputStream.use { it.copyTo(log.outputStream().buffered()) } }.start()
-        Thread { process.errorStream.use { it.copyTo(log.outputStream().buffered()) } }.start()
+        Thread { process.inputStream.use { input -> log.outputStream(append = true).buffered().use { output -> input.copyTo(output) } } }.start()
+        Thread { process.errorStream.use { input -> log.outputStream(append = true).buffered().use { output -> input.copyTo(output) } } }.start()
     }
 
     private fun pauseVm(id: String) {
