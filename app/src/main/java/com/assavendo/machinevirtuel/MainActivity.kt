@@ -81,6 +81,8 @@ class MainActivity : Activity() {
         hostActions.addView(actionButton("Diagnostic", teal) { showRuntimeDiagnostics() })
         hostActions.addView(space(8))
         hostActions.addView(actionButton("Développeur", violet) { showDeveloperTools() })
+        hostActions.addView(space(8))
+        hostActions.addView(actionButton("Gestes", teal) { configureGestures() })
         content.addView(hostActions)
 
         val projectActions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
@@ -432,6 +434,27 @@ class MainActivity : Activity() {
         manager.setIso(vmId, target.absolutePath)
         refresh()
         toast("ISO importée et stockée localement.")
+    }
+
+
+    private fun configureGestures() {
+        val current = com.assavendo.machinevirtuel.ui.GestureSettingsStore.load(this)
+        val labels = arrayOf("Gestes activés", "Swipe bord", "Pinch", "Tap trois doigts")
+        val checked = booleanArrayOf(current.enabled, current.edgeSwipeEnabled, current.pinchEnabled, current.threeFingerTapEnabled)
+        AlertDialog.Builder(this)
+            .setTitle("Gestes du viewer")
+            .setMultiChoiceItems(labels, checked) { _, which, value -> checked[which] = value }
+            .setPositiveButton("Enregistrer") { _, _ ->
+                com.assavendo.machinevirtuel.ui.GestureSettingsStore.save(
+                    this,
+                    com.assavendo.machinevirtuel.ui.GestureSettings(
+                        checked[0], checked[1], checked[2], checked[3]
+                    )
+                )
+                toast("Réglages gestes enregistrés.")
+            }
+            .setNegativeButton("Annuler", null)
+            .show()
     }
 
     private fun showDisplay(vmId: String) {
