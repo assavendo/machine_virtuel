@@ -59,6 +59,14 @@ class VmManager(private val context: Context) {
         val runtime = if (config.diskFormat == DiskFormat.RAW) null else RuntimeInstaller.ensure(context)
         DiskManager.ensureVmStorage(context.filesDir, config, runtime)
         store.save(store.list().toMutableList().apply { add(config) })
+        if (config.autoSnapshotOnInstall) {
+            runCatching {
+                SnapshotManager.createColdSnapshot(context.filesDir, config, "install")
+                SnapshotManager.enforceRetention(context.filesDir, config)
+            }.onFailure {
+                store.update(config.id) { it.autoSnapshotOnInstall = false }
+            }
+        }
         return config
     }
 
