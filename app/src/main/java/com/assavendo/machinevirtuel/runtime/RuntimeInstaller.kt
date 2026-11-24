@@ -138,6 +138,169 @@ object RuntimeInstaller {
         }
     }
 
+    /**
+     * Installs a verified optional runtime tool bundle under runtime-addons/tools/<toolId>.
+     * Archives must contain usr/... plus SHA256SUMS. The swap is isolated to the selected
+     * add-on so the x86 runtime and the base ARM64 runtime cannot be damaged by an update.
+     */
+    fun installOptionalTool(context: Context, archiveUri: Uri, toolId: String): RuntimePaths = synchronized(lock) {
+        require(toolId in setOf("virtiofsd", "swtpm")) { "Extension runtime inconnue." }
+        require(Build.SUPPORTED_ABIS.any { it == "arm64-v8a" }) {
+            "Les extensions runtime sont provisionnées pour un hôte Android ARM64."
+        }
+        check(installing.compareAndSet(false, true)) { "Une installation du runtime est déjà en cours." }
+
+        val paths = RuntimePaths(context)
+        val parent = File(paths.optionalRoot, "tools")
+        val staging = File(parent, "$toolId-staging")
+        val extracted = File(staging, "root")
+        val candidate = File(parent, "$toolId.next")
+        val previous = File(parent, "$toolId.previous")
+        val archive = File(context.cacheDir, "phoenixvm-$toolId-" + System.currentTimeMillis() + ".tar.xz")
+        val required = when (toolId) {
+            "virtiofsd" -> listOf("usr/libexec/virtiofsd")
+            "swtpm" -> listOf("usr/bin/swtpm")
+            else -> error("Extension runtime inconnue.")
+        }
+        val markerValue = "PhoenixVM $toolId add-on format 1\n"
+
+        try {
+            staging.deleteRecursively()
+            candidate.deleteRecursively()
+            check(extracted.mkdirs()) { "Impossible de créer le staging de l'extension $toolId." }
+
+            val source = context.contentResolver.openInputStream(archiveUri)
+                ?: error("Impossible d'ouvrir l'archive sélectionnée.")
+            source.use {
+                FileOutputStream(archive).use { target ->
+                    val buffer = ByteArray(128 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val count = it.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        check(total <= 1_073_741_824L) {
+                            "L'archive $toolId dépasse la limite compressée de 1 Gio."
+                        }
+                        target.write(buffer, 0, count)
+                    }
+                    target.fd.sync()
+                }
+            }
+
+            XZInputStream(BufferedInputStream(FileInputStream(archive), 128 * 1024)).use { xz ->
+                TarReader(xz).extractTo(extracted)
+            }
+            verifyOptionalToolPackage(extracted, required)
+
+            check(extracted.renameTo(candidate)) {
+                "Impossible de préparer atomiquement l'extension $toolId."
+            }
+            File(candidate, ".addon-version").writeText(markerValue)
+            check(RuntimePaths(context).let { File(candidate, "usr").isDirectory }) {
+                "L'extension $toolId ne contient pas d'arborescence usr/."
+            }
+
+            parent.mkdirs()
+            if (File(parent, toolId).exists()) {
+                if (previous.exists()) {
+                    require(File(previous, ".addon-version").isFile) {
+                        "Une sauvegarde précédente non vérifiée de $toolId existe; elle ne sera pas écrasée."
+                    }
+                    previous.deleteRecursively()
+                }
+                check(File(parent, toolId).renameTo(previous)) {
+                    "Impossible de sauvegarder l'extension $toolId actuelle."
+                }
+            }
+
+            val target = File(parent, toolId)
+            if (!candidate.renameTo(target)) {
+                if (previous.exists()) check(previous.renameTo(target)) {
+                    "Échec d'installation et restauration de l'extension $toolId impossible."
+                }
+                error("Impossible d'activer l'extension $toolId.")
+            }
+
+            val installed = RuntimePaths(context)
+            val ready = when (toolId) {
+                "virtiofsd" -> installed.hasVirtiofsd() && installed.virtiofsd.parentFile?.isDirectory == true
+                "swtpm" -> installed.hasSwtpm() && installed.swtpm.parentFile?.isDirectory == true
+                else -> false
+            }
+            if (!ready) {
+                target.deleteRecursively()
+                if (previous.exists()) check(previous.renameTo(target)) {
+                    "Extension $toolId invalide et restauration impossible."
+                }
+                error("La vérification finale de l'extension $toolId a échoué.")
+            }
+            previous.deleteRecursively()
+            installed
+        } finally {
+            archive.delete()
+            staging.deleteRecursively()
+            candidate.deleteRecursively()
+            installing.set(false)
+        }
+    }
+
+    fun removeOptionalTool(context: Context, toolId: String) = synchronized(lock) {
+        require(toolId in setOf("virtiofsd", "swtpm")) { "Extension runtime inconnue." }
+        val hasActiveVm = VmStore(context).list().any {
+            it.state == VmState.RUNNING || it.state == VmState.STARTING || it.state == VmState.PAUSED
+        }
+        require(!hasActiveVm) { "Arrêtez les VM avant de retirer une extension runtime." }
+
+        val target = File(RuntimePaths(context).optionalRoot, "tools/$toolId")
+        if (target.exists()) {
+            require(File(target, ".addon-version").isFile) {
+                "Le dossier $toolId ne possède pas de marqueur PhoenixVM; suppression refusée."
+            }
+            check(target.deleteRecursively()) { "Impossible de retirer l'extension $toolId." }
+        }
+    }
+
+    private fun verifyOptionalToolPackage(root: File, requiredPaths: List<String>) {
+        val manifest = safeChild(root, "SHA256SUMS")
+        require(manifest.isFile && manifest.length() in 1..1_048_576L) {
+            "Le manifeste SHA256SUMS de l'extension est absent ou trop volumineux."
+        }
+        val entries = manifest.readLines().map { it.trim() }.filter { it.isNotEmpty() }
+        require(entries.isNotEmpty() && entries.size <= MAX_ENTRIES) {
+            "Le manifeste SHA256SUMS de l'extension est vide ou trop volumineux."
+        }
+        val seen = mutableSetOf<String>()
+        for (line in entries) {
+            val pair = line.split(Regex("\\s+"), limit = 2)
+            require(pair.size == 2 && pair[0].matches(Regex("[A-Fa-f0-9]{64}"))) {
+                "Ligne SHA-256 invalide dans l'extension."
+            }
+            val relative = pair[1].removePrefix("*")
+            require(relative.startsWith("usr/") && seen.add(relative)) {
+                "Chemin non autorisé ou dupliqué dans l'extension."
+            }
+            val file = safeChild(root, relative)
+            check(file.isFile) { "Fichier absent de l'extension: " + relative }
+            check(pair[0].equals(sha256(file), ignoreCase = true)) {
+                "SHA-256 invalide pour l'extension: " + relative
+            }
+        }
+        requiredPaths.forEach { path ->
+            require(seen.contains(path)) { "Entrée essentielle absente de l'extension: " + path }
+            val file = safeChild(root, path)
+            check(file.isFile && file.length() > 0L) { "Fichier essentiel absent: " + path }
+            if (path.startsWith("usr/bin/") || path.startsWith("usr/libexec/")) {
+                check(file.setExecutable(true, false)) {
+                    "Impossible d'activer l'exécutable de l'extension: " + path
+                }
+            }
+        }
+        check(safeChild(root, "usr/lib").isDirectory) {
+            "Le répertoire usr/lib est requis pour isoler les dépendances natives de l'extension."
+        }
+    }
+
     fun removeOptionalX86(context: Context) = synchronized(lock) {
         val paths = RuntimePaths(context)
         val activeX86 = VmStore(context).list().any {
