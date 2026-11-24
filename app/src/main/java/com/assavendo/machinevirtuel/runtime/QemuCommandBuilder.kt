@@ -263,7 +263,23 @@ object QemuCommandBuilder {
         }
 
         if (vm.audioEnabled) {
-            args += "-audiodev"; args += "aaudio,id=snd0"
+            require(vm.audioFrequencyHz in 8_000..192_000) {
+                "audioFrequencyHz doit être compris entre 8000 et 192000."
+            }
+            require(vm.audioChannels in 1..8) {
+                "audioChannels doit être compris entre 1 et 8."
+            }
+            require(vm.audioBufferMs in 2..500) {
+                "audioBufferMs doit être compris entre 2 et 500 ms."
+            }
+            val bufferUsec = vm.audioBufferMs.toLong() * 1000L
+            args += "-audiodev"
+            args += "aaudio,id=snd0,out.frequency=" + vm.audioFrequencyHz +
+                ",in.frequency=" + vm.audioFrequencyHz +
+                ",out.channels=" + vm.audioChannels +
+                ",in.channels=" + vm.audioChannels +
+                ",out.buffer-length=" + bufferUsec +
+                ",in.buffer-length=" + bufferUsec
             args += "-device"; args += "virtio-sound-pci,audiodev=snd0,disable-legacy=on,disable-modern=off"
         }
 
