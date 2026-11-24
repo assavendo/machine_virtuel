@@ -174,20 +174,25 @@ object QemuCommandBuilder {
         }
 
         val gpu = when (vm.gpuBackend) {
-            GpuBackend.AUTO ->
-                if (File(paths.libDir, "libgfxstream_backend.so").isFile) GpuBackend.GFXSTREAM
-                else if (File(paths.libDir, "libvirglrenderer.so").isFile) GpuBackend.VIRGL
-                else GpuBackend.SOFTWARE
+            // A shared library's presence is not proof that the Android host exposes a compatible
+            // EGL/Vulkan path. Hardware rendering remains an explicit opt-in until device acceptance.
+            GpuBackend.AUTO -> GpuBackend.SOFTWARE
             else -> vm.gpuBackend
         }
         when (gpu) {
             GpuBackend.VIRGL -> {
+                require(File(paths.libDir, "libvirglrenderer.so").isFile) {
+                    "VirGL was selected but its verified renderer library is missing."
+                }
                 args += "-device"
                 args += "virtio-gpu-gl-pci,disable-legacy=on,disable-modern=off,xres=" +
                     vm.displayWidth + ",yres=" + vm.displayHeight + ",edid=on"
                 args += "-display"; args += "egl-headless"
             }
             GpuBackend.GFXSTREAM -> {
+                require(File(paths.libDir, "libgfxstream_backend.so").isFile) {
+                    "Gfxstream was selected but its verified backend library is missing."
+                }
                 args += "-device"
                 args += "virtio-gpu-rutabaga-pci,disable-legacy=on,disable-modern=off,blob=on,xres=" +
                     vm.displayWidth + ",yres=" + vm.displayHeight + ",edid=on"
