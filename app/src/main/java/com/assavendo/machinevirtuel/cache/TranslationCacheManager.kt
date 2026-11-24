@@ -59,7 +59,7 @@ class TranslationCacheManager(context: Context) {
         components.forEach { component ->
             val bytes = component.toByteArray(Charsets.UTF_8)
             digest.update(bytes.size.toString().toByteArray(Charsets.US_ASCII))
-            digest.update(0)
+            digest.update(0.toByte())
             digest.update(bytes)
             digest.update(0)
         }
@@ -239,9 +239,9 @@ class TranslationCacheManager(context: Context) {
     fun invalidateAll(vmId: String) {
         val id = fingerprint(vmId)
         File(root, id).deleteRecursively()
-        val prefix = fingerprint(vmId)
-        val keys = memoryL0.keys.filter { it.startsWith(prefix) }
-        keys.forEach { memoryL0.remove(it); processL1.remove(it) }
+        val ownerMarker = "\"vm_id_hash\":\"" + fingerprint(vmId) + "\""
+        memoryL0.entries.removeAll { it.value.contains(ownerMarker) }
+        processL1.entries.removeAll { it.value.contains(ownerMarker) }
     }
 
     @Synchronized
