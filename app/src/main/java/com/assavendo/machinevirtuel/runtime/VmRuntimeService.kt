@@ -8,6 +8,10 @@ import android.content.Context
 import android.content.Intent
 import android.os.IBinder
 import com.assavendo.machinevirtuel.host.HostCapabilityScanner
+import com.assavendo.machinevirtuel.hypervisor.BackendLaunchSpec
+import com.assavendo.machinevirtuel.hypervisor.CrosvmBackend
+import com.assavendo.machinevirtuel.hypervisor.HypervisorBackend
+import com.assavendo.machinevirtuel.hypervisor.QemuBackend
 import com.assavendo.machinevirtuel.performance.HostMetricsCollector
 import com.assavendo.machinevirtuel.performance.ResourceAdmissionController
 import com.assavendo.machinevirtuel.performance.DeviceTopology
@@ -41,7 +45,10 @@ class VmRuntimeService : Service() {
         fun pause(context: Context, vmId: String) = send(context, ACTION_PAUSE, vmId)
         fun resume(context: Context, vmId: String) = send(context, ACTION_RESUME, vmId)
         fun reboot(context: Context, vmId: String) = send(context, ACTION_REBOOT, vmId)
-        fun queryStatus(vmId: String): String? = processes[vmId]?.let { QmpController.queryStatus(it.qmp) }
+        fun queryStatus(vmId: String): String? = processes[vmId]?.let { handle ->
+            handle.qmp?.let { QmpController.queryStatus(it) }
+                ?: handle.controlSocket?.takeIf { it.exists() }?.let { "crosvm-running" }
+        }
         fun vncPort(vmId: String): Int = VncPorts.portFor(vmId)
 
         private fun send(context: Context, action: String, vmId: String, foreground: Boolean = false) {
@@ -118,21 +125,33 @@ class VmRuntimeService : Service() {
             )
 
             val decision = VmOrchestrator().choose(vm, host)
-            val candidates = decision.candidates.map { it.backend }.distinct().filter { backend ->
+            val candidates = mutableListOf<HypervisorBackend>()
+            for (backend in decision.candidates.map { it.backend }) {
                 when (backend) {
-                    BackendKind.AVF -> false
-                    BackendKind.GUNYAH, BackendKind.GENIEZONE, BackendKind.HALLA -> false
-                    BackendKind.KVM -> host.kvm
-                    BackendKind.QEMU_TCG -> paths.qemu.canExecute() &&
-                        (vm.arch == GuestArch.ARM64 || when (vm.arch) {
-                            GuestArch.X86_64 -> paths.qemuX86.canExecute() || paths.qemuX86Headless.canExecute()
-                            GuestArch.X86_32 -> paths.qemuI386.canExecute()
-                            else -> false
-                        })
+                    BackendKind.AVF -> Unit
+                    BackendKind.GUNYAH, BackendKind.GENIEZONE, BackendKind.HALLA -> {
+                        val candidate = CrosvmBackend(backend)
+                        if (paths.crosvm.canExecute() && candidate.detect(host, vm)) candidates += candidate
+                    }
+                    BackendKind.KVM -> {
+                        val cros = CrosvmBackend(BackendKind.KVM)
+                        if (paths.crosvm.canExecute() && cros.detect(host, vm)) candidates += cros
+                        val qemu = QemuBackend(BackendKind.KVM)
+                        if (qemu.detect(host, vm) && paths.qemu.canExecute()) candidates += qemu
+                    }
+                    BackendKind.QEMU_TCG -> {
+                        val available = paths.qemu.canExecute() &&
+                            (vm.arch == GuestArch.ARM64 || when (vm.arch) {
+                                GuestArch.X86_64 -> paths.qemuX86.canExecute() || paths.qemuX86Headless.canExecute()
+                                GuestArch.X86_32 -> paths.qemuI386.canExecute()
+                                else -> false
+                            })
+                        if (available) candidates += QemuBackend(BackendKind.QEMU_TCG)
+                    }
                 }
             }
             check(candidates.isNotEmpty()) {
-                "Aucun backend réellement exécutable pour cette VM. Les backends privilégiés sont conservés comme indisponibles jusqu'à validation du runtime complet sur l'appareil."
+                "Aucun backend réellement exécutable pour cette VM."
             }
 
             val dir = FilePaths.vmDir(id)
@@ -148,40 +167,55 @@ class VmRuntimeService : Service() {
                 var fsHandle: VirtioFsHandle? = null
                 var tpmHandle: TpmHandle? = null
                 try {
-                    vm.backend = backend
+                    vm.backend = backend.kind
                     store.update(id) {
                         it.state = VmState.STARTING
-                        it.backend = backend
+                        it.backend = backend.kind
                     }
-                    if (vm.sharedDirPath.isNotBlank() && backend == BackendKind.QEMU_TCG) {
+                    if (vm.sharedDirPath.isNotBlank() && backend.kind == BackendKind.QEMU_TCG) {
                         fsHandle = VirtioFsManager.start(paths, vm, dir, log)
                     }
-                    if (vm.tpmEnabled && backend == BackendKind.QEMU_TCG) {
+                    if (vm.tpmEnabled && backend.kind == BackendKind.QEMU_TCG) {
                         tpmHandle = TpmManager.start(paths, vm, dir, log)
                     }
 
-                    val process = startQemu(
-                        paths, vm, dir, qmp, serial, log, fsHandle?.socket, tpmHandle
-                    )
+                    val spec = backend.launchSpec(paths, vm.copy(backend = backend.kind), qmp, serial, log)
+                    val controlSocket = if (backend is CrosvmBackend) FilePaths.controlSocket(id) else null
+                    controlSocket?.delete()
+                    val process = startBackend(spec, dir, paths, vm.arch, log)
                     try {
-                        awaitQmpReady(process, qmp)
+                        val ready = spec.qmpSocket
+                        if (ready != null) {
+                            awaitQmpReady(process, ready)
+                        } else {
+                            check(controlSocket != null) { "Backend " + backend.kind.label + " has no readiness channel." }
+                            awaitCrosvmReady(process, controlSocket)
+                        }
                     } catch (t: Throwable) {
                         process.destroy()
                         if (!process.waitFor(1, TimeUnit.SECONDS)) process.destroyForcibly()
                         throw t
                     }
-                    handle = Handle(process, backend, qmp, tapOwned, fsHandle, tpmHandle)
-                    if (backend != decision.selected) {
-                        updateNotification("Fallback backend " + backend.label)
-                        logger.warn("Fallback backend selected: " + backend.label)
-                        VmEventBus.emit(VmEvent(id, VmEventType.FALLBACK_ACTIVATED, message = backend.label))
+                    handle = Handle(
+                        process = process,
+                        backend = backend.kind,
+                        qmp = spec.qmpSocket,
+                        controlSocket = controlSocket,
+                        tapOwned = tapOwned,
+                        virtioFs = fsHandle,
+                        tpm = tpmHandle,
+                    )
+                    if (backend.kind != decision.selected) {
+                        updateNotification("Fallback backend " + backend.kind.label)
+                        logger.warn("Fallback backend selected: " + backend.kind.label)
+                        VmEventBus.emit(VmEvent(id, VmEventType.FALLBACK_ACTIVATED, message = backend.kind.label))
                     }
                     break
                 } catch (t: Throwable) {
                     VirtioFsManager.stop(fsHandle)
                     TpmManager.stop(tpmHandle)
                     lastError = t
-                    appendLog(log, "BACKEND " + backend.label + " FAILED: " + (t.message ?: "unknown") + "\n")
+                    appendLog(log, "BACKEND " + backend.kind.label + " FAILED: " + (t.message ?: "unknown") + "\n")
                 }
             }
 
@@ -228,7 +262,7 @@ class VmRuntimeService : Service() {
     }
 
     private fun monitorVm(id: String, handle: Handle, vm: VmConfig) {
-        val collector = HostMetricsCollector(this, findQemuPid(handle.qmp))
+        val collector = HostMetricsCollector(this, handle.qmp?.let(::findQemuPid))
         var lastBalloonRequestMs = 0L
         while (processes[id] === handle && handle.process.isAlive) {
             runCatching {
@@ -237,7 +271,7 @@ class VmRuntimeService : Service() {
                 if (sample.availableMemoryMb < 256L) {
                     VmEventBus.emit(VmEvent(id, VmEventType.MEMORY_WARNING, message = "available RAM < 256 MB"))
                     updateNotification("VM memory pressure • Android available RAM < 256 MB")
-                } else if (sample.availableMemoryMb < 512L && vm.balloonEnabled && vm.ramMb >= 768) {
+                } else if (sample.availableMemoryMb < 512L && vm.balloonEnabled && vm.ramMb >= 768 && handle.qmp != null) {
                     val now = System.currentTimeMillis()
                     if (now - lastBalloonRequestMs >= 30_000L) {
                         val targetMb = (vm.ramMb - 256).coerceAtLeast(512)
@@ -288,26 +322,32 @@ class VmRuntimeService : Service() {
         return null
     }
 
-    private fun startQemu(
-        paths: RuntimePaths,
-        vm: VmConfig,
+    private fun startBackend(
+        spec: BackendLaunchSpec,
         dir: File,
-        qmp: File,
-        serial: File,
+        paths: RuntimePaths,
+        arch: GuestArch,
         log: File,
-        virtioFsSocket: File?,
-        tpmHandle: TpmHandle?,
     ): Process {
-        val command = QemuCommandBuilder.build(
-            paths, vm, qmp, serial, log, virtioFsSocket, tpmHandle
-        )
+        val environment = buildMap {
+            putAll(spec.environment)
+            put("LD_LIBRARY_PATH", paths.libraryDir(arch).absolutePath)
+        }
         val process = RootProcessLauncher.start(
-            command, dir,
-            mapOf("LD_LIBRARY_PATH" to paths.libraryDir(vm.arch).absolutePath),
-            preferRoot = false
+            spec.command, dir, environment, preferRoot = false
         )
         attachLogs(process, log)
         return process
+    }
+
+    private fun awaitCrosvmReady(process: Process, socket: File) {
+        val deadline = System.currentTimeMillis() + 15_000L
+        while (System.currentTimeMillis() < deadline) {
+            check(process.isAlive) { "crosvm a quitté avant d'ouvrir son canal de contrôle." }
+            if (socket.isFile || socket.exists()) return
+            Thread.sleep(100L)
+        }
+        error("crosvm ne fournit pas de socket de contrôle après 15 secondes.")
     }
 
     private fun attachLogs(process: Process, log: File) {
@@ -329,7 +369,12 @@ class VmRuntimeService : Service() {
 
     private fun pauseVm(id: String) {
         val handle = processes[id] ?: return
-        if (qmpControlled(handle.backend) && QmpController.pause(handle.qmp)) {
+        val ok = when {
+            handle.qmp != null -> QmpController.pause(handle.qmp)
+            handle.controlSocket != null -> runCrosvmControl(RuntimePaths(this), "suspend", handle.controlSocket)
+            else -> false
+        }
+        if (ok) {
             VmStore(this).update(id) { it.state = VmState.PAUSED }
             VmEventBus.emit(VmEvent(id, VmEventType.VM_PAUSED))
             updateNotification("VM paused")
@@ -338,7 +383,12 @@ class VmRuntimeService : Service() {
 
     private fun resumeVm(id: String) {
         val handle = processes[id] ?: return
-        if (qmpControlled(handle.backend) && QmpController.resume(handle.qmp)) {
+        val ok = when {
+            handle.qmp != null -> QmpController.resume(handle.qmp)
+            handle.controlSocket != null -> runCrosvmControl(RuntimePaths(this), "resume", handle.controlSocket)
+            else -> false
+        }
+        if (ok) {
             VmStore(this).update(id) { it.state = VmState.RUNNING }
             VmEventBus.emit(VmEvent(id, VmEventType.VM_RESUMED))
             updateNotification("VM resumed")
@@ -347,24 +397,29 @@ class VmRuntimeService : Service() {
 
     private fun rebootVm(id: String) {
         val handle = processes[id] ?: return
-        if (qmpControlled(handle.backend) && QmpController.reset(handle.qmp)) {
+        if (handle.qmp != null && QmpController.reset(handle.qmp)) {
             updateNotification("VM reboot requested")
         } else {
-            updateNotification("Reboot unavailable for current backend")
+            updateNotification("Reboot unavailable for the selected crosvm backend")
         }
     }
 
     private fun stopVm(id: String, force: Boolean) {
         val handle = processes[id] ?: return
         VmStore(this).update(id) { it.state = VmState.STOPPING }
-        val clean = !force && qmpControlled(handle.backend) &&
-            QmpController.systemPowerdown(handle.qmp)
+        val clean = when {
+            force -> false
+            handle.qmp != null -> QmpController.systemPowerdown(handle.qmp)
+            handle.controlSocket != null -> runCrosvmControl(RuntimePaths(this), "stop", handle.controlSocket)
+            else -> false
+        }
         if (clean) {
             if (!handle.process.waitFor(10, TimeUnit.SECONDS)) handle.process.destroy()
         } else {
             handle.process.destroy()
             if (force && handle.process.isAlive) handle.process.destroyForcibly()
         }
+        handle.controlSocket?.delete()
         VirtioFsManager.stop(handle.virtioFs)
         TpmManager.stop(handle.tpm)
         processes.remove(id)
@@ -376,8 +431,22 @@ class VmRuntimeService : Service() {
         VmEventBus.emit(VmEvent(id, VmEventType.VM_STOPPED))
     }
 
-    private fun qmpControlled(backend: BackendKind): Boolean =
-        backend == BackendKind.QEMU_TCG || backend == BackendKind.KVM
+    private fun runCrosvmControl(paths: RuntimePaths, action: String, socket: File): Boolean {
+        require(action in setOf("suspend", "resume", "stop")) { "Action crosvm non autorisée." }
+        if (!socket.exists()) return false
+        val process = runCatching {
+            ProcessBuilder(paths.crosvm.absolutePath, action, socket.absolutePath)
+                .redirectErrorStream(true)
+                .also { it.environment()["LD_LIBRARY_PATH"] = paths.libDir.absolutePath }
+                .start()
+        }.getOrNull() ?: return false
+        val completed = process.waitFor(5, TimeUnit.SECONDS)
+        if (!completed) {
+            process.destroyForcibly()
+            return false
+        }
+        return process.exitValue() == 0
+    }
 
     private fun createChannel() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
@@ -414,7 +483,8 @@ class VmRuntimeService : Service() {
     private data class Handle(
         val process: Process,
         val backend: BackendKind,
-        val qmp: File,
+        val qmp: File?,
+        val controlSocket: File?,
         val tapOwned: Boolean,
         val virtioFs: VirtioFsHandle?,
         val tpm: TpmHandle?,
