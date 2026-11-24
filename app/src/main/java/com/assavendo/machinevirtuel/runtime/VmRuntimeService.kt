@@ -303,7 +303,7 @@ class VmRuntimeService : Service() {
         )
         val process = RootProcessLauncher.start(
             command, dir,
-            mapOf("LD_LIBRARY_PATH" to paths.libDir.absolutePath),
+            mapOf("LD_LIBRARY_PATH" to paths.libraryDir(vm.arch).absolutePath),
             preferRoot = false
         )
         attachLogs(process, log)
