@@ -82,6 +82,21 @@ class VmSpecValidatorTest {
 
 
     @Test
+    fun nonAndroidGuestCannotCarryAndroidOnlyPartitionsOrAdb() {
+        val vm = VmConfig(
+            name = "linux-with-android-data",
+            guestOs = "Linux ARM64",
+            androidSystemPath = "/tmp/system.img",
+            androidVendorPath = "/tmp/vendor.img",
+            androidUserdataPath = "/tmp/userdata.img",
+            androidAdbEnabled = true,
+        )
+        assertTrue(VmSpecValidator.validate(vm).any {
+            it.field == "androidArtifacts" && it.fatal
+        })
+    }
+
+    @Test
     fun diskSizeMustStayWithinSupportedBounds() {
         val tooSmall = VmConfig(name = "small", diskSizeGiB = 0)
         val tooLarge = VmConfig(name = "large", diskSizeGiB = 4097)
