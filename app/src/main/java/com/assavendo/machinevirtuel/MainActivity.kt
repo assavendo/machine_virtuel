@@ -1240,6 +1240,7 @@ class MainActivity : Activity() {
         val target = File(directory, targetName)
         val temporary = File(directory, targetName + ".partial")
         temporary.delete()
+        val availableBeforeImport = directory.usableSpace
         val input = contentResolver.openInputStream(uri)
             ?: error("Android n'a pas pu ouvrir le fichier sélectionné.")
         input.use { source ->
@@ -1251,8 +1252,9 @@ class MainActivity : Activity() {
         require(temporary.isFile && temporary.length() > 0L) {
             "Le fichier sélectionné est vide ou illisible."
         }
-        require(temporary.length() <= directory.usableSpace + temporary.length()) {
-            "Espace de stockage insuffisant pour l'import."
+        require(temporary.length() <= availableBeforeImport) {
+            temporary.delete()
+            "Espace de stockage insuffisant pour importer ce fichier."
         }
         if (target.exists() && !target.delete()) {
             temporary.delete()
