@@ -759,10 +759,12 @@ class VmRuntimeService : Service() {
         val disposition = VmExitPolicy.resolve(exitCode, requestedStop, effectiveRecoveryRequired)
         val vm = synchronized(admissionLock) {
             val current = store.list()
-            current.firstOrNull { it.id == id }?.also { item ->
+            current.firstOrNull { it.id == id }?.let { item ->
+                val previousState = item.copy()
                 item.state = disposition.state
                 store.save(current)
-            }?.copy()
+                previousState
+            }
         }
         if (vm != null && disposition.requiresRecoveryPlan) {
             val reason = if (disposition.unexpectedFailure) {
@@ -878,10 +880,10 @@ class VmRuntimeService : Service() {
                         val store = VmStore(this)
                         val vm = store.list().firstOrNull { it.id == id }
                         if (vm != null) {
-                            val recoveryVm = persistVmUpdate(store, id) { it.state = VmState.RECOVERY } ?: vm
+                            persistVmUpdate(store, id) { it.state = VmState.RECOVERY }
                             val plan = RecoveryManager.plan(
                                 filesDir,
-                                recoveryVm,
+                                vm,
                                 "Android runtime service was destroyed while the VM process was active.",
                             )
                             RecoveryPlanStore.write(filesDir, plan)
