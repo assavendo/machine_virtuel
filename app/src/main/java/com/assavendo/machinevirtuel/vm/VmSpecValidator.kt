@@ -15,10 +15,15 @@ object VmSpecValidator {
         if (vm.displayHeight !in 240..16384) issues += ValidationIssue("displayHeight", "Résolution verticale invalide.", true)
         if (vm.sharedDirPath.isNotBlank() && !File(vm.sharedDirPath).exists())
             issues += ValidationIssue("sharedDirPath", "Le dossier partagé n'existe pas encore.", false)
-        vm.portForwards.forEachIndexed { index, forward ->
-            if (forward.hostPort !in 1..65535 || forward.guestPort !in 1..65535)
-                issues += ValidationIssue("portForwards[$index]", "Port hors plage 1..65535.", true)
+
+        NetworkPolicy(
+            mode = vm.networkMode,
+            macAddress = NetworkPolicy.deterministicMac(vm.id),
+            portForwards = vm.portForwards,
+        ).validate().forEach { message ->
+            issues += ValidationIssue("network", message, true)
         }
+
         if (vm.arch == GuestArch.X86_64 && vm.backend != BackendKind.QEMU_TCG)
             issues += ValidationIssue("backend", "Le guest x86_64 exige actuellement QEMU TCG.", false)
         if (vm.arch == GuestArch.X86_32 && vm.backend != BackendKind.QEMU_TCG)

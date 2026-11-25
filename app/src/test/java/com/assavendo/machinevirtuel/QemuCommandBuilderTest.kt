@@ -41,9 +41,10 @@ class QemuCommandBuilderTest {
                 f.paths, vm, File(f.root, "qmp.sock"), File(f.root, "serial.log"), File(f.root, "qemu.log")
             )
             assertTrue(command.containsAll(listOf(
-                "-machine", "virt,highmem=on,gic-version=3", "-accel", "tcg,thread=multi",
+                "-machine", "virt,highmem=on,gic-version=3", "-accel",
                 "-cpu", "max", "-smp", "4", "-m", "2048M"
             )))
+            assertTrue(command.any { it.startsWith("tcg,thread=multi,") })
             assertTrue(command.any { it.contains("virtio-tablet-pci") })
             assertTrue(command.any { it.contains("virtio-keyboard-pci") })
             assertTrue(command.any { it.contains("virtio-gpu-pci") })
@@ -83,7 +84,8 @@ class QemuCommandBuilderTest {
             val command = QemuCommandBuilder.build(
                 f.paths, vm, File(f.root, "qmp.sock"), File(f.root, "serial.log"), File(f.root, "qemu.log")
             )
-            assertTrue(command.containsAll(listOf("-machine", "q35", "-accel", "tcg,thread=multi", "-cpu", "max")))
+            assertTrue(command.containsAll(listOf("-machine", "q35", "-accel", "-cpu", "max")))
+            assertTrue(command.any { it.startsWith("tcg,thread=multi,") })
             assertTrue(command.first().endsWith("qemu-system-x86_64"))
             assertTrue(command.any { it.contains(f.paths.edk2X86Code.absolutePath) })
         } finally {
@@ -149,6 +151,26 @@ class QemuCommandBuilderTest {
             assertTrue(command.contains("egl-headless"))
             assertTrue(command.any { it.contains("virtio-gpu-rutabaga-pci") })
             assertTrue(command.any { it.contains("virtio-sound-pci,audiodev=snd0") })
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
+    @Test fun networkDeviceUsesDeterministicPerVmMac() {
+        val f = runtime()
+        try {
+            val vm = VmConfig(
+                name = "network-mac",
+                diskPath = f.disk.absolutePath,
+                firmwarePath = f.nvram.absolutePath,
+                audioEnabled = false,
+                networkMode = NetworkMode.NAT,
+            )
+            val command = QemuCommandBuilder.build(
+                f.paths, vm, File(f.root, "qmp.sock"), File(f.root, "serial.log"), File(f.root, "qemu.log")
+            )
+            val expectedMac = NetworkPolicy.deterministicMac(vm.id)
+            assertTrue(command.any { it.contains("virtio-net-pci,netdev=net0,mac=$expectedMac") })
         } finally {
             f.root.deleteRecursively()
         }

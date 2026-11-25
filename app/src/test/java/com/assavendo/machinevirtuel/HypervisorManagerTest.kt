@@ -45,7 +45,7 @@ class HypervisorManagerTest {
         val vm = VmConfig(
             name = "guest",
             arch = GuestArch.ARM64,
-            backend = BackendKind.KVM,
+            backend = BackendKind.GUNYAH,
             headless = false,
             networkMode = NetworkMode.NAT,
         )

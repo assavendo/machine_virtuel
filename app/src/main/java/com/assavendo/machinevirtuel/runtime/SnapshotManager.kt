@@ -4,6 +4,8 @@ import com.assavendo.machinevirtuel.vm.VmConfig
 import com.assavendo.machinevirtuel.vm.VmState
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.UUID
 import org.json.JSONObject
@@ -62,7 +64,19 @@ object SnapshotManager {
                 .put("nvramFileName", if (targetNvram != null) "nvram.fd" else JSONObject.NULL)
                 .put("nvramSha256", targetNvram?.let { sha256(it) } ?: JSONObject.NULL)
             writeDurable(File(staging, "manifest.json"), manifest.toString(2))
-            check(staging.renameTo(finalDir)) { "Impossible de publier le snapshot complet." }
+            try {
+                Files.move(
+                    staging.toPath(),
+                    finalDir.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                )
+            } catch (_: Exception) {
+                Files.move(
+                    staging.toPath(),
+                    finalDir.toPath(),
+                )
+            }
+            check(finalDir.isDirectory) { "Impossible de publier le snapshot complet." }
             return finalDir
         } catch (t: Throwable) {
             staging.deleteRecursively()
@@ -241,11 +255,11 @@ object SnapshotManager {
     }
 
     private fun writeDurable(file: File, value: String) {
-        file.parentFile?.mkdirs()
+        file.parentFile?.let { check(it.mkdirs() || it.isDirectory) }
         FileOutputStream(file).use { output ->
             output.write(value.toByteArray(Charsets.UTF_8))
             output.flush()
-            output.fd.sync()
+            output.channel.force(true)
         }
     }
 

@@ -183,14 +183,16 @@ object QemuCommandBuilder {
                 }
                 args += "-netdev"
                 args += if (forwards.isEmpty()) "user,id=net0" else "user,id=net0," + forwards.joinToString(",")
-                args += "-device"; args += "virtio-net-pci,netdev=net0,disable-legacy=on,disable-modern=off"
+                val mac = com.assavendo.machinevirtuel.vm.NetworkPolicy.deterministicMac(vm.id)
+                args += "-device"; args += "virtio-net-pci,netdev=net0,mac=$mac,disable-legacy=on,disable-modern=off"
             }
             NetworkMode.TAP -> {
                 require(vm.tapName.matches(Regex("[A-Za-z0-9_.-]{1,15}"))) {
                     "Le nom de l'interface TAP est invalide."
                 }
                 args += "-netdev"; args += "tap,id=net0,ifname=" + vm.tapName + ",script=no,downscript=no"
-                args += "-device"; args += "virtio-net-pci,netdev=net0,disable-legacy=on,disable-modern=off"
+                val mac = com.assavendo.machinevirtuel.vm.NetworkPolicy.deterministicMac(vm.id)
+                args += "-device"; args += "virtio-net-pci,netdev=net0,mac=$mac,disable-legacy=on,disable-modern=off"
             }
         }
 

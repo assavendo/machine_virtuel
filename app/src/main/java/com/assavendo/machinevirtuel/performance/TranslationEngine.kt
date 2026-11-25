@@ -2,6 +2,7 @@ package com.assavendo.machinevirtuel.performance
 
 import com.assavendo.machinevirtuel.cache.TranslationCacheKey
 import com.assavendo.machinevirtuel.cache.TranslationCacheManager
+import com.assavendo.machinevirtuel.cache.TranslationProfile as CacheTranslationProfile
 
 enum class TranslationTier { COLD, WARM, HOT, VERY_HOT }
 
@@ -55,7 +56,7 @@ class TranslationEngine(private val cache: TranslationCacheManager) {
         if (shouldPersist) {
             cache.putProfile(
                 key,
-                TranslationCacheManager.TranslationProfile(
+                CacheTranslationProfile(
                     state = existing.tier.name,
                     hotBlocks = 0L,
                     coldBlocks = 0L,
