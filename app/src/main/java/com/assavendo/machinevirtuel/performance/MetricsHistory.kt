@@ -3,9 +3,9 @@ package com.assavendo.machinevirtuel.performance
 data class VmMetricsSample(
     val timestampMs: Long,
     val fps: Double? = null,
-    val cpuGuestPercent: Double = 0.0,
+    val cpuGuestPercent: Double? = null,
     val cpuHostPercent: Double = 0.0,
-    val vCpuUtilization: Double = 0.0,
+    val vCpuUtilization: Double? = null,
     val ramGuestMb: Long = 0,
     val ramHostMb: Long = 0,
     val gpuPercent: Double? = null,
@@ -17,17 +17,18 @@ data class VmMetricsSample(
     val ioWriteBytesPerSec: Long = 0,
     val networkRxBytesPerSec: Long = 0,
     val networkTxBytesPerSec: Long = 0,
-    val audioUnderruns: Long = 0,
-    val cacheHitRate: Double = 0.0,
-    val translationMs: Double = 0.0,
+    val audioUnderruns: Long? = null,
+    val cacheHitRate: Double? = null,
+    val translationMs: Double? = null,
 )
-
 
 data class MetricsWindow(
     val minutes: Int,
     val samples: Int,
+    val fpsAvg: Double?,
     val cpuHostAvg: Double,
-    val cpuGuestAvg: Double,
+    val cpuGuestAvg: Double?,
+    val vCpuUtilizationAvg: Double?,
     val ramGuestAvgMb: Double,
     val ramHostAvgMb: Double,
     val temperatureAvgC: Double?,
@@ -36,8 +37,9 @@ data class MetricsWindow(
     val ioWriteBytesPerSecAvg: Double,
     val networkRxBytesPerSecAvg: Double,
     val networkTxBytesPerSecAvg: Double,
-    val cacheHitRateAvg: Double,
-    val translationMsAvg: Double,
+    val audioUnderrunsLast: Long?,
+    val cacheHitRateAvg: Double?,
+    val translationMsAvg: Double?,
     val throttlingSamples: Int,
 )
 
@@ -48,22 +50,31 @@ class MetricsHistory(private val maxSamples: Int = 3600) {
         samples.addLast(sample)
         while (samples.size > maxSamples) samples.removeFirst()
     }
+
     @Synchronized fun last(minutes: Int): List<VmMetricsSample> {
         val threshold = System.currentTimeMillis() - minutes.coerceAtLeast(1) * 60_000L
         return samples.filter { it.timestampMs >= threshold }
     }
+
     @Synchronized fun all(): List<VmMetricsSample> = samples.toList()
+
     /** Fixed dashboard windows required by the specification: 1, 5 and 30 minutes. */
     @Synchronized fun windows(): List<MetricsWindow> = listOf(1, 5, 30).map { windowMinutes ->
         val values = last(windowMinutes)
+        fun avgNullable(selector: (VmMetricsSample) -> Double?): Double? =
+            values.mapNotNull(selector).takeIf { it.isNotEmpty() }?.average()
+
         fun avg(selector: (VmMetricsSample) -> Double): Double =
             if (values.isEmpty()) 0.0 else values.map(selector).average()
+
         val temperatures = values.mapNotNull { it.temperatureC }
         MetricsWindow(
             minutes = windowMinutes,
             samples = values.size,
+            fpsAvg = avgNullable { it.fps },
             cpuHostAvg = avg { it.cpuHostPercent },
-            cpuGuestAvg = avg { it.cpuGuestPercent },
+            cpuGuestAvg = avgNullable { it.cpuGuestPercent },
+            vCpuUtilizationAvg = avgNullable { it.vCpuUtilization },
             ramGuestAvgMb = avg { it.ramGuestMb.toDouble() },
             ramHostAvgMb = avg { it.ramHostMb.toDouble() },
             temperatureAvgC = temperatures.takeIf { it.isNotEmpty() }?.average(),
@@ -72,11 +83,16 @@ class MetricsHistory(private val maxSamples: Int = 3600) {
             ioWriteBytesPerSecAvg = avg { it.ioWriteBytesPerSec.toDouble() },
             networkRxBytesPerSecAvg = avg { it.networkRxBytesPerSec.toDouble() },
             networkTxBytesPerSecAvg = avg { it.networkTxBytesPerSec.toDouble() },
-            cacheHitRateAvg = avg { it.cacheHitRate },
-            translationMsAvg = avg { it.translationMs },
+            audioUnderrunsLast = values.asReversed().firstNotNullOfOrNull { it.audioUnderruns },
+            cacheHitRateAvg = avgNullable { it.cacheHitRate },
+            translationMsAvg = avgNullable { it.translationMs },
             throttlingSamples = values.count { it.throttling },
         )
     }
 
-
+    @Synchronized
+    fun updateLatest(transform: (VmMetricsSample) -> VmMetricsSample) {
+        val latest = samples.removeLastOrNull() ?: return
+        samples.addLast(transform(latest))
+    }
 }
