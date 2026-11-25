@@ -20,6 +20,7 @@ class VmOrchestratorTest {
         apiLevel = 36,
         kernelVersion = "test",
         cpuCount = 8,
+        maxMemoryMb = 8192,
         totalMemoryMb = 8192,
         availableMemoryMb = 6144,
         supportedAbis = listOf("arm64-v8a"),
