@@ -2,6 +2,7 @@ package com.assavendo.machinevirtuel
 
 import com.assavendo.machinevirtuel.runtime.QemuCommandBuilder
 import com.assavendo.machinevirtuel.runtime.RuntimePaths
+import com.assavendo.machinevirtuel.runtime.UsbHostAttachment
 import com.assavendo.machinevirtuel.vm.*
 import java.io.File
 import kotlin.test.Test
