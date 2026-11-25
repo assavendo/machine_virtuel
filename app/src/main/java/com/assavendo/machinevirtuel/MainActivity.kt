@@ -406,8 +406,14 @@ class MainActivity : Activity() {
         section("D — GPU et affichage")
         addLabel("Backend graphique")
         val gpuBackends = GpuBackend.entries
+        val gpuLabels = listOf(
+            "AUTO — automatique / compatibilité",
+            "SOFTWARE — rendu logiciel",
+            "VIRGL — rendu accéléré VirGL",
+            "GFXSTREAM — rendu accéléré Gfxstream",
+        )
         val gpu = spinner(
-            gpuBackends.map { it.name },
+            gpuLabels,
             gpuBackends.indexOf(base.gpuBackend),
         )
         content.addView(subtitle(
@@ -497,7 +503,7 @@ class MainActivity : Activity() {
                     check(shareDirectory.mkdirs() || shareDirectory.isDirectory) {
                         "Impossible de préparer le dossier partagé privé."
                     }
-                    listOf(SharedDirectory(shareDirectory.absolutePath, "shared", readOnly = false))
+                    VmCreationPolicy.sharedDirectories(listOf(shareDirectory.absolutePath))
                 } else {
                     emptyList()
                 },
@@ -529,7 +535,8 @@ class MainActivity : Activity() {
         fun artifactButton(label: String, kind: String, requestCode: Int) {
             artifactRow.addView(actionButton(label, teal) { pickArtifact(kind, requestCode) })
         }
-        artifactButton("Choisir l'ISO personnalisée", "iso", 706)
+        artifactButton("Choisir l'ISO personnalisée (obligatoire pour ce profil)", "iso", 706)
+        artifactButton("Ajouter une ISO d'installation (Linux / Windows / BSD)", "iso", 715)
         artifactButton("Importer un disque existant", "disk", 707)
         artifactButton("Choisir le kernel Android / Linux", "kernel", 708)
         artifactButton("Choisir l'initrd (facultatif)", "initrd", 709)
@@ -1156,7 +1163,7 @@ class MainActivity : Activity() {
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode in 706..714) {
+        if (requestCode in 706..715) {
             val draft = pendingVmCreationDraft
             val kind = pendingVmCreationArtifact
             val hasSelectedFile = data?.data != null || (requestCode == 714 && data?.clipData != null)
