@@ -277,7 +277,13 @@ class VmRuntimeService : Service() {
             executor.execute {
                 val exit = runCatching { active.process.waitFor() }.getOrDefault(-1)
                 lifecycleCommands.execute(id) {
-                    finalizeBackendExit(id, active, exit, requestedStop = false)
+                    finalizeBackendExit(
+                        id,
+                        active,
+                        exit,
+                        requestedStop = active.stopRequested,
+                        recoveryRequired = active.recoveryRequiredOnExit,
+                    )
                 }
             }
         } catch (t: Throwable) {
@@ -546,6 +552,13 @@ class VmRuntimeService : Service() {
             return
         }
 
+        if (!handle.process.isAlive) {
+            val exit = runCatching { handle.process.exitValue() }.getOrDefault(-1)
+            finalizeBackendExit(id, handle, exit, requestedStop = false)
+            return
+        }
+        handle.stopRequested = true
+
         if (current.state == VmState.PAUSED && !force) {
             val resumed = when {
                 handle.qmp != null -> QmpController.resume(handle.qmp)
@@ -571,6 +584,7 @@ class VmRuntimeService : Service() {
             graceful = !force && gracefulCommandAccepted,
         )
         if (termination == VmProcessTermination.STILL_ALIVE) {
+            handle.recoveryRequiredOnExit = true
             val message = "Backend process did not exit after graceful/forced termination attempts."
             store.update(id) { it.state = VmState.ERROR }
             VmLogger(this, id).warn(message)
@@ -590,7 +604,8 @@ class VmRuntimeService : Service() {
             handle,
             exit,
             requestedStop = true,
-            recoveryRequired = termination != VmProcessTermination.GRACEFUL,
+            recoveryRequired = handle.recoveryRequiredOnExit ||
+                termination != VmProcessTermination.GRACEFUL,
         )
     }
 
@@ -630,16 +645,16 @@ class VmRuntimeService : Service() {
         val store = VmStore(this)
         val current = store.list()
         val vm = current.firstOrNull { it.id == id }
-        val unexpectedExit = !requestedStop && exitCode != 0
-        val needsRecovery = unexpectedExit || recoveryRequired
+        val unexpectedFailure = exitCode != 0 && !recoveryRequired
+        val needsRecovery = unexpectedFailure || recoveryRequired
         if (vm != null) {
             vm.state = when {
-                unexpectedExit -> VmState.ERROR
+                unexpectedFailure -> VmState.ERROR
                 recoveryRequired -> VmState.RECOVERY
                 else -> VmState.OFF
             }
             if (needsRecovery) {
-                val reason = if (unexpectedExit) {
+                val reason = if (unexpectedFailure) {
                     "Backend " + handle.backend.label + " exited unexpectedly with code " + exitCode
                 } else {
                     "Backend " + handle.backend.label + " required forced process termination; guest filesystem consistency is not guaranteed"
@@ -659,10 +674,10 @@ class VmRuntimeService : Service() {
             store.save(current)
         }
 
-        val eventType = if (unexpectedExit) VmEventType.VM_ERROR else VmEventType.VM_STOPPED
+        val eventType = if (unexpectedFailure) VmEventType.VM_ERROR else VmEventType.VM_STOPPED
         val message = when {
-            unexpectedExit -> "unexpected exit=$exitCode"
-            recoveryRequired -> "forced termination; recovery required"
+            unexpectedFailure -> "unexpected exit=$exitCode"
+            recoveryRequired -> "unclean termination; recovery required"
             else -> "exit=$exitCode"
         }
         VmEventBus.emit(VmEvent(id, eventType, message = message))
@@ -754,5 +769,11 @@ class VmRuntimeService : Service() {
         val tapOwned: Boolean,
         val virtioFs: VirtioFsHandle?,
         val tpm: TpmHandle?,
-    )
+    ) {
+        @Volatile
+        var stopRequested: Boolean = false
+
+        @Volatile
+        var recoveryRequiredOnExit: Boolean = false
+    }
 }
