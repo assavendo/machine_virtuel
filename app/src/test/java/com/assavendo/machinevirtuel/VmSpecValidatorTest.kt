@@ -119,6 +119,19 @@ class VmSpecValidatorTest {
     }
 
     @Test
+    fun tapModeRejectsPortForwardsInsteadOfSilentlyDroppingThem() {
+        val vm = VmConfig(
+            name = "tap-forward",
+            networkMode = NetworkMode.TAP,
+            tapName = "tap0",
+            portForwards = listOf(PortForward("tcp", 2222, 22)),
+        )
+        assertTrue(VmSpecValidator.validate(vm).any {
+            it.field == "network" && it.fatal && it.message.contains("TAP")
+        })
+    }
+
+    @Test
     fun importedDiskMustBeReadableWritableAndNonEmpty() {
         val root = createTempDir(prefix = "vm-disk-validation-")
         try {
