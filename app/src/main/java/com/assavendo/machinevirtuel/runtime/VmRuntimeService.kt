@@ -154,15 +154,19 @@ class VmRuntimeService : Service() {
                 val hostCapabilities = HostCapabilityScanner(this).scan()
                 val admitted = runtimeGate.runIfOpen {
                     synchronized(admissionLock) {
-                        val latest = store.list().firstOrNull { it.id == id }
-                            ?: error("VM configuration disappeared before startup admission.")
-                        check(latest.state == VmState.OFF) {
-                            "VM startup requires confirmed OFF state; current state is " + latest.state.name
-                        }
-                        val admission = ResourceAdmissionController.check(latest, store.list(), hostCapabilities)
-                        check(admission.allowed) { admission.reason }
-                        check(persistVmUpdate(store, id) { it.state = VmState.STARTING } != null) {
-                            "VM configuration disappeared before startup admission."
+                        // Resource admission and OFF -> STARTING are one collection
+                        // transaction. Parallel starts/creates cannot consume the
+                        // same apparent free-RAM budget from a stale snapshot.
+                        store.mutate { items ->
+                            val latest = items.firstOrNull { it.id == id }
+                                ?: error("VM configuration disappeared before startup admission.")
+                            check(latest.state == VmState.OFF) {
+                                "VM startup requires confirmed OFF state; current state is " + latest.state.name
+                            }
+                            val admission = ResourceAdmissionController.check(latest, items, hostCapabilities)
+                            check(admission.allowed) { admission.reason }
+                            vm = latest.copy()
+                            latest.state = VmState.STARTING
                         }
                     }
                 }
