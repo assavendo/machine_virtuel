@@ -358,6 +358,9 @@ class MainActivity : Activity() {
         content.addView(architectureSpinner)
 
         section("B — Système invité et médias")
+        content.addView(subtitle(
+            "Linux ARM64 est la cible prioritaire. Les guests x86_64/i386 nécessitent l'extension QEMU x86 ; Windows, Android et BSD restent à valider avec leurs médias et pilotes réels."
+        ))
         addLabel("Système invité")
         val osSpinner = spinner(GuestOsChoice.entries.map { it.label }, GuestOsChoice.entries.indexOf(osChoice))
         fun updateArchitectures(preferred: GuestArch?) {
@@ -424,7 +427,12 @@ class MainActivity : Activity() {
         section("E — Réseau et connectivité")
         addLabel("Mode réseau")
         val networkModes = NetworkMode.entries
-        val network = spinner(networkModes.map { it.name }, networkModes.indexOf(base.networkMode))
+        val networkLabels = listOf(
+            "DISABLED — aucun réseau",
+            "NAT — réseau utilisateur",
+            "TAP — bridge/root si possible (interface précréée)",
+        )
+        val network = spinner(networkLabels, networkModes.indexOf(base.networkMode))
         addLabel("Redirections (TCP:port_hôte:port_invité, UDP:port_hôte:port_invité ou port_hôte:port_invité)")
         val forwards = edit(
             base.portForwards.joinToString(",") { "${it.protocol.uppercase()}:${it.hostPort}:${it.guestPort}" }
@@ -449,7 +457,9 @@ class MainActivity : Activity() {
         addLabel("Mode")
         val modes = VmMode.entries.filter { it != VmMode.EXPERT }
         val mode = spinner(modes.map { it.label }, modes.indexOf(base.mode))
-        content.addView(subtitle("Le profil Battery Saver correspond au mode économie d’énergie demandé par le cahier des charges."))
+        content.addView(subtitle(
+            "AUTO sélectionne le profil adaptatif ; PERFORMANCE vise le débit ; le profil Battery Saver active le preset économie d'énergie demandé par le cahier des charges."
+        ))
         addLabel("Profil de performance")
         val presets = PerformancePreset.entries
         val preset = spinner(presets.map { it.label }, presets.indexOf(base.performancePreset))
