@@ -260,6 +260,59 @@ class QemuCommandBuilderTest {
         }
     }
 
+    @Test
+    fun installerBootOrderAssignsExplicitPrioritiesToDiskIsoAndNetwork() {
+        val f = runtime()
+        try {
+            val iso = File(f.root, "installer.iso").apply { writeText("ISO fixture") }
+            val vm = VmConfig(
+                name = "linux-installer",
+                diskPath = f.disk.absolutePath,
+                firmwarePath = f.nvram.absolutePath,
+                isoPath = iso.absolutePath,
+                audioEnabled = false,
+                bootOrder = listOf("disk", "cdrom", "network"),
+            )
+            val command = QemuCommandBuilder.build(
+                f.paths, vm, File(f.root, "qmp.sock"), File(f.root, "serial.log"), File(f.root, "qemu.log")
+            )
+
+            assertTrue(command.any { it.startsWith("virtio-blk-pci,drive=vd0") && it.contains("bootindex=0") })
+            assertTrue(command.any { it.startsWith("scsi-cd,bus=scsi0.0,drive=cd0") && it.contains("bootindex=1") })
+            assertTrue(command.any { it.startsWith("virtio-net-pci,netdev=net0") && it.contains("bootindex=2") })
+            assertTrue(command.contains("menu=on"))
+            assertFalse(command.any { it.startsWith("order=") })
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun customBootOrderIsAppliedToActualDevices() {
+        val f = runtime()
+        try {
+            val iso = File(f.root, "installer.iso").apply { writeText("ISO fixture") }
+            val vm = VmConfig(
+                name = "iso-first",
+                diskPath = f.disk.absolutePath,
+                firmwarePath = f.nvram.absolutePath,
+                isoPath = iso.absolutePath,
+                audioEnabled = false,
+                bootOrder = listOf("iso", "disk", "net"),
+            )
+            val command = QemuCommandBuilder.build(
+                f.paths, vm, File(f.root, "qmp.sock"), File(f.root, "serial.log"), File(f.root, "qemu.log")
+            )
+
+            assertTrue(command.any { it.startsWith("scsi-cd,bus=scsi0.0,drive=cd0") && it.contains("bootindex=0") })
+            assertTrue(command.any { it.startsWith("virtio-blk-pci,drive=vd0") && it.contains("bootindex=1") })
+            assertTrue(command.any { it.startsWith("virtio-net-pci,netdev=net0") && it.contains("bootindex=2") })
+            assertFalse(command.any { it.startsWith("order=") })
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
     @Test fun keyValuePathsWithCommasAreRejected() {
         val f = runtime()
         try {
