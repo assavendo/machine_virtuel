@@ -205,8 +205,7 @@ def main(argv):
     if "--json" in argv:
         print(json.dumps({"package": str(path), "ok": not problems, "problems": problems}, indent=2))
     elif problems:
-        print("
-".join(f"- {p}" for p in problems), file=sys.stderr)
+        print("\n".join(f"- {p}" for p in problems), file=sys.stderr)
     else:
         print(f"OK: {path.name}")
     print("Note: Ed25519 signature is NOT verified here; use the app import path.", file=sys.stderr)
