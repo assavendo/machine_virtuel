@@ -101,7 +101,13 @@ class VmRuntimeService : Service() {
         if (existing != null) {
             if (existing.process.isAlive) return
             val exit = runCatching { existing.process.exitValue() }.getOrDefault(-1)
-            finalizeBackendExit(id, existing, exit, requestedStop = false)
+            finalizeBackendExit(
+                id,
+                existing,
+                exit,
+                requestedStop = existing.stopRequested,
+                recoveryRequired = existing.recoveryRequiredOnExit,
+            )
         }
 
         val vm = original.copy()
@@ -548,7 +554,13 @@ class VmRuntimeService : Service() {
 
         if (!handle.process.isAlive) {
             val exit = runCatching { handle.process.exitValue() }.getOrDefault(-1)
-            finalizeBackendExit(id, handle, exit, requestedStop = false)
+            finalizeBackendExit(
+                id,
+                handle,
+                exit,
+                requestedStop = handle.stopRequested,
+                recoveryRequired = handle.recoveryRequiredOnExit,
+            )
             return
         }
         handle.stopRequested = true
@@ -588,7 +600,13 @@ class VmRuntimeService : Service() {
         }
         if (termination == VmProcessTermination.ALREADY_EXITED) {
             val exit = runCatching { handle.process.exitValue() }.getOrDefault(-1)
-            finalizeBackendExit(id, handle, exit, requestedStop = false)
+            finalizeBackendExit(
+                id,
+                handle,
+                exit,
+                requestedStop = handle.stopRequested,
+                recoveryRequired = handle.recoveryRequiredOnExit,
+            )
             return
         }
 
@@ -666,8 +684,8 @@ class VmRuntimeService : Service() {
 
         val eventType = if (disposition.unexpectedFailure) VmEventType.VM_ERROR else VmEventType.VM_STOPPED
         val message = when {
-            unexpectedFailure -> "unexpected exit=$exitCode"
-            recoveryRequired -> "unclean termination; recovery required"
+            disposition.unexpectedFailure -> "unexpected exit=$exitCode"
+            disposition.state == VmState.RECOVERY -> "unclean termination; recovery required"
             else -> "exit=$exitCode"
         }
         VmEventBus.emit(VmEvent(id, eventType, message = message))
