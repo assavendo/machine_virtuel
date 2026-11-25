@@ -128,6 +128,7 @@ class VmRuntimeService : Service() {
         var tapOwned = false
         var lastError: Throwable? = null
         var launchedHandle: Handle? = null
+        var launchedHandleRegistered = false
 
         try {
             VmSpecValidator.validate(vm).firstOrNull { it.fatal }?.let { error(it.message) }
@@ -251,6 +252,15 @@ class VmRuntimeService : Service() {
                         log,
                         preferRoot = usbAttachments.any { it.requiresRoot },
                     )
+                    val candidateHandle = Handle(
+                        process = process,
+                        backend = backend.kind,
+                        qmp = spec.qmpSocket,
+                        controlSocket = controlSocket,
+                        tapOwned = tapOwned,
+                        virtioFs = fsHandle,
+                        tpm = tpmHandle,
+                    )
                     try {
                         val ready = spec.qmpSocket
                         if (ready != null) {
@@ -260,19 +270,22 @@ class VmRuntimeService : Service() {
                             awaitCrosvmReady(process, controlSocket)
                         }
                     } catch (t: Throwable) {
-                        process.destroy()
-                        if (!process.waitFor(1, TimeUnit.SECONDS)) process.destroyForcibly()
+                        val termination = VmProcessTerminator.terminate(process, graceful = false)
+                        if (termination == VmProcessTermination.STILL_ALIVE) {
+                            candidateHandle.stopRequested = true
+                            candidateHandle.recoveryRequiredOnExit = true
+                            launchedHandle = candidateHandle
+                            handle = candidateHandle
+                            throw IllegalStateException(
+                                "Backend " + backend.kind.label +
+                                    " failed readiness and survived termination; fallback was blocked to prevent overlapping guests.",
+                                t,
+                            )
+                        }
                         throw t
                     }
-                    handle = Handle(
-                        process = process,
-                        backend = backend.kind,
-                        qmp = spec.qmpSocket,
-                        controlSocket = controlSocket,
-                        tapOwned = tapOwned,
-                        virtioFs = fsHandle,
-                        tpm = tpmHandle,
-                    )
+                    handle = candidateHandle
+                    launchedHandle = candidateHandle
                     if (backend.kind != decision.selected) {
                         updateNotification("Fallback backend " + backend.kind.label)
                         logger.warn("Fallback backend selected: " + backend.kind.label)
@@ -280,6 +293,7 @@ class VmRuntimeService : Service() {
                     }
                     break
                 } catch (t: Throwable) {
+                    if (launchedHandle != null) throw t
                     VirtioFsManager.stop(fsHandle)
                     TpmManager.stop(tpmHandle)
                     lastError = t
@@ -305,6 +319,7 @@ class VmRuntimeService : Service() {
                         "VM configuration disappeared before process registration."
                     }
                     processes[id] = active
+                    launchedHandleRegistered = true
 
                     executor.execute { monitorVm(id, active, vm) }
                     executor.execute {
@@ -327,25 +342,53 @@ class VmRuntimeService : Service() {
             logger.info("VM running on backend " + active.backend.label)
             updateNotification("VM " + vm.name + " running • " + active.backend.label)
         } catch (t: Throwable) {
+            var orphanedProcess = false
             launchedHandle?.let { active ->
+                active.stopRequested = true
+                active.recoveryRequiredOnExit = true
                 val termination = VmProcessTerminator.terminate(active.process, graceful = false)
-                if (termination != VmProcessTermination.STILL_ALIVE && processes.remove(id, active)) {
-                    cleanupHandleResources(id, active)
+                if (termination == VmProcessTermination.STILL_ALIVE) {
+                    orphanedProcess = true
+                    val tracked = processes.putIfAbsent(id, active)
+                    if (tracked == null || tracked === active) {
+                        launchedHandleRegistered = true
+                        Thread(
+                            {
+                                val retry = VmProcessTerminator.terminate(active.process, graceful = false)
+                                if (retry != VmProcessTermination.STILL_ALIVE && processes.remove(id, active)) {
+                                    cleanupHandleResources(id, active)
+                                }
+                            },
+                            "phoenixvm-orphan-stop-" + id.take(8),
+                        ).apply {
+                            isDaemon = true
+                            start()
+                        }
+                    } else {
+                        logger.error(
+                            "A failed startup process survived termination but another handle already owns this VM id; manual recovery is required.",
+                        )
+                    }
+                } else {
+                    val shouldClean = if (launchedHandleRegistered) {
+                        processes.remove(id, active)
+                    } else {
+                        processes[id] == null
+                    }
+                    if (shouldClean) cleanupHandleResources(id, active)
                 }
             }
-            if (tapOwned && vm.tapName.isNotBlank()) {
+            if (!orphanedProcess && tapOwned && vm.tapName.isNotBlank()) {
                 runCatching { TapNetworkManager().removeInterface(vm.tapName) }
             }
             logger.error("VM start failed", t)
             val recorded = runtimeGate.runIfOpen {
-                synchronized(admissionLock) {
-                    persistVmUpdate(store, id) { it.state = VmState.ERROR }
+                persistVmUpdate(store, id) {
+                    it.state = if (orphanedProcess) VmState.RECOVERY else VmState.ERROR
                 }
             }
-            if (!recorded) {
-                synchronized(admissionLock) {
-                    persistVmUpdate(store, id) { it.state = VmState.RECOVERY }
-                }
+            if (!recorded || orphanedProcess) {
+                persistVmUpdate(store, id) { it.state = VmState.RECOVERY }
             }
             val failedVm = store.list().firstOrNull { it.id == id } ?: vm
             val plan = RecoveryManager.plan(filesDir, failedVm, t.message ?: "VM start failed")
@@ -353,7 +396,7 @@ class VmRuntimeService : Service() {
             VmEventBus.emit(
                 VmEvent(
                     id,
-                    if (!recorded) VmEventType.RECOVERY_AVAILABLE else VmEventType.VM_ERROR,
+                    if (!recorded || orphanedProcess) VmEventType.RECOVERY_AVAILABLE else VmEventType.VM_ERROR,
                     message = t.message ?: "VM start failed",
                 )
             )
@@ -707,18 +750,21 @@ class VmRuntimeService : Service() {
         cleanupHandleResources(id, handle)
 
         val store = VmStore(this)
-        val current = store.list()
-        val vm = current.firstOrNull { it.id == id }
         val disposition = VmExitPolicy.resolve(exitCode, requestedStop, recoveryRequired)
-        val needsRecovery = disposition.requiresRecoveryPlan
-        if (vm != null) {
-            vm.state = disposition.state
-            if (needsRecovery) {
-                val reason = if (disposition.unexpectedFailure) {
-                    "Backend " + handle.backend.label + " exited unexpectedly with code " + exitCode
-                } else {
-                    "Backend " + handle.backend.label + " exited after an unclean stop attempt; guest filesystem consistency is not guaranteed"
-                }
+        val vm = synchronized(admissionLock) {
+            val current = store.list()
+            current.firstOrNull { it.id == id }?.also { item ->
+                item.state = disposition.state
+                store.save(current)
+            }?.copy()
+        }
+        if (vm != null && disposition.requiresRecoveryPlan) {
+            val reason = if (disposition.unexpectedFailure) {
+                "Backend " + handle.backend.label + " exited unexpectedly with code " + exitCode
+            } else {
+                "Backend " + handle.backend.label + " exited after an unclean stop attempt; guest filesystem consistency is not guaranteed"
+            }
+            runCatching {
                 val plan = RecoveryManager.plan(filesDir, vm, reason)
                 RecoveryPlanStore.write(filesDir, plan)
                 VmEventBus.emit(
@@ -728,12 +774,11 @@ class VmRuntimeService : Service() {
                         message = plan.actions.joinToString(" • "),
                     )
                 )
-            } else {
-                RecoveryPlanStore.clear(filesDir, id)
+            }.onFailure {
+                VmLogger(this, id).error("Unable to write VM recovery plan", it)
             }
-            synchronized(admissionLock) {
-                store.save(current)
-            }
+        } else if (vm != null) {
+            RecoveryPlanStore.clear(filesDir, id)
         }
 
         val eventType = if (disposition.unexpectedFailure) VmEventType.VM_ERROR else VmEventType.VM_STOPPED
@@ -821,13 +866,15 @@ class VmRuntimeService : Service() {
 
             try {
                 activeHandles.forEach { (id, handle) ->
+                    handle.stopRequested = true
+                    handle.recoveryRequiredOnExit = true
                     val store = VmStore(this)
                     val vm = store.list().firstOrNull { it.id == id }
                     if (vm != null && vm.state != VmState.OFF) {
-                        persistVmUpdate(store, id) { it.state = VmState.RECOVERY }
+                        val recoveryVm = persistVmUpdate(store, id) { it.state = VmState.RECOVERY } ?: vm
                         val plan = RecoveryManager.plan(
                             filesDir,
-                            vm,
+                            recoveryVm,
                             "Android runtime service was destroyed while the VM process was active.",
                         )
                         RecoveryPlanStore.write(filesDir, plan)
