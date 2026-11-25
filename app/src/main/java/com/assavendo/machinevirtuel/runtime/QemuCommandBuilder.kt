@@ -5,6 +5,7 @@ import com.assavendo.machinevirtuel.vm.GpuBackend
 import com.assavendo.machinevirtuel.vm.GuestArch
 import com.assavendo.machinevirtuel.vm.NetworkMode
 import com.assavendo.machinevirtuel.vm.VmConfig
+import com.assavendo.machinevirtuel.vm.VmBootOrder
 import java.io.File
 
 object QemuCommandBuilder {
@@ -26,6 +27,9 @@ object QemuCommandBuilder {
         require(qemu.canExecute()) {
             "Aucun QEMU système compatible avec l'architecture " + vm.arch.label + " n'est installé."
         }
+        val bootPriorities = VmBootOrder.priorities(vm.bootOrder)
+        fun bootIndex(device: String): String =
+            bootPriorities[device]?.let { ",bootindex=$it" } ?: ""
         require(vm.diskPath.isNotBlank()) { "Une VM full-system doit avoir un disque virtuel." }
         require(File(vm.diskPath).isFile) { "Le disque virtuel est introuvable." }
         require(vm.firmwarePath.isNotBlank() && File(vm.firmwarePath).isFile) {
@@ -101,7 +105,7 @@ object QemuCommandBuilder {
         args += "-device"
         args += "virtio-blk-pci,drive=vd0" +
             (if (vm.ioThreads) ",iothread=io0" else "") +
-            ",disable-legacy=on,disable-modern=off,bootindex=0"
+            ",disable-legacy=on,disable-modern=off" + bootIndex("disk")
 
         if (vm.balloonEnabled) {
             args += "-device"; args += "virtio-balloon-pci,disable-legacy=on,disable-modern=off"
@@ -111,7 +115,7 @@ object QemuCommandBuilder {
             require(File(vm.isoPath).isFile) { "L'image ISO sélectionnée est introuvable." }
             args += "-drive"; args += "if=none,id=cd0,media=cdrom,readonly=on,format=raw,file=" + iso
             args += "-device"; args += "virtio-scsi-pci,id=scsi0,disable-legacy=on,disable-modern=off"
-            args += "-device"; args += "scsi-cd,bus=scsi0.0,drive=cd0"
+            args += "-device"; args += "scsi-cd,bus=scsi0.0,drive=cd0" + bootIndex("cdrom")
         }
 
         fun requireImage(path: String, label: String): String {
@@ -156,17 +160,8 @@ object QemuCommandBuilder {
             addAndroidDisk("android-userdata", vm.androidUserdataPath)
         }
 
-        val boot = vm.bootOrder.mapNotNull {
-            when (it.lowercase()) {
-                "disk" -> "c"
-                "cdrom", "iso" -> "d"
-                "network", "net" -> "n"
-                else -> null
-            }
-        }.joinToString("")
-        if (boot.isNotBlank()) {
-            args += "-boot"; args += "order=" + boot + ",menu=on"
-        }
+        // Device bootindex values are authoritative. Do not combine them with -boot order.
+        args += "-boot"; args += "menu=on"
 
         when (vm.networkMode) {
             NetworkMode.DISABLED -> Unit
@@ -199,7 +194,7 @@ object QemuCommandBuilder {
                 args += "-netdev"
                 args += if (forwards.isEmpty()) "user,id=net0" else "user,id=net0," + forwards.joinToString(",")
                 val mac = com.assavendo.machinevirtuel.vm.NetworkPolicy.deterministicMac(vm.id)
-                args += "-device"; args += "virtio-net-pci,netdev=net0,mac=$mac,disable-legacy=on,disable-modern=off"
+                args += "-device"; args += "virtio-net-pci,netdev=net0,mac=$mac,disable-legacy=on,disable-modern=off" + bootIndex("network")
             }
             NetworkMode.TAP -> {
                 require(vm.tapName.matches(Regex("[A-Za-z0-9_.-]{1,15}"))) {
@@ -207,7 +202,7 @@ object QemuCommandBuilder {
                 }
                 args += "-netdev"; args += "tap,id=net0,ifname=" + vm.tapName + ",script=no,downscript=no"
                 val mac = com.assavendo.machinevirtuel.vm.NetworkPolicy.deterministicMac(vm.id)
-                args += "-device"; args += "virtio-net-pci,netdev=net0,mac=$mac,disable-legacy=on,disable-modern=off"
+                args += "-device"; args += "virtio-net-pci,netdev=net0,mac=$mac,disable-legacy=on,disable-modern=off" + bootIndex("network")
             }
         }
 
