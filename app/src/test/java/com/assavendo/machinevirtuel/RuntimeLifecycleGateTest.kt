@@ -32,8 +32,9 @@ class RuntimeLifecycleGateTest {
         val release = CountDownLatch(1)
         val closeEntered = CountDownLatch(1)
 
+        val admittedResult = java.util.concurrent.atomic.AtomicBoolean(false)
         val admitted = thread(name = "runtime-gate-admitted") {
-            assertTrue(
+            admittedResult.set(
                 gate.runIfOpen {
                     entered.countDown()
                     check(release.await(5, TimeUnit.SECONDS))
@@ -53,6 +54,7 @@ class RuntimeLifecycleGateTest {
         closer.join(5_000)
         assertFalse(admitted.isAlive)
         assertFalse(closer.isAlive)
+        assertTrue(admittedResult.get())
         assertTrue(closeEntered.await(5, TimeUnit.SECONDS))
         assertFalse(gate.runIfOpen { error("Action must not run after close.") })
     }

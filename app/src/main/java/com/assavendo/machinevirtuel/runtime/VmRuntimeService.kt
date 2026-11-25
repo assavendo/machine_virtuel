@@ -338,9 +338,12 @@ class VmRuntimeService : Service() {
             }
             check(registered) { "Runtime service is shutting down; backend startup was cancelled." }
 
-            VmEventBus.emit(VmEvent(id, VmEventType.VM_STARTED, message = active.backend.label))
+            runCatching {
+                VmEventBus.emit(VmEvent(id, VmEventType.VM_STARTED, message = active.backend.label))
+            }.onFailure { logger.warn("VM started but VM_STARTED event delivery failed: " + (it.message ?: "unknown")) }
             logger.info("VM running on backend " + active.backend.label)
-            updateNotification("VM " + vm.name + " running • " + active.backend.label)
+            runCatching { updateNotification("VM " + vm.name + " running • " + active.backend.label) }
+                .onFailure { logger.warn("VM started but notification update failed: " + (it.message ?: "unknown")) }
         } catch (t: Throwable) {
             var orphanedProcess = false
             launchedHandle?.let { active ->
@@ -750,7 +753,10 @@ class VmRuntimeService : Service() {
         cleanupHandleResources(id, handle)
 
         val store = VmStore(this)
-        val disposition = VmExitPolicy.resolve(exitCode, requestedStop, recoveryRequired)
+        val effectiveRecoveryRequired = recoveryRequired ||
+            handle.recoveryRequiredOnExit ||
+            runtimeGate.isClosed()
+        val disposition = VmExitPolicy.resolve(exitCode, requestedStop, effectiveRecoveryRequired)
         val vm = synchronized(admissionLock) {
             val current = store.list()
             current.firstOrNull { it.id == id }?.also { item ->
@@ -762,7 +768,7 @@ class VmRuntimeService : Service() {
             val reason = if (disposition.unexpectedFailure) {
                 "Backend " + handle.backend.label + " exited unexpectedly with code " + exitCode
             } else {
-                "Backend " + handle.backend.label + " exited after an unclean stop attempt; guest filesystem consistency is not guaranteed"
+                "Backend " + handle.backend.label + " exited after an unclean stop attempt or service shutdown; guest filesystem consistency is not guaranteed"
             }
             runCatching {
                 val plan = RecoveryManager.plan(filesDir, vm, reason)

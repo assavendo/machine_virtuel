@@ -18,13 +18,14 @@ PhoenixVM applies the following runtime rules:
 8. If the store says a VM is active or in `ERROR` but no runtime process handle exists, a start/stop request moves it to `RECOVERY` and writes a recovery plan instead of launching a duplicate or falsely reporting `OFF`.
 
 9. Startup admission, process registration and service closure share a linearization gate. Once service closure begins, no later start can register a backend process. A process created by a startup already in flight must either register before the shutdown snapshot or fail registration and be terminated by its startup rollback.
-10. Service destruction persists `RECOVERY` before requesting process termination. Termination and sidecar cleanup run on a bounded background pool so the Android main thread is not held waiting for backend exit. A process handle is removed only after exit is confirmed; a surviving process keeps its handle and sidecar references for later recovery.
+10. Service destruction persists `RECOVERY` and marks each handle recovery-required before requesting process termination. Termination and sidecar cleanup run on a bounded background pool so the Android main thread is not held waiting for backend exit. A process handle is removed only after exit is confirmed; a surviving process keeps its handle and sidecar references for later recovery.
+11. Backend readiness failure uses the same bounded process terminator. If that process survives, fallback is blocked, the handle is retained, and the VM is marked `RECOVERY`; a second bounded termination attempt runs independently.
 
 ## Concurrency and resource isolation
 
 A shared worker pool backs one serial queue per VM. This avoids a global lock around long QMP/crosvm operations: VM-A can progress independently of VM-B, while each VM's own lifecycle transitions remain ordered. Queue failures are reported and do not strand later commands for that VM.
 
-Process-monitoring and process-wait threads remain separate from the lifecycle queues. Monitoring is read/observe-only; all terminal state changes occur through the queue. VM store writes performed by the runtime service are serialized across VM IDs to prevent one VM's stale list snapshot from overwriting another VM's concurrent state transition.
+Process-monitoring and process-wait threads remain separate from the lifecycle queues. Monitoring is read/observe-only; all terminal state changes occur through the queue. VM store writes performed by the runtime service are serialized across VM IDs to prevent one VM's stale list snapshot from overwriting another VM's concurrent state transition. Exit classification also consults the handle's latest recovery marker and the service gate at finalization time, preventing a delayed callback from overwriting a recovery state during service destruction.
 
 ## Automated coverage
 
