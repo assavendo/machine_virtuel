@@ -248,6 +248,8 @@ class MainActivity : Activity() {
             row3.addView(space(6))
             row3.addView(actionButton("Rapport", teal) { exportDeveloperReport(vm) })
             row3.addView(space(6))
+            row3.addView(actionButton("Métriques", accent) { showMetrics(vm) })
+            row3.addView(space(6))
             row3.addView(actionButton("Supprimer", Color.rgb(95, 104, 118)) {
                 VmRuntimeService.forceStop(this@MainActivity, vm.id)
                 manager.delete(vm.id)
@@ -395,6 +397,59 @@ class MainActivity : Activity() {
             }
         }
         builder.show()
+    }
+
+    private fun showMetrics(vm: VmConfig) {
+        val latest = com.assavendo.machinevirtuel.performance.VmMetricsRegistry.last(vm.id, 1).lastOrNull()
+        val windows = com.assavendo.machinevirtuel.performance.VmMetricsRegistry.windows(vm.id)
+
+        fun value(value: Double?, suffix: String = "") =
+            value?.let { "%.2f".format(it) + suffix } ?: "indisponible"
+
+        val body = buildString {
+            append("VM : ").append(vm.name).append("\n")
+            append("FPS : ").append(value(latest?.fps)).append("\n")
+            append("CPU host : ").append(value(latest?.cpuHostPercent, " %")).append("\n")
+            append("CPU guest : ").append(value(latest?.cpuGuestPercent, " %")).append("\n")
+            append("vCPU host-thread : ").append(value(latest?.vCpuUtilization, " %")).append("\n")
+            append("Température : ").append(latest?.temperatureC?.let { "%.1f °C".format(it) } ?: "indisponible").append("\n")
+            append("I/O lecture : ").append(latest?.ioReadBytesPerSec?.let(::formatRate) ?: "indisponible").append("\n")
+            append("I/O écriture : ").append(latest?.ioWriteBytesPerSec?.let(::formatRate) ?: "indisponible").append("\n")
+            append("Réseau RX : ").append(latest?.networkRxBytesPerSec?.let(::formatRate) ?: "indisponible").append("\n")
+            append("Réseau TX : ").append(latest?.networkTxBytesPerSec?.let(::formatRate) ?: "indisponible").append("\n")
+            append("Cache traduction : ").append(latest?.cacheHitRate?.let { "%.1f".format(it * 100.0) + " %" } ?: "indisponible").append("\n")
+            append("Temps traduction moyen : ").append(latest?.translationMs?.let { "%.3f ms".format(it) } ?: "indisponible").append("\n")
+            append("GPU : indisponible si le chemin n'est pas exposé par le backend/hôte").append("\n")
+            append("Audio underruns : indisponible si le backend AAudio ne les expose pas").append("\n\n")
+            append("Fenêtres 1/5/30 min :\n")
+            windows.forEach { window ->
+                append(window.minutes).append(" min — ")
+                append("échantillons=").append(window.samples)
+                append(", FPS=").append(value(window.fpsAvg))
+                append(", CPU host=").append(value(window.cpuHostAvg, " %"))
+                append(", vCPU=").append(value(window.vCpuUtilizationAvg, " %"))
+                append(", cache=").append(
+                    window.cacheHitRateAvg?.let { "%.1f".format(it * 100.0) + " %" } ?: "indisponible"
+                )
+                append("\n")
+            }
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Monitoring — " + vm.name)
+            .setMessage(body)
+            .setPositiveButton("Fermer", null)
+            .show()
+    }
+
+    private fun formatRate(bytesPerSecond: Long): String {
+        val units = arrayOf("B/s", "KiB/s", "MiB/s", "GiB/s")
+        var value = bytesPerSecond.toDouble().coerceAtLeast(0.0)
+        var unit = 0
+        while (value >= 1024.0 && unit < units.lastIndex) {
+            value /= 1024.0
+            unit++
+        }
+        return "%.1f %s".format(value, units[unit])
     }
 
     private fun exportVm(vm: VmConfig) {
@@ -711,7 +766,7 @@ class MainActivity : Activity() {
     }
 
     private fun showDisplay(vmId: String) {
-        val view = VmDisplayView(this)
+        val view = VmDisplayView(this, vmId)
         val dialog = AlertDialog.Builder(this).setTitle("Écran VM").setView(view).setPositiveButton("Fermer", null).create()
         dialog.setOnDismissListener { view.disconnect() }
         dialog.setOnShowListener { view.postDelayed({ view.connect(VmRuntimeService.vncPort(vmId)) }, 1200) }

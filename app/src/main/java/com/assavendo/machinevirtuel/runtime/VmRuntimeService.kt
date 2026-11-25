@@ -12,7 +12,9 @@ import com.assavendo.machinevirtuel.hypervisor.BackendLaunchSpec
 import com.assavendo.machinevirtuel.hypervisor.CrosvmBackend
 import com.assavendo.machinevirtuel.hypervisor.HypervisorBackend
 import com.assavendo.machinevirtuel.hypervisor.QemuBackend
+import com.assavendo.machinevirtuel.cache.TranslationCacheManager
 import com.assavendo.machinevirtuel.performance.AdaptiveResourceCoordinator
+import com.assavendo.machinevirtuel.performance.VmCpuThreadSampler
 import com.assavendo.machinevirtuel.performance.HostMetricsCollector
 import com.assavendo.machinevirtuel.performance.ResourceAdmissionController
 import com.assavendo.machinevirtuel.performance.DeviceTopology
@@ -290,14 +292,17 @@ class VmRuntimeService : Service() {
         var lastBalloonRequestMs = 0L
         var lastPolicyMessage = ""
         var lastPolicyInputsRefreshMs = 0L
+        var lastTelemetryRefreshMs = 0L
         var cachedHost: com.assavendo.machinevirtuel.host.HostCapabilities? = null
         var cachedTopology: com.assavendo.machinevirtuel.performance.CpuTopology? = null
         var cachedVms: List<VmConfig> = emptyList()
+        var cachedVcpuThreadIds: List<Long> = emptyList()
+        var cachedTranslationAggregate = TranslationCacheManager(this).aggregate(id)
+        val vcpuSampler = VmCpuThreadSampler()
+
         while (processes[id] === handle && handle.process.isAlive) {
             runCatching {
                 val sample = collector.sample()
-                VmMetricsRegistry.record(id, sample)
-
                 val now = System.currentTimeMillis()
                 if (cachedHost == null || now - lastPolicyInputsRefreshMs >= 5_000L) {
                     val store = VmStore(this)
@@ -306,6 +311,21 @@ class VmRuntimeService : Service() {
                     cachedVms = store.list()
                     lastPolicyInputsRefreshMs = now
                 }
+                if (handle.qmp != null && now - lastTelemetryRefreshMs >= 5_000L) {
+                    cachedVcpuThreadIds = QmpController.queryVcpuThreadIds(handle.qmp)
+                    cachedTranslationAggregate = TranslationCacheManager(this).aggregate(id)
+                    lastTelemetryRefreshMs = now
+                }
+
+                val vCpuUtilization = vcpuSampler.sample(cachedVcpuThreadIds)
+                VmMetricsRegistry.record(
+                    id,
+                    sample,
+                    fps = VmMetricsRegistry.last(id, 1).asReversed().firstOrNull()?.fps,
+                    vCpuUtilization = vCpuUtilization,
+                    cacheHitRate = cachedTranslationAggregate.cacheHitRate,
+                    translationMs = cachedTranslationAggregate.averageTranslationMs,
+                )
                 val host = cachedHost ?: error("Host capability cache unavailable.")
                 val topology = cachedTopology ?: error("CPU topology cache unavailable.")
                 val decision = coordinator.decide(

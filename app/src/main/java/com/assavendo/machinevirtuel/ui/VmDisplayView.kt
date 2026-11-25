@@ -13,10 +13,14 @@ import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
+import com.assavendo.machinevirtuel.performance.VmMetricsRegistry
 import com.assavendo.machinevirtuel.runtime.RfbClient
 import kotlin.math.min
 
-class VmDisplayView(context: Context) : View(context), RfbClient.Listener {
+class VmDisplayView(
+    context: Context,
+    private val vmId: String,
+) : View(context), RfbClient.Listener {
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val gestures = GestureSettingsStore.load(context)
     private var bitmap: Bitmap? = null
@@ -68,6 +72,7 @@ class VmDisplayView(context: Context) : View(context), RfbClient.Listener {
         client?.close()
         client = null
         pointerPressed = false
+        VmDisplayFpsCounter.clear(vmId)
     }
 
     override fun onSize(width: Int, height: Int) {
@@ -92,6 +97,7 @@ class VmDisplayView(context: Context) : View(context), RfbClient.Listener {
     }
 
     override fun onFrame(x: Int, y: Int, width: Int, height: Int, argb: IntArray) {
+        VmDisplayFpsCounter.recordFrame(vmId)
         post {
             val target = bitmap ?: return@post
             if (x < 0 || y < 0 || x >= target.width || y >= target.height || width <= 0 || height <= 0) {
@@ -267,4 +273,30 @@ class VmDisplayView(context: Context) : View(context), RfbClient.Listener {
     }
 
     private fun dp(value: Float): Float = value * resources.displayMetrics.density
+}
+
+
+private object VmDisplayFpsCounter {
+    private data class Counter(var windowStartMs: Long, var frames: Long)
+
+    private val counters = HashMap<String, Counter>()
+
+    @Synchronized
+    fun recordFrame(vmId: String) {
+        val now = System.currentTimeMillis()
+        val counter = counters.getOrPut(vmId) { Counter(now, 0L) }
+        counter.frames++
+        val elapsed = now - counter.windowStartMs
+        if (elapsed >= 1_000L) {
+            val fps = counter.frames * 1_000.0 / elapsed.coerceAtLeast(1L)
+            VmMetricsRegistry.recordFps(vmId, fps)
+            counter.windowStartMs = now
+            counter.frames = 0L
+        }
+    }
+
+    @Synchronized
+    fun clear(vmId: String) {
+        counters.remove(vmId)
+    }
 }

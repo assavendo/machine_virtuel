@@ -29,6 +29,23 @@ data class TranslationCacheKey(
     val level: Int,
 )
 
+
+
+data class TranslationAggregate(
+    val executions: Long,
+    val cacheHits: Long,
+    val cacheMisses: Long,
+    val totalTranslationMs: Double,
+) {
+    val cacheHitRate: Double?
+        get() = if (cacheHits + cacheMisses > 0L) {
+            cacheHits.toDouble() / (cacheHits + cacheMisses).toDouble()
+        } else null
+
+    val averageTranslationMs: Double?
+        get() = if (executions > 0L) totalTranslationMs / executions.toDouble() else null
+}
+
 data class TranslationProfile(
     val state: String,
     val hotBlocks: Long,
@@ -271,6 +288,36 @@ class TranslationCacheManager(context: Context) {
         }
         memoryL0.clear()
         processL1.clear()
+    }
+
+    @Synchronized
+    fun aggregate(vmId: String): TranslationAggregate {
+        require(vmId.isNotBlank())
+        val base = File(root, fingerprint(vmId))
+        if (!base.isDirectory) {
+            return TranslationAggregate(0L, 0L, 0L, 0.0)
+        }
+
+        var executions = 0L
+        var hits = 0L
+        var misses = 0L
+        var translationMs = 0.0
+
+        base.walkTopDown()
+            .filter { it.isFile && it.length() in 1..METADATA_MAX_BYTES }
+            .forEach { file ->
+                runCatching {
+                    val json = JSONObject(file.readText(Charsets.UTF_8))
+                    if (json.optInt("format_version", -1) != FORMAT_VERSION) return@runCatching
+                    executions += json.optLong("execution_count", 0L).coerceAtLeast(0L)
+                    hits += json.optLong("cache_hits", 0L).coerceAtLeast(0L)
+                    misses += json.optLong("cache_misses", 0L).coerceAtLeast(0L)
+                    val value = json.optDouble("total_translation_ms", 0.0)
+                    if (value.isFinite() && value >= 0.0) translationMs += value
+                }
+            }
+
+        return TranslationAggregate(executions, hits, misses, translationMs)
     }
 
     @Synchronized
