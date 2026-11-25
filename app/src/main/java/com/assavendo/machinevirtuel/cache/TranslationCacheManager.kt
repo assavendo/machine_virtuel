@@ -193,7 +193,10 @@ class TranslationCacheManager(context: Context) {
             "Translation profile fingerprint does not match the cache key."
         }
         require(profile.cacheHits >= 0 && profile.cacheMisses >= 0)
-        require(profile.totalTranslationMs >= 0.0)
+        require(profile.cacheHits + profile.cacheMisses == profile.executionCount) {
+            "Translation cache hit/miss counts must equal execution count."
+        }
+        require(profile.totalTranslationMs.isFinite() && profile.totalTranslationMs >= 0.0)
         val json = JSONObject()
             .put("state", profile.state)
             .put("hot_blocks", profile.hotBlocks)
