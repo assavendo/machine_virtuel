@@ -28,6 +28,12 @@ object VmSpecValidator {
             issues += ValidationIssue("backend", "Le guest x86_64 exige actuellement QEMU TCG.", false)
         if (vm.arch == GuestArch.X86_32 && vm.backend != BackendKind.QEMU_TCG)
             issues += ValidationIssue("backend", "Le guest x86 32-bit exige actuellement QEMU TCG.", false)
+        if (vm.secureBoot && vm.arch != GuestArch.X86_64)
+            issues += ValidationIssue(
+                "secureBoot",
+                "Secure Boot est actuellement supporté uniquement pour les guests x86_64 avec le runtime OVMF Secure Boot vérifié.",
+                true,
+            )
         if (vm.backend in setOf(BackendKind.GUNYAH, BackendKind.GENIEZONE, BackendKind.HALLA) &&
             !vm.headless
         ) {

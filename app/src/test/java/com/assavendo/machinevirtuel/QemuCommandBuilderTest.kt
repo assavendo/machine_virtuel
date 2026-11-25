@@ -23,6 +23,10 @@ class QemuCommandBuilderTest {
         paths.qemuX86.setExecutable(true)
         paths.edk2Qemu.parentFile.mkdirs()
         paths.edk2Qemu.writeText("")
+        paths.edk2X86Code.parentFile.mkdirs()
+        paths.edk2X86Code.writeText("")
+        paths.edk2X86SecureCode.writeText("")
+        paths.edk2X86SecureVars.writeText("secure-vars")
         val nvram = File(root, "vm/nvram.fd").apply { parentFile?.mkdirs(); writeText("") }
         val disk = File(root, "vm/disk.raw").apply { writeText("fixture") }
         return Fixture(paths, root, nvram, disk)
@@ -49,6 +53,32 @@ class QemuCommandBuilderTest {
             assertTrue(command.any { it.contains("virtio-keyboard-pci") })
             assertTrue(command.any { it.contains("virtio-gpu-pci") })
             assertFalse(command.contains("iothread,id=io0"))
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun x86SecureBootEnablesSmmAndSecurePflash() {
+        val f = runtime()
+        try {
+            val vm = VmConfig(
+                name = "secure",
+                arch = GuestArch.X86_64,
+                machineType = "q35",
+                diskPath = f.disk.absolutePath,
+                firmwarePath = f.nvram.absolutePath,
+                backend = BackendKind.QEMU_TCG,
+                secureBoot = true,
+                audioEnabled = false,
+            )
+            val command = QemuCommandBuilder.build(
+                f.paths, vm, File(f.root, "qmp.sock"), File(f.root, "serial.log"), File(f.root, "qemu.log")
+            )
+            assertTrue(command.containsAll(listOf("-machine", "q35,smm=on")))
+            assertTrue(command.containsAll(listOf("-global", "driver=cfi.pflash01,property=secure,value=on")))
+            assertTrue(command.any { it.contains(f.paths.edk2X86SecureCode.absolutePath) })
+            assertTrue(command.any { it.contains(f.nvram.absolutePath) })
         } finally {
             f.root.deleteRecursively()
         }

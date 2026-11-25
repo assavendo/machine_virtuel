@@ -278,6 +278,26 @@ class MainActivity : Activity() {
         mode.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, VmMode.entries.map { it.label })
         val preset = Spinner(this)
         preset.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, PerformancePreset.entries.map { it.label })
+        val secureBoot = CheckBox(this).apply {
+            text = "Secure Boot (x86_64)"
+            setTextColor(textColor)
+            isEnabled = arch.selectedItemPosition == GuestArch.X86_64.ordinal
+        }
+        arch.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
+                secureBoot.isEnabled = false
+                secureBoot.isChecked = false
+            }
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?,
+                view: android.view.View?,
+                position: Int,
+                id: Long,
+            ) {
+                secureBoot.isEnabled = position == GuestArch.X86_64.ordinal
+                if (!secureBoot.isEnabled) secureBoot.isChecked = false
+            }
+        }
         layout.addView(TextView(this).apply { text = "Nom"; setTextColor(textColor) })
         layout.addView(name)
         layout.addView(TextView(this).apply { text = "Architecture"; setTextColor(textColor) })
@@ -286,10 +306,15 @@ class MainActivity : Activity() {
         layout.addView(mode)
         layout.addView(TextView(this).apply { text = "Profil"; setTextColor(textColor) })
         layout.addView(preset)
+        layout.addView(secureBoot)
 
         AlertDialog.Builder(this)
             .setTitle("Création VM full-system")
-            .setMessage("Initialise disque, UEFI/NVRAM, réseau, VirtIO et profil de performance. Les guests Windows/Android restent à valider sur appareil réel.")
+            .setMessage(
+                "Initialise disque, UEFI/NVRAM, réseau, VirtIO et profil de performance. " +
+                    "Secure Boot utilise le runtime OVMF Secure Boot vérifié uniquement pour x86_64. " +
+                    "Les guests Windows/Android restent à valider sur appareil réel."
+            )
             .setView(layout)
             .setNegativeButton("Annuler", null)
             .setPositiveButton("Créer") { _, _ ->
@@ -302,6 +327,7 @@ class MainActivity : Activity() {
                         arch = selectedArch,
                         mode = selectedMode,
                         performancePreset = selectedPreset,
+                        secureBoot = secureBoot.isChecked,
                         guestOs = when (selectedArch) {
                             GuestArch.ARM64 -> "Linux ARM64"
                             GuestArch.X86_64 -> "Linux x86_64"

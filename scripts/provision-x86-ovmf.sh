@@ -33,11 +33,15 @@ COPYRIGHT="$(find "$WORK/root/usr/share/doc" -type f -name 'copyright' 2>/dev/nu
 
 [[ -n "$CODE" && -s "$CODE" ]] || { echo "OVMF CODE firmware is missing from the pinned package." >&2; exit 1; }
 [[ -n "$VARS" && -s "$VARS" ]] || { echo "OVMF VARS firmware is missing from the pinned package." >&2; exit 1; }
+[[ -n "$SECURE_CODE" && -s "$SECURE_CODE" ]] || { echo "OVMF Secure Boot CODE firmware is missing from the pinned package." >&2; exit 1; }
+[[ -n "$SECURE_VARS" && -s "$SECURE_VARS" ]] || { echo "OVMF Secure Boot VARS firmware is missing from the pinned package." >&2; exit 1; }
 
 OUT="$DESTINATION/usr/share/droidvm"
 install -d "$OUT"
 install -m 0644 "$CODE" "$OUT/edk2-x86_64-code.fd"
 install -m 0644 "$VARS" "$OUT/edk2-x86_64-vars.fd"
+install -m 0644 "$SECURE_CODE" "$OUT/edk2-x86_64-secure-code.fd"
+install -m 0644 "$SECURE_VARS" "$OUT/edk2-x86_64-secure-vars.fd"
 if [[ -n "$COPYRIGHT" && -s "$COPYRIGHT" ]]; then
   install -m 0644 "$COPYRIGHT" "$OUT/ovmf-debian-copyright"
 fi

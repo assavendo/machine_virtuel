@@ -14,6 +14,14 @@ class VmSpecValidatorTest {
         val vm = VmConfig(name = "bad", arch = GuestArch.X86_64, backend = BackendKind.KVM)
         assertTrue(VmSpecValidator.validate(vm).any { it.field == "backend" })
     }
+    @Test fun secureBootIsLimitedToX86_64() {
+        val arm = VmConfig(name = "secure-arm", arch = GuestArch.ARM64, secureBoot = true)
+        assertTrue(VmSpecValidator.validate(arm).any { it.field == "secureBoot" && it.fatal })
+
+        val x86 = VmConfig(name = "secure-x86", arch = GuestArch.X86_64, secureBoot = true)
+        assertTrue(VmSpecValidator.validate(x86).none { it.field == "secureBoot" && it.fatal })
+    }
+
     @Test fun androidGuestRequiresBootArtifacts() {
         val vm = VmConfig(
             name = "android",

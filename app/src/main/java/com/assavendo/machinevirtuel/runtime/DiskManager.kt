@@ -36,8 +36,13 @@ object DiskManager {
                 "L'image disque doit être un fichier lisible et modifiable."
             }
         }
+        if (vm.secureBoot) {
+            require(vm.arch == GuestArch.X86_64) {
+                "Secure Boot est actuellement supporté uniquement pour les guests x86_64 avec OVMF Secure Boot vérifié."
+            }
+        }
         vm.diskPath = disk.absolutePath
-        vm.firmwarePath = File(vmDir, "nvram.fd").absolutePath
+        vm.firmwarePath = File(vmDir, if (vm.secureBoot) "nvram-secure.fd" else "nvram.fd").absolutePath
     }
 
     fun ensureNvram(vm: VmConfig, template: File) {
@@ -56,7 +61,8 @@ object DiskManager {
 
     fun firmwareTemplate(runtime: RuntimePaths, vm: VmConfig): File = when (vm.arch) {
         GuestArch.ARM64 -> runtime.edk2QemuVars
-        GuestArch.X86_64, GuestArch.X86_32 -> runtime.edk2X86Vars
+        GuestArch.X86_64 -> if (vm.secureBoot) runtime.edk2X86SecureVars else runtime.edk2X86Vars
+        GuestArch.X86_32 -> runtime.edk2X86Vars
     }
 
     fun extension(format: DiskFormat): String = when (format) {

@@ -57,6 +57,15 @@ object RuntimeDiagnostics {
                 "QEMU x86 et/ou OVMF x86_64 absent(s); Windows/Linux x86_64 ne sera pas lancé avec le firmware ARM64."
             },
         )
+        results += RuntimeDiagnostic(
+            component = "x86_64 Secure Boot firmware",
+            ok = paths.hasX86SecureBootUefi(),
+            detail = if (paths.hasX86SecureBootUefi()) {
+                "OVMF Secure Boot code + NVRAM avec clés enrôlées présents."
+            } else {
+                "Firmware OVMF Secure Boot absent; une VM secureBoot=true sera refusée."
+            },
+        )
 
         results += RuntimeDiagnostic(
             component = "Rust native core",
