@@ -53,7 +53,7 @@ def check_entry_names(infos, problems):
     for info in infos:
         name = info.filename
         total += info.file_size
-        if name.startswith("/") or "\" in name or chr(0) in name or DRIVE.match(name):
+        if name.startswith("/") or "\\" in name or chr(0) in name or DRIVE.match(name):
             problems.append(f"absolute or invalid ZIP path: {name!r}")
             continue
         normalized = name.rstrip("/")
