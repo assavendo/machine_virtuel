@@ -599,8 +599,9 @@ class VmRuntimeService : Service() {
                 runCrosvmControl(RuntimePaths(this), "suspend", handle.controlSocket)
             else -> false
         }
-        if (ok && processes[id] === handle && handle.process.isAlive) {
-            persistVmUpdate(store, id) { it.state = VmState.PAUSED }
+        if (ok && processes[id] === handle && handle.process.isAlive &&
+            persistVmUpdateIfOpen(store, id) { it.state = VmState.PAUSED }
+        ) {
             VmEventBus.emit(VmEvent(id, VmEventType.VM_PAUSED))
             updateNotification("VM paused")
         }
@@ -619,8 +620,9 @@ class VmRuntimeService : Service() {
                 runCrosvmControl(RuntimePaths(this), "resume", handle.controlSocket)
             else -> false
         }
-        if (ok && processes[id] === handle && handle.process.isAlive) {
-            persistVmUpdate(store, id) { it.state = VmState.RUNNING }
+        if (ok && processes[id] === handle && handle.process.isAlive &&
+            persistVmUpdateIfOpen(store, id) { it.state = VmState.RUNNING }
+        ) {
             VmEventBus.emit(VmEvent(id, VmEventType.VM_RESUMED))
             updateNotification("VM resumed")
         }
@@ -673,7 +675,7 @@ class VmRuntimeService : Service() {
             }
         }
 
-        persistVmUpdate(store, id) { it.state = VmState.STOPPING }
+        if (!persistVmUpdateIfOpen(store, id) { it.state = VmState.STOPPING }) return
         val gracefulCommandAccepted = when {
             force -> false
             handle.qmp != null -> QmpController.systemPowerdown(handle.qmp)
@@ -689,10 +691,12 @@ class VmRuntimeService : Service() {
         if (termination == VmProcessTermination.STILL_ALIVE) {
             handle.recoveryRequiredOnExit = true
             val message = "Backend process did not exit after graceful/forced termination attempts."
-            persistVmUpdate(store, id) { it.state = VmState.ERROR }
-            VmLogger(this, id).warn(message)
-            VmEventBus.emit(VmEvent(id, VmEventType.VM_ERROR, message = message))
-            updateNotification("VM " + current.name + ": termination could not be confirmed")
+            val errorRecorded = persistVmUpdateIfOpen(store, id) { it.state = VmState.ERROR }
+            if (errorRecorded) {
+                VmLogger(this, id).warn(message)
+                VmEventBus.emit(VmEvent(id, VmEventType.VM_ERROR, message = message))
+                updateNotification("VM " + current.name + ": termination could not be confirmed")
+            }
             return
         }
         if (termination == VmProcessTermination.ALREADY_EXITED) {
@@ -806,6 +810,18 @@ class VmRuntimeService : Service() {
         update: (VmConfig) -> Unit,
     ): VmConfig? = synchronized(admissionLock) {
         store.update(id, update)
+    }
+
+    private fun persistVmUpdateIfOpen(
+        store: VmStore,
+        id: String,
+        update: (VmConfig) -> Unit,
+    ): Boolean {
+        var updated = false
+        val admitted = runtimeGate.runIfOpen {
+            updated = persistVmUpdate(store, id, update) != null
+        }
+        return admitted && updated
     }
 
     private fun cleanupHandleResources(id: String, handle: Handle) {
