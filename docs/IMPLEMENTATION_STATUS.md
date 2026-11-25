@@ -59,6 +59,10 @@ The native boundary is fail-safe:
 - Dynamic resolution/fit behavior and configurable edge swipe, pinch and three-finger gestures.
 - VirtIO input devices, keyboard mapping and touch/mouse input path.
 - VirtIO sound with Android AAudio backend selection.
+- Audio policy supports frequency, channels, buffer size, timer period and mute for QEMU AAudio, with validation and persisted settings.
+- crosvm fails closed when the requested audio configuration cannot be guaranteed by its current Android AAudio path.
+- Runtime audio monitoring records underrun/overrun/XRUN events only when the backend exposes them in logs; configured buffer latency is reported separately from measured AV synchronization.
+- End-to-end AV synchronization remains a physical/guest telemetry acceptance item and is never reported as measured without a trustworthy guest/audio clock path.
 - Android Surface/shared-buffer/Vulkan end-to-end presentation remains a physical/device integration item.
 
 ### Storage / snapshots / packages
