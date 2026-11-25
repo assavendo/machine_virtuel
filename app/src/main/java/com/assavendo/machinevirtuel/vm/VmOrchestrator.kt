@@ -83,9 +83,13 @@ class VmOrchestrator {
         }
 
         val sorted = candidates.sortedByDescending { it.score }
-        val selected = sorted.firstOrNull { it.backend == nativeKind }?.backend
-            ?: sorted.firstOrNull()?.backend
-            ?: BackendKind.QEMU_TCG
+        val selected = if (native.nativeAvailable) {
+            sorted.firstOrNull { it.backend == nativeKind }?.backend
+                ?: sorted.firstOrNull()?.backend
+                ?: BackendKind.QEMU_TCG
+        } else {
+            sorted.firstOrNull()?.backend ?: BackendKind.QEMU_TCG
+        }
 
         if (native.nativeAvailable) {
             warnings += "Politique native Rust utilisée pour la sélection initiale."
