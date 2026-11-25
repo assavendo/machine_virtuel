@@ -124,46 +124,51 @@ class VmRuntimeService : Service() {
             return
         }
 
-        val vm = original.copy()
+        var vm = original.copy()
         var tapOwned = false
         var lastError: Throwable? = null
         var launchedHandle: Handle? = null
         var launchedHandleRegistered = false
 
         try {
-            VmSpecValidator.validate(vm).firstOrNull { it.fatal }?.let { error(it.message) }
-            val paths = RuntimeInstaller.ensure(this)
-            val usbAttachments = UsbPassthroughManager.resolveAll(this, vm.usbPassthrough)
-
-            if (vm.networkMode == NetworkMode.TAP) {
-                val tap = TapNetworkManager()
-                tapOwned = !tap.exists(vm.tapName)
-                check(tap.ensureInterface(vm.tapName)) {
-                    "Impossible de preparer l'interface TAP " + vm.tapName
+            // Hold the per-VM lock from the latest configuration read through STARTING
+            // publication. Offline disk operations and startup therefore cannot race,
+            // and independent VM IDs remain free to progress.
+            val (paths, host, usbAttachments) = store.withVmLock(id) {
+                val current = store.list().firstOrNull { it.id == id }
+                    ?: error("VM configuration disappeared before startup admission.")
+                check(current.state == VmState.OFF) {
+                    "VM startup requires confirmed OFF state; current state is " + current.state.name
                 }
-            }
-
-            val host = HostCapabilityScanner(this).scan()
-            // Wait for any in-progress cold disk operation without holding the
-            // service-close gate. Once admitted, STARTING is persisted before the lock
-            // is released, so no later snapshot/clone/export can see a false OFF state.
-            val admitted = store.withVmLock(id) {
-                runtimeGate.runIfOpen {
+                vm = current.copy()
+                VmSpecValidator.validate(vm).firstOrNull { it.fatal }?.let { error(it.message) }
+                val runtimePaths = RuntimeInstaller.ensure(this)
+                val resolvedUsb = UsbPassthroughManager.resolveAll(this, vm.usbPassthrough)
+                if (vm.networkMode == NetworkMode.TAP) {
+                    val tap = TapNetworkManager()
+                    tapOwned = !tap.exists(vm.tapName)
+                    check(tap.ensureInterface(vm.tapName)) {
+                        "Impossible de preparer l'interface TAP " + vm.tapName
+                    }
+                }
+                val hostCapabilities = HostCapabilityScanner(this).scan()
+                val admitted = runtimeGate.runIfOpen {
                     synchronized(admissionLock) {
-                        val current = store.list().firstOrNull { it.id == id }
+                        val latest = store.list().firstOrNull { it.id == id }
                             ?: error("VM configuration disappeared before startup admission.")
-                        check(current.state == VmState.OFF) {
-                            "VM startup requires confirmed OFF state; current state is " + current.state.name
+                        check(latest.state == VmState.OFF) {
+                            "VM startup requires confirmed OFF state; current state is " + latest.state.name
                         }
-                        val admission = ResourceAdmissionController.check(current, store.list(), host)
+                        val admission = ResourceAdmissionController.check(latest, store.list(), hostCapabilities)
                         check(admission.allowed) { admission.reason }
                         check(persistVmUpdate(store, id) { it.state = VmState.STARTING } != null) {
                             "VM configuration disappeared before startup admission."
                         }
                     }
                 }
+                check(admitted) { "Runtime service is shutting down; VM startup was not admitted." }
+                Triple(runtimePaths, hostCapabilities, resolvedUsb)
             }
-            check(admitted) { "Runtime service is shutting down; VM startup was not admitted." }
 
             DiskManager.ensureVmStorage(filesDir, vm, paths)
             DiskManager.ensureNvram(vm, DiskManager.firmwareTemplate(paths, vm))
