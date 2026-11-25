@@ -80,4 +80,54 @@ class VmSpecValidatorTest {
         }
     }
 
+
+    @Test
+    fun diskSizeMustStayWithinSupportedBounds() {
+        val tooSmall = VmConfig(name = "small", diskSizeGiB = 0)
+        val tooLarge = VmConfig(name = "large", diskSizeGiB = 4097)
+        assertTrue(VmSpecValidator.validate(tooSmall).any { it.field == "diskSizeGiB" && it.fatal })
+        assertTrue(VmSpecValidator.validate(tooLarge).any { it.field == "diskSizeGiB" && it.fatal })
+    }
+
+    @Test
+    fun customIsoAndExistingDiskRequireTheirMedia() {
+        val custom = VmConfig(name = "custom", guestOs = "Custom ISO ARM64")
+        assertTrue(VmSpecValidator.validate(custom).any { it.field == "isoPath" && it.fatal })
+
+        val existing = VmConfig(name = "existing", guestOs = "Existing disk ARM64")
+        assertTrue(VmSpecValidator.validate(existing).any { it.field == "diskPath" && it.fatal })
+    }
+
+    @Test
+    fun guestArchitectureCombinationsAreValidated() {
+        val windows32 = VmConfig(name = "windows32", guestOs = "Windows x86 32-bit", arch = GuestArch.X86_32)
+        val dosArm = VmConfig(name = "dosarm", guestOs = "DOS / legacy ARM64", arch = GuestArch.ARM64)
+        assertTrue(VmSpecValidator.validate(windows32).any { it.field == "arch" && it.fatal })
+        assertTrue(VmSpecValidator.validate(dosArm).any { it.field == "arch" && it.fatal })
+    }
+
+    @Test
+    fun tapNameAndSharedDirectoriesMustBeUsable() {
+        val invalidTap = VmConfig(name = "tap", networkMode = NetworkMode.TAP, tapName = "tap name with spaces")
+        assertTrue(VmSpecValidator.validate(invalidTap).any { it.field == "tapName" && it.fatal })
+
+        val invalidShare = VmConfig(
+            name = "share",
+            sharedDirs = listOf(SharedDirectory("/path/that/does/not/exist", "invalid")),
+        )
+        assertTrue(VmSpecValidator.validate(invalidShare).any { it.field == "sharedDirs" && it.fatal })
+    }
+
+    @Test
+    fun importedDiskMustBeReadableWritableAndNonEmpty() {
+        val root = createTempDir(prefix = "vm-disk-validation-")
+        try {
+            val empty = java.io.File(root, "empty.raw").apply { createNewFile() }
+            val vm = VmConfig(name = "empty-disk", diskPath = empty.absolutePath)
+            assertTrue(VmSpecValidator.validate(vm).any { it.field == "diskPath" && it.fatal })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
 }
