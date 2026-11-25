@@ -564,6 +564,7 @@ class VmRuntimeService : Service() {
             return
         }
         handle.stopRequested = true
+        if (force) handle.recoveryRequiredOnExit = true
 
         if (current.state == VmState.PAUSED && !force) {
             val resumed = when {
@@ -585,6 +586,7 @@ class VmRuntimeService : Service() {
                 runCrosvmControl(RuntimePaths(this), "stop", handle.controlSocket)
             else -> false
         }
+        if (!gracefulCommandAccepted) handle.recoveryRequiredOnExit = true
         val termination = VmProcessTerminator.terminate(
             process = handle.process,
             graceful = !force && gracefulCommandAccepted,
@@ -665,7 +667,7 @@ class VmRuntimeService : Service() {
                 val reason = if (disposition.unexpectedFailure) {
                     "Backend " + handle.backend.label + " exited unexpectedly with code " + exitCode
                 } else {
-                    "Backend " + handle.backend.label + " required forced process termination; guest filesystem consistency is not guaranteed"
+                    "Backend " + handle.backend.label + " exited after an unclean stop attempt; guest filesystem consistency is not guaranteed"
                 }
                 val plan = RecoveryManager.plan(filesDir, vm, reason)
                 RecoveryPlanStore.write(filesDir, plan)
