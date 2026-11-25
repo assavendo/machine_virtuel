@@ -2,6 +2,7 @@ package com.assavendo.machinevirtuel.hypervisor
 
 import com.assavendo.machinevirtuel.host.HostCapabilities
 import com.assavendo.machinevirtuel.runtime.RuntimePaths
+import com.assavendo.machinevirtuel.runtime.UsbHostAttachment
 import com.assavendo.machinevirtuel.vm.BackendKind
 import com.assavendo.machinevirtuel.vm.VmConfig
 import java.io.File
@@ -46,6 +47,7 @@ interface HypervisorBackend {
         qmp: File,
         serial: File,
         log: File,
+        usbPassthrough: List<UsbHostAttachment> = emptyList(),
     ): BackendLaunchSpec
 
     fun supportsPauseResume(): Boolean = false
