@@ -15,7 +15,14 @@ data class PerformanceAdvice(
 )
 
 class PerformanceAdvisor {
-    fun advise(vm: VmConfig, metrics: HostMetrics, hostRamMb: Long, backendLabel: String, gpuAccelerated: Boolean): PerformanceAdvice {
+    fun advise(
+        vm: VmConfig,
+        metrics: HostMetrics,
+        hostRamMb: Long,
+        backendLabel: String,
+        gpuAccelerationVerified: Boolean,
+        hostVulkanAvailable: Boolean = false,
+    ): PerformanceAdvice {
         val safeRam = min(vm.ramMb.toLong(), max(512L, hostRamMb * 70 / 100)).toInt()
         val thermal = when {
             metrics.thermalStatus >= 5 -> "critical"
@@ -28,14 +35,21 @@ class PerformanceAdvisor {
             else -> vm.vCpu
         }
         val gpu = when {
-            gpuAccelerated && thermal == "normal" -> "Vulkan/Gfxstream ou backend accéléré actuel"
+            gpuAccelerationVerified && thermal == "normal" -> "Accélération GPU de la VM confirmée"
+            hostVulkanAvailable && thermal != "critical" -> "Vulkan hôte disponible, mais accélération GPU de la VM non confirmée"
             thermal == "critical" -> "Réduire la résolution / conserver le fallback"
             else -> "Mode compatible"
         }
         val actions = buildList {
             if (safeRam < vm.ramMb) add("Réduire la RAM guest à une valeur compatible avec la marge Android.")
-            if (vcpus < vm.vCpu) add("Réduire temporairement le nombre de vCPU pour limiter le throttling.")
-            if (!gpuAccelerated) add("Aucune accélération GPU confirmée : ne pas annoncer de GPU natif.")
+            if (vcpus < vm.vCpu) add("Réduire le nombre de vCPU au prochain démarrage pour limiter le throttling.")
+            if (!gpuAccelerationVerified) {
+                if (hostVulkanAvailable) {
+                    add("Vulkan est disponible sur l'hôte, mais le chemin GPU de la VM n'est pas validé.")
+                } else {
+                    add("Aucune accélération GPU confirmée : ne pas annoncer de GPU natif.")
+                }
+            }
             if (metrics.isThrottling) add("Le SoC est en throttling ; privilégier la performance soutenue.")
         }
         return PerformanceAdvice(backendLabel, vcpus, safeRam, gpu, thermal, actions)
