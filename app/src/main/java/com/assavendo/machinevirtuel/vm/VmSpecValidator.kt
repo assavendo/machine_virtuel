@@ -22,6 +22,23 @@ object VmSpecValidator {
         if (vm.displayHeight !in 240..16384) issues += ValidationIssue("displayHeight", "Résolution verticale invalide.", true)
 
         val os = vm.guestOs.lowercase()
+        fun isReadableNonEmptyImage(path: String): Boolean {
+            if (path.isBlank()) return false
+            val file = File(path)
+            return file.isFile && file.canRead() && file.length() > 0L
+        }
+
+        listOf(
+            "kernelPath" to vm.kernelPath,
+            "initrdPath" to vm.initrdPath,
+            "dtbPath" to vm.dtbPath,
+            "androidVendorPath" to vm.androidVendorPath,
+        ).forEach { (field, path) ->
+            if (path.isNotBlank() && !isReadableNonEmptyImage(path)) {
+                issues += ValidationIssue(field, "L'image sélectionnée doit exister, être non vide et lisible.", true)
+            }
+        }
+
         if (os.contains("android") && vm.arch != GuestArch.ARM64) {
             issues += ValidationIssue("arch", "Le profil Android invité est actuellement réservé à ARM64.", true)
         }
@@ -149,14 +166,14 @@ object VmSpecValidator {
         }
 
         if (os.contains("android")) {
-            if (vm.androidSystemPath.isBlank() || !File(vm.androidSystemPath).isFile) {
-                issues += ValidationIssue("androidSystemPath", "Un guest Android complet exige une image system.", true)
+            if (!isReadableNonEmptyImage(vm.androidSystemPath)) {
+                issues += ValidationIssue("androidSystemPath", "Un guest Android complet exige une image system non vide et lisible.", true)
             }
-            if (vm.androidUserdataPath.isBlank() || !File(vm.androidUserdataPath).isFile) {
-                issues += ValidationIssue("androidUserdataPath", "Un guest Android complet exige une image userdata.", true)
+            if (!isReadableNonEmptyImage(vm.androidUserdataPath)) {
+                issues += ValidationIssue("androidUserdataPath", "Un guest Android complet exige une image userdata non vide et lisible.", true)
             }
-            if (vm.kernelPath.isBlank() || !File(vm.kernelPath).isFile) {
-                issues += ValidationIssue("kernelPath", "Un guest Android complet exige un kernel explicite.", true)
+            if (!isReadableNonEmptyImage(vm.kernelPath)) {
+                issues += ValidationIssue("kernelPath", "Un guest Android complet exige un kernel non vide et lisible.", true)
             }
             if (vm.androidAdbEnabled && vm.networkMode != NetworkMode.NAT) {
                 issues += ValidationIssue("androidAdbEnabled", "ADB réseau exige actuellement le mode NAT QEMU.", true)
