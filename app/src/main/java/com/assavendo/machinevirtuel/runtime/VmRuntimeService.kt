@@ -60,19 +60,21 @@ class VmRuntimeService : Service() {
         }
     }
 
+    private val runtimeGate = RuntimeLifecycleGate()
+    private val admissionLock = Any()
     private val executor = Executors.newCachedThreadPool()
     private val lifecycleCommands = PerVmCommandQueue(executor) { id, failure ->
-        runCatching { VmLogger(this, id).error("VM lifecycle command failed", failure) }
-        VmEventBus.emit(
-            VmEvent(
-                id,
-                VmEventType.VM_ERROR,
-                message = failure.message ?: "VM lifecycle command failed",
+        if (!runtimeGate.isClosed()) {
+            runCatching { VmLogger(this, id).error("VM lifecycle command failed", failure) }
+            VmEventBus.emit(
+                VmEvent(
+                    id,
+                    VmEventType.VM_ERROR,
+                    message = failure.message ?: "VM lifecycle command failed",
+                )
             )
-        )
+        }
     }
-    private val admissionLock = Any()
-    private val runtimeGate = RuntimeLifecycleGate()
 
     override fun onCreate() {
         super.onCreate()
@@ -145,7 +147,7 @@ class VmRuntimeService : Service() {
                 synchronized(admissionLock) {
                     val admission = ResourceAdmissionController.check(vm, store.list(), host)
                     check(admission.allowed) { admission.reason }
-                    check(store.update(id) { it.state = VmState.STARTING } != null) {
+                    check(persistVmUpdate(store, id) { it.state = VmState.STARTING } != null) {
                         "VM configuration disappeared before startup admission."
                     }
                 }
@@ -220,7 +222,7 @@ class VmRuntimeService : Service() {
                 var tpmHandle: TpmHandle? = null
                 try {
                     vm.backend = backend.kind
-                    store.update(id) {
+                    persistVmUpdate(store, id) {
                         it.state = VmState.STARTING
                         it.backend = backend.kind
                     }
@@ -293,7 +295,7 @@ class VmRuntimeService : Service() {
 
             val registered = runtimeGate.runIfOpen {
                 synchronized(admissionLock) {
-                    check(store.update(id) {
+                    check(persistVmUpdate(store, id) {
                         it.backend = active.backend
                         it.state = VmState.RUNNING
                         it.vCpu = vm.vCpu
@@ -337,12 +339,12 @@ class VmRuntimeService : Service() {
             logger.error("VM start failed", t)
             val recorded = runtimeGate.runIfOpen {
                 synchronized(admissionLock) {
-                    store.update(id) { it.state = VmState.ERROR }
+                    persistVmUpdate(store, id) { it.state = VmState.ERROR }
                 }
             }
             if (!recorded) {
                 synchronized(admissionLock) {
-                    store.update(id) { it.state = VmState.RECOVERY }
+                    persistVmUpdate(store, id) { it.state = VmState.RECOVERY }
                 }
             }
             val failedVm = store.list().firstOrNull { it.id == id } ?: vm
@@ -552,7 +554,7 @@ class VmRuntimeService : Service() {
             else -> false
         }
         if (ok && processes[id] === handle && handle.process.isAlive) {
-            store.update(id) { it.state = VmState.PAUSED }
+            persistVmUpdate(store, id) { it.state = VmState.PAUSED }
             VmEventBus.emit(VmEvent(id, VmEventType.VM_PAUSED))
             updateNotification("VM paused")
         }
@@ -572,7 +574,7 @@ class VmRuntimeService : Service() {
             else -> false
         }
         if (ok && processes[id] === handle && handle.process.isAlive) {
-            store.update(id) { it.state = VmState.RUNNING }
+            persistVmUpdate(store, id) { it.state = VmState.RUNNING }
             VmEventBus.emit(VmEvent(id, VmEventType.VM_RESUMED))
             updateNotification("VM resumed")
         }
@@ -625,7 +627,7 @@ class VmRuntimeService : Service() {
             }
         }
 
-        store.update(id) { it.state = VmState.STOPPING }
+        persistVmUpdate(store, id) { it.state = VmState.STOPPING }
         val gracefulCommandAccepted = when {
             force -> false
             handle.qmp != null -> QmpController.systemPowerdown(handle.qmp)
@@ -641,7 +643,7 @@ class VmRuntimeService : Service() {
         if (termination == VmProcessTermination.STILL_ALIVE) {
             handle.recoveryRequiredOnExit = true
             val message = "Backend process did not exit after graceful/forced termination attempts."
-            store.update(id) { it.state = VmState.ERROR }
+            persistVmUpdate(store, id) { it.state = VmState.ERROR }
             VmLogger(this, id).warn(message)
             VmEventBus.emit(VmEvent(id, VmEventType.VM_ERROR, message = message))
             updateNotification("VM " + current.name + ": termination could not be confirmed")
@@ -683,7 +685,7 @@ class VmRuntimeService : Service() {
 
         val message = "Runtime process handle is missing for VM state " + current.state.name
         val store = VmStore(this)
-        store.update(id) { it.state = VmState.RECOVERY }
+        persistVmUpdate(store, id) { it.state = VmState.RECOVERY }
         val plan = RecoveryManager.plan(filesDir, current, message)
         RecoveryPlanStore.write(filesDir, plan)
         VmEventBus.emit(VmEvent(id, VmEventType.VM_ERROR, message = message))
@@ -729,7 +731,9 @@ class VmRuntimeService : Service() {
             } else {
                 RecoveryPlanStore.clear(filesDir, id)
             }
-            store.save(current)
+            synchronized(admissionLock) {
+                store.save(current)
+            }
         }
 
         val eventType = if (disposition.unexpectedFailure) VmEventType.VM_ERROR else VmEventType.VM_STOPPED
@@ -741,6 +745,14 @@ class VmRuntimeService : Service() {
         VmEventBus.emit(VmEvent(id, eventType, message = message))
         VmLogger(this, id).info("VM stopped: " + message)
         updateNotification("VM stopped • " + message)
+    }
+
+    private fun persistVmUpdate(
+        store: VmStore,
+        id: String,
+        update: (VmConfig) -> Unit,
+    ): VmConfig? = synchronized(admissionLock) {
+        store.update(id, update)
     }
 
     private fun cleanupHandleResources(id: String, handle: Handle) {
@@ -800,36 +812,47 @@ class VmRuntimeService : Service() {
 
     override fun onDestroy() {
         runtimeGate.close {
-            processes.entries.toList().forEach { (id, handle) ->
-                val store = VmStore(this)
-                val vm = store.list().firstOrNull { it.id == id }
-                if (vm != null && vm.state != VmState.OFF) {
-                    synchronized(admissionLock) {
-                        store.update(id) { it.state = VmState.RECOVERY }
-                    }
-                    val plan = RecoveryManager.plan(
-                        filesDir,
-                        vm,
-                        "Android runtime service was destroyed while the VM process was active.",
-                    )
-                    RecoveryPlanStore.write(filesDir, plan)
-                }
-
-                val termination = VmProcessTerminator.terminate(
-                    process = handle.process,
-                    graceful = false,
-                )
-                if (termination != VmProcessTermination.STILL_ALIVE) {
-                    if (processes.remove(id, handle)) {
-                        cleanupHandleResources(id, handle)
-                    }
-                } else {
-                    VmLogger(this, id).error(
-                        "Backend process survived runtime service destruction; its handle and sidecar references were retained for recovery.",
-                    )
-                }
+            val activeHandles = processes.entries.toList()
+            val cleanupExecutor = if (activeHandles.isEmpty()) {
+                null
+            } else {
+                Executors.newFixedThreadPool(activeHandles.size.coerceAtMost(4))
             }
-            executor.shutdownNow()
+
+            try {
+                activeHandles.forEach { (id, handle) ->
+                    val store = VmStore(this)
+                    val vm = store.list().firstOrNull { it.id == id }
+                    if (vm != null && vm.state != VmState.OFF) {
+                        persistVmUpdate(store, id) { it.state = VmState.RECOVERY }
+                        val plan = RecoveryManager.plan(
+                            filesDir,
+                            vm,
+                            "Android runtime service was destroyed while the VM process was active.",
+                        )
+                        RecoveryPlanStore.write(filesDir, plan)
+                    }
+
+                    cleanupExecutor?.execute {
+                        val termination = VmProcessTerminator.terminate(
+                            process = handle.process,
+                            graceful = false,
+                        )
+                        if (termination != VmProcessTermination.STILL_ALIVE) {
+                            if (processes.remove(id, handle)) {
+                                cleanupHandleResources(id, handle)
+                            }
+                        } else {
+                            VmLogger(this, id).error(
+                                "Backend process survived runtime service destruction; its handle and sidecar references were retained for recovery.",
+                            )
+                        }
+                    }
+                }
+            } finally {
+                cleanupExecutor?.shutdown()
+                executor.shutdownNow()
+            }
         }
         super.onDestroy()
     }
