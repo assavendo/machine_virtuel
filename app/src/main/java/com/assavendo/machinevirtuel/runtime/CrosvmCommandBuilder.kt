@@ -98,8 +98,9 @@ object CrosvmCommandBuilder {
             }
 
             if (vm.audioEnabled) {
-                // Requires the crosvm Android AAudio build feature. If the selected runtime
-                // lacks it, backend startup fails cleanly and the orchestrator can fall back.
+                require(vm.audioFrequencyHz == 48_000 && vm.audioChannels == 2 && vm.audioBufferMs == 20 && !vm.audioMuted) {
+                    "Le chemin crosvm AAudio Android actuel ne garantit pas encore les réglages audio personnalisés/mute; utilisez QEMU pour ces paramètres."
+                }
                 add("--virtio-snd")
                 add("backend=aaudio,num_output_devices=1,num_input_devices=1")
             }

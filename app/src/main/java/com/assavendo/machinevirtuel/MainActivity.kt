@@ -251,6 +251,8 @@ class MainActivity : Activity() {
             row3.addView(space(6))
             row3.addView(actionButton("Métriques", accent) { showMetrics(vm) })
             row3.addView(space(6))
+            row3.addView(actionButton("Audio", teal) { showAudioSettings(vm) })
+            row3.addView(space(6))
             row3.addView(actionButton("USB", violet) { showUsbPassthrough(vm) })
             row3.addView(space(6))
             row3.addView(actionButton("Supprimer", Color.rgb(95, 104, 118)) {
@@ -402,6 +404,82 @@ class MainActivity : Activity() {
         builder.show()
     }
 
+    private fun showAudioSettings(vm: VmConfig) {
+        if (vm.state != VmState.OFF && vm.state != VmState.ERROR) {
+            toast("La VM doit être arrêtée pour modifier l'audio.")
+            return
+        }
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(18, 0, 18, 0)
+        }
+        val enabled = CheckBox(this).apply {
+            text = "Audio VirtIO / AAudio activé"
+            setTextColor(textColor)
+            isChecked = vm.audioEnabled
+        }
+        val muted = CheckBox(this).apply {
+            text = "Mute"
+            setTextColor(textColor)
+            isChecked = vm.audioMuted
+        }
+        val frequency = EditText(this).apply {
+            hint = "Fréquence Hz"
+            setText(vm.audioFrequencyHz.toString())
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setTextColor(textColor)
+        }
+        val channels = EditText(this).apply {
+            hint = "Canaux"
+            setText(vm.audioChannels.toString())
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setTextColor(textColor)
+        }
+        val buffer = EditText(this).apply {
+            hint = "Buffer ms / latence configurée"
+            setText(vm.audioBufferMs.toString())
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setTextColor(textColor)
+        }
+        layout.addView(enabled)
+        layout.addView(muted)
+        layout.addView(TextView(this).apply { text = "Fréquence"; setTextColor(textColor) })
+        layout.addView(frequency)
+        layout.addView(TextView(this).apply { text = "Canaux"; setTextColor(textColor) })
+        layout.addView(channels)
+        layout.addView(TextView(this).apply { text = "Buffer / latence configurée"; setTextColor(textColor) })
+        layout.addView(buffer)
+        layout.addView(TextView(this).apply {
+            text = "Synchronisation AV : non mesurée sans télémétrie audio/guest adaptée."
+            setTextColor(muted)
+            textSize = 12f
+            setPadding(0, 12, 0, 0)
+        })
+
+        AlertDialog.Builder(this)
+            .setTitle("Audio — " + vm.name)
+            .setView(layout)
+            .setNegativeButton("Annuler", null)
+            .setPositiveButton("Enregistrer") { _, _ ->
+                runCatching {
+                    manager.updateAudio(
+                        vm.id,
+                        enabled.isChecked,
+                        muted.isChecked,
+                        frequency.text.toString().toInt(),
+                        channels.text.toString().toInt(),
+                        buffer.text.toString().toInt(),
+                    )
+                }.onSuccess {
+                    toast("Configuration audio enregistrée. Elle prendra effet au prochain démarrage.")
+                    refresh()
+                }.onFailure {
+                    toast(it.message ?: "Configuration audio invalide.")
+                }
+            }
+            .show()
+    }
+
     private fun showUsbPassthrough(vm: VmConfig) {
         val attached = vm.usbPassthrough
         val devices = UsbPassthroughManager.list(this)
@@ -533,7 +611,14 @@ class MainActivity : Activity() {
             append("Cache traduction : ").append(latest?.cacheHitRate?.let { "%.1f".format(it * 100.0) + " %" } ?: "indisponible").append("\n")
             append("Temps traduction moyen : ").append(latest?.translationMs?.let { "%.3f ms".format(it) } ?: "indisponible").append("\n")
             append("GPU : indisponible si le chemin n'est pas exposé par le backend/hôte").append("\n")
-            append("Audio underruns : indisponible si le backend AAudio ne les expose pas").append("\n\n")
+            append("Audio underruns : ")
+                .append(latest?.audioUnderruns?.toString() ?: "indisponible")
+                .append("\n")
+            append("Latence audio configurée : ")
+                .append(latest?.audioLatencyConfiguredMs?.let { "%.1f ms".format(it) } ?: "indisponible")
+                .append("\n")
+            append("Synchronisation AV : non mesurée sans télémétrie guest/audio adaptée")
+                .append("\n\n")
             append("Fenêtres 1/5/30 min :\n")
             windows.forEach { window ->
                 append(window.minutes).append(" min — ")
@@ -543,6 +628,10 @@ class MainActivity : Activity() {
                 append(", vCPU=").append(value(window.vCpuUtilizationAvg, " %"))
                 append(", cache=").append(
                     window.cacheHitRateAvg?.let { "%.1f".format(it * 100.0) + " %" } ?: "indisponible"
+                )
+                append(", underruns=").append(window.audioUnderrunsLast?.toString() ?: "indisponible")
+                append(", latence audio=").append(
+                    window.audioLatencyConfiguredMsAvg?.let { "%.1f ms".format(it) } ?: "indisponible"
                 )
                 append("\n")
             }

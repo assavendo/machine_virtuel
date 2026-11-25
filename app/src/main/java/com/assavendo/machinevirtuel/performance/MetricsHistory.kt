@@ -18,6 +18,7 @@ data class VmMetricsSample(
     val networkRxBytesPerSec: Long = 0,
     val networkTxBytesPerSec: Long = 0,
     val audioUnderruns: Long? = null,
+    val audioLatencyConfiguredMs: Double? = null,
     val cacheHitRate: Double? = null,
     val translationMs: Double? = null,
 )
@@ -38,6 +39,7 @@ data class MetricsWindow(
     val networkRxBytesPerSecAvg: Double,
     val networkTxBytesPerSecAvg: Double,
     val audioUnderrunsLast: Long?,
+    val audioLatencyConfiguredMsAvg: Double?,
     val cacheHitRateAvg: Double?,
     val translationMsAvg: Double?,
     val throttlingSamples: Int,
@@ -84,6 +86,7 @@ class MetricsHistory(private val maxSamples: Int = 3600) {
             networkRxBytesPerSecAvg = avg { it.networkRxBytesPerSec.toDouble() },
             networkTxBytesPerSecAvg = avg { it.networkTxBytesPerSec.toDouble() },
             audioUnderrunsLast = values.asReversed().firstNotNullOfOrNull { it.audioUnderruns },
+            audioLatencyConfiguredMsAvg = avgNullable { it.audioLatencyConfiguredMs },
             cacheHitRateAvg = avgNullable { it.cacheHitRate },
             translationMsAvg = avgNullable { it.translationMs },
             throttlingSamples = values.count { it.throttling },

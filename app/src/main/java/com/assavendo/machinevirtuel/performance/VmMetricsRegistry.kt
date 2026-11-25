@@ -12,6 +12,8 @@ object VmMetricsRegistry {
         vCpuUtilization: Double? = null,
         cacheHitRate: Double? = null,
         translationMs: Double? = null,
+        audioUnderruns: Long? = null,
+        audioLatencyConfiguredMs: Double? = null,
     ) {
         val history = histories.getOrPut(vmId) { MetricsHistory() }
         history.add(
@@ -30,7 +32,8 @@ object VmMetricsRegistry {
                 ioWriteBytesPerSec = host.ioWriteBytesPerSec,
                 networkRxBytesPerSec = host.networkRxBytesPerSec,
                 networkTxBytesPerSec = host.networkTxBytesPerSec,
-                audioUnderruns = null,
+                audioUnderruns = audioUnderruns,
+                audioLatencyConfiguredMs = audioLatencyConfiguredMs,
                 cacheHitRate = cacheHitRate,
                 translationMs = translationMs,
             )
