@@ -1256,28 +1256,26 @@ class MainActivity : Activity() {
         val temporary = File(directory, targetName + ".partial")
         temporary.delete()
         val availableBeforeImport = directory.usableSpace
-        val input = contentResolver.openInputStream(uri)
-            ?: error("Android n'a pas pu ouvrir le fichier sélectionné.")
-        input.use { source ->
-            java.io.FileOutputStream(temporary).use { output ->
-                source.copyTo(output, 128 * 1024)
-                output.fd.sync()
+        try {
+            val input = contentResolver.openInputStream(uri)
+                ?: error("Android n'a pas pu ouvrir le fichier sélectionné.")
+            input.use { source ->
+                java.io.FileOutputStream(temporary).use { output ->
+                    source.copyTo(output, 128 * 1024)
+                    output.fd.sync()
+                }
             }
-        }
-        require(temporary.isFile && temporary.length() > 0L) {
-            "Le fichier sélectionné est vide ou illisible."
-        }
-        require(temporary.length() <= availableBeforeImport) {
+            require(temporary.isFile && temporary.length() > 0L) {
+                "Le fichier sélectionné est vide ou illisible."
+            }
+            require(temporary.length() <= availableBeforeImport) {
+                "Espace de stockage insuffisant pour importer ce fichier."
+            }
+            // POSIX rename replaces the previous target atomically on the same filesystem.
+            android.system.Os.rename(temporary.absolutePath, target.absolutePath)
+        } catch (error: Throwable) {
             temporary.delete()
-            "Espace de stockage insuffisant pour importer ce fichier."
-        }
-        if (target.exists() && !target.delete()) {
-            temporary.delete()
-            error("Impossible de remplacer l'ancien fichier de brouillon.")
-        }
-        check(temporary.renameTo(target)) {
-            temporary.delete()
-            "Impossible de finaliser l'import atomique du fichier."
+            throw error
         }
         val updated = draft.copy()
         when (kind) {
