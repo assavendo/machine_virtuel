@@ -34,9 +34,20 @@ object QemuCommandBuilder {
             "TPM activé mais aucun backend swtpm actif."
         }
 
-        val firmwareCode = when (vm.arch) {
-            GuestArch.ARM64 -> paths.edk2Qemu
-            GuestArch.X86_64, GuestArch.X86_32 -> paths.edk2X86Code
+        if (vm.secureBoot) {
+            require(vm.arch == GuestArch.X86_64) {
+                "Secure Boot est actuellement disponible uniquement pour les guests x86_64."
+            }
+            require(paths.hasX86SecureBootUefi()) {
+                "Le runtime OVMF Secure Boot vérifié est absent. Le runtime x86 doit être reprovisionné."
+            }
+        }
+
+        val firmwareCode = when {
+            vm.secureBoot -> paths.edk2X86SecureCode
+            vm.arch == GuestArch.ARM64 -> paths.edk2Qemu
+            vm.arch == GuestArch.X86_64 || vm.arch == GuestArch.X86_32 -> paths.edk2X86Code
+            else -> error("Architecture guest non supportée.")
         }
         require(firmwareCode.isFile) {
             "Le firmware UEFI " + vm.arch.label +
@@ -62,7 +73,10 @@ object QemuCommandBuilder {
             }
         } else {
             val machine = if (vm.machineType.isBlank() || vm.machineType == "virt") "q35" else vm.machineType
-            args += "-machine"; args += machine
+            args += "-machine"; args += if (vm.secureBoot) "$machine,smm=on" else machine
+            if (vm.secureBoot) {
+                args += "-global"; args += "driver=cfi.pflash01,property=secure,value=on"
+            }
             args += "-accel"; args += "tcg,thread=multi,tb-size=" + tcgTbCacheSizeMb(vm)
             args += "-cpu"; args += "max"
         }
