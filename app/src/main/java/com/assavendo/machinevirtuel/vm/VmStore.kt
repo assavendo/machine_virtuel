@@ -2,6 +2,8 @@ package com.assavendo.machinevirtuel.vm
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -20,6 +22,23 @@ class VmStore internal constructor(
          * is thread-safe, but a list/read-modify-write sequence must also be atomic.
          */
         private val processMutationLock = Any()
+        private val perVmOperationLocks = ConcurrentHashMap<String, ReentrantLock>()
+    }
+
+    /**
+     * Exclusively protects an operation for one VM ID across every VmStore instance.
+     * Unlike the collection mutation lock, this does not prevent independent VMs from
+     * progressing while a large disk snapshot, clone, restore or export is running.
+     */
+    fun <T> withVmLock(vmId: String, block: () -> T): T {
+        require(vmId.isNotBlank()) { "VM ID must not be blank." }
+        val lock = perVmOperationLocks.computeIfAbsent(vmId) { ReentrantLock() }
+        lock.lock()
+        return try {
+            block()
+        } finally {
+            lock.unlock()
+        }
     }
 
     fun list(): MutableList<VmConfig> = synchronized(processMutationLock) {
