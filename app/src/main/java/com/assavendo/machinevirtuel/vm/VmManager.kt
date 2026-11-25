@@ -192,7 +192,8 @@ class VmManager(private val context: Context) {
         metrics.sample(),
         capabilities().availableMemoryMb,
         selectBackend(id).selected.label,
-        capabilities().vulkan,
+        gpuAccelerationVerified = false,
+        hostVulkanAvailable = capabilities().vulkan,
     )
 
     fun snapshot(id: String, label: String): File {
