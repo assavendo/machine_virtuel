@@ -142,81 +142,80 @@ class VmManager(private val context: Context) {
     }
 
     fun clone(id: String, newName: String): VmConfig {
-        val source = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
         val host = capabilities()
-        require(source.state == VmState.OFF) { "Le clonage exige une VM arrêtée." }
-        val sourceLastStartedAt = source.lastStartedAt
-        val clone = source.copy(
-            id = UUID.randomUUID().toString(),
-            name = newName.ifBlank { source.name + " Clone" },
-            createdAt = System.currentTimeMillis(),
-            lastStartedAt = null,
-            state = VmState.OFF,
-        )
-        val sourceDir = File(context.filesDir, "vms/" + source.id).canonicalFile
-        val sourceDisk = File(source.diskPath).canonicalFile
-        require(sourceDisk.isFile) { "Disque source introuvable." }
-        val allowedRoot = File(context.filesDir, "vms").canonicalFile
-        require(sourceDir.toPath().startsWith(allowedRoot.toPath()) && sourceDir.isDirectory) {
-            "Répertoire source de VM invalide."
-        }
-
-        val targetDir = File(context.filesDir, "vms/" + clone.id).apply {
-            check(mkdirs() || isDirectory) { "Impossible de créer le répertoire temporaire du clone." }
-        }
-        val copied = mutableMapOf<String, String>()
-
-        fun copyManagedArtifact(path: String, targetName: String): String {
-            if (path.isBlank()) return ""
-            val source = File(path).canonicalFile
-            if (!source.exists()) return path
-            if (!source.toPath().startsWith(sourceDir.toPath())) return path
-            val existing = copied[source.absolutePath]
-            if (existing != null) return existing
-            val target = File(targetDir, targetName)
-            if (source.isDirectory) {
-                source.copyRecursively(target, overwrite = false)
-            } else {
-                source.copyTo(target, overwrite = false)
+        return store.mutate { items ->
+            val source = items.firstOrNull { it.id == id } ?: error("VM introuvable.")
+            require(source.state == VmState.OFF) { "Le clonage exige une VM dont l'état OFF est confirmé." }
+            val cloneName = newName.trim().ifBlank { source.name + " Clone" }
+            require(cloneName.length in 1..80) { "Le nom du clone doit contenir entre 1 et 80 caractères." }
+            require(items.none { it.name.equals(cloneName, ignoreCase = true) }) {
+                "Une VM porte déjà ce nom ; les noms doivent être uniques."
             }
-            copied[source.absolutePath] = target.absolutePath
-            return target.absolutePath
-        }
-
-        try {
-            val targetDisk = File(targetDir, "disk." + DiskManager.extension(source.diskFormat))
-            sourceDisk.copyTo(targetDisk, overwrite = false)
-            clone.diskPath = targetDisk.absolutePath
-            clone.firmwarePath = copyManagedArtifact(source.firmwarePath, "nvram.fd")
-            clone.kernelPath = copyManagedArtifact(source.kernelPath, "kernel.Image")
-            clone.initrdPath = copyManagedArtifact(source.initrdPath, "initrd")
-            clone.dtbPath = copyManagedArtifact(source.dtbPath, "guest.dtb")
-            clone.androidSystemPath = copyManagedArtifact(source.androidSystemPath, "android-system.img")
-            clone.androidVendorPath = copyManagedArtifact(source.androidVendorPath, "android-vendor.img")
-            clone.androidUserdataPath = copyManagedArtifact(source.androidUserdataPath, "android-userdata.img")
-            clone.tpmStatePath = copyManagedArtifact(source.tpmStatePath, "tpm-state")
-            store.insertUnique(clone) { latest ->
-                val currentSource = latest.firstOrNull { it.id == id }
-                    ?: error("La VM source a été supprimée pendant le clonage.")
-                require(
-                    currentSource.state == VmState.OFF &&
-                        currentSource.lastStartedAt == sourceLastStartedAt
-                ) {
-                    "La VM source a changé d'état pendant le clonage ; le clone a été annulé."
-                }
-                val admission = ResourceAdmissionController.check(clone, latest, host)
-                require(admission.allowed) {
-                    "Clonage refusé par le contrôle de ressources : " + admission.reason
-                }
+            val clone = source.copy(
+                id = UUID.randomUUID().toString(),
+                name = cloneName,
+                createdAt = System.currentTimeMillis(),
+                lastStartedAt = null,
+                state = VmState.OFF,
+            )
+            val sourceDir = File(context.filesDir, "vms/" + source.id).canonicalFile
+            val sourceDisk = File(source.diskPath).canonicalFile
+            require(sourceDisk.isFile && sourceDisk.canRead()) { "Disque source introuvable ou illisible." }
+            val allowedRoot = File(context.filesDir, "vms").canonicalFile
+            require(sourceDir.toPath().startsWith(allowedRoot.toPath()) && sourceDir.isDirectory) {
+                "Répertoire source de VM invalide."
             }
-            return clone
-        } catch (failure: Throwable) {
-            targetDir.deleteRecursively()
-            throw failure
+            val targetDir = File(context.filesDir, "vms/" + clone.id).canonicalFile
+            require(targetDir.toPath().startsWith(allowedRoot.toPath()) && targetDir != allowedRoot) {
+                "Répertoire cible du clone invalide."
+            }
+            check(!targetDir.exists() && targetDir.mkdirs()) {
+                "Impossible de créer le répertoire temporaire du clone."
+            }
+            val copied = mutableMapOf<String, String>()
+            fun copyManagedArtifact(path: String, targetName: String): String {
+                if (path.isBlank()) return ""
+                val sourceFile = File(path).canonicalFile
+                if (!sourceFile.exists()) return path
+                if (!sourceFile.toPath().startsWith(sourceDir.toPath())) return path
+                copied[sourceFile.absolutePath]?.let { return it }
+                val target = File(targetDir, targetName).canonicalFile
+                require(target.toPath().startsWith(targetDir.toPath())) { "Chemin d'artefact du clone invalide." }
+                if (sourceFile.isDirectory) {
+                    check(sourceFile.copyRecursively(target, overwrite = false)) { "Impossible de copier un artefact du clone." }
+                } else sourceFile.copyTo(target, overwrite = false)
+                copied[sourceFile.absolutePath] = target.absolutePath
+                return target.absolutePath
+            }
+            try {
+                val targetDisk = File(targetDir, "disk." + DiskManager.extension(source.diskFormat))
+                sourceDisk.copyTo(targetDisk, overwrite = false)
+                clone.diskPath = targetDisk.absolutePath
+                clone.firmwarePath = copyManagedArtifact(source.firmwarePath, "nvram.fd")
+                clone.kernelPath = copyManagedArtifact(source.kernelPath, "kernel.Image")
+                clone.initrdPath = copyManagedArtifact(source.initrdPath, "initrd")
+                clone.dtbPath = copyManagedArtifact(source.dtbPath, "guest.dtb")
+                clone.androidSystemPath = copyManagedArtifact(source.androidSystemPath, "android-system.img")
+                clone.androidVendorPath = copyManagedArtifact(source.androidVendorPath, "android-vendor.img")
+                clone.androidUserdataPath = copyManagedArtifact(source.androidUserdataPath, "android-userdata.img")
+                clone.tpmStatePath = copyManagedArtifact(source.tpmStatePath, "tpm-state")
+                val admission = ResourceAdmissionController.check(clone, items, host)
+                require(admission.allowed) { "Clonage refusé par le contrôle de ressources : " + admission.reason }
+                items.add(clone)
+                clone
+            } catch (failure: Throwable) {
+                targetDir.deleteRecursively()
+                throw failure
+            }
         }
     }
 
-    fun setIso(id: String, path: String): VmConfig? = store.update(id) { it.isoPath = path }
+    fun setIso(id: String, path: String): VmConfig? = store.update(id) {
+        require(it.state == VmState.OFF) { "Une ISO ne peut être modifiée que lorsque la VM est à l'état OFF confirmé." }
+        val iso = File(path).canonicalFile
+        require(iso.isFile && iso.canRead() && iso.length() > 0L) { "L'image ISO est absente, vide ou illisible." }
+        it.isoPath = iso.absolutePath
+    }
 
     fun updateAudio(
         id: String,
@@ -225,25 +224,23 @@ class VmManager(private val context: Context) {
         frequencyHz: Int,
         channels: Int,
         bufferMs: Int,
-    ): VmConfig? {
-        val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
-        require(vm.state == VmState.OFF) {
+    ): VmConfig? = store.update(id) {
+        require(it.state == VmState.OFF) {
             "La configuration audio exige l'état OFF confirmé ; ERROR peut encore correspondre à un processus vivant."
         }
         require(frequencyHz in 8_000..192_000)
         require(channels in 1..8)
         require(bufferMs in 2..500)
-        return store.update(id) {
-            it.audioEnabled = enabled
-            it.audioMuted = muted
-            it.audioFrequencyHz = frequencyHz
-            it.audioChannels = channels
-            it.audioBufferMs = bufferMs
-        }
+        it.audioEnabled = enabled
+        it.audioMuted = muted
+        it.audioFrequencyHz = frequencyHz
+        it.audioChannels = channels
+        it.audioBufferMs = bufferMs
     }
 
     fun attachUsb(id: String, config: UsbPassthroughConfig): VmConfig? =
         store.update(id) {
+            require(it.state == VmState.OFF) { "Le passthrough USB ne peut être modifié que lorsque la VM est à l'état OFF confirmé." }
             require(it.usbPassthrough.none { existing ->
                 existing.vendorId == config.vendorId &&
                     existing.productId == config.productId &&
@@ -257,12 +254,14 @@ class VmManager(private val context: Context) {
 
     fun detachUsb(id: String, config: UsbPassthroughConfig): VmConfig? =
         store.update(id) {
+            require(it.state == VmState.OFF) { "Le passthrough USB ne peut être modifié que lorsque la VM est à l'état OFF confirmé." }
             it.usbPassthrough = it.usbPassthrough.filterNot { existing ->
                 existing.vendorId == config.vendorId &&
                     existing.productId == config.productId &&
                     existing.serialNumber == config.serialNumber
             }
         }
+
     fun markStarting(id: String): VmConfig? = store.update(id) { it.state = VmState.STARTING }
     fun stop(id: String) = store.update(id) { it.state = VmState.OFF }
 
@@ -310,24 +309,25 @@ class VmManager(private val context: Context) {
     }
 
     fun applyOptimization(id: String): VmConfig {
-        val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
-        require(vm.state == VmState.OFF) {
-            "Appliquer une optimisation de ressources exige l'état OFF confirmé."
+        val sampledMetrics = metrics.sample()
+        val host = capabilities()
+        return store.mutate { items ->
+            val vm = items.firstOrNull { it.id == id } ?: error("VM introuvable.")
+            require(vm.state == VmState.OFF) { "Appliquer une optimisation de ressources exige l'état OFF confirmé." }
+            val decision = optimizer.decide(vm, sampledMetrics)
+            val admission = ResourceAdmissionController.check(
+                vm.copy(ramMb = decision.ramMb, vCpu = decision.vCpu),
+                items,
+                host,
+            )
+            require(admission.allowed) {
+                "Optimisation refusée par le contrôle de ressources : " + admission.reason
+            }
+            vm.vCpu = decision.vCpu
+            vm.ramMb = decision.ramMb
+            vm.monitoringIntervalMs = decision.monitoringIntervalMs
+            vm
         }
-        val decision = optimizer.decide(vm, metrics.sample())
-        val admission = ResourceAdmissionController.check(
-            vm.copy(ramMb = decision.ramMb, vCpu = decision.vCpu),
-            store.list(),
-            capabilities(),
-        )
-        require(admission.allowed) {
-            "Optimisation refusée par le contrôle de ressources : " + admission.reason
-        }
-        return store.update(id) {
-            it.vCpu = decision.vCpu
-            it.ramMb = decision.ramMb
-            it.monitoringIntervalMs = decision.monitoringIntervalMs
-        } ?: error("VM introuvable.")
     }
 
     fun optimize(id: String) = advisor.advise(
@@ -339,22 +339,29 @@ class VmManager(private val context: Context) {
         hostVulkanAvailable = capabilities().vulkan,
     )
 
-    fun snapshot(id: String, label: String): File {
-        val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
-        val dir = SnapshotManager.createColdSnapshot(context.filesDir, vm, label)
-        SnapshotManager.enforceRetention(context.filesDir, vm)
-        return dir
-    }
+    fun snapshot(id: String, label: String): File =
+        store.mutate { items ->
+            val vm = items.firstOrNull { it.id == id } ?: error("VM introuvable.")
+            require(vm.state == VmState.OFF) { "Une capture à froid exige l'état OFF confirmé." }
+            val dir = SnapshotManager.createColdSnapshot(context.filesDir, vm, label)
+            SnapshotManager.enforceRetention(context.filesDir, vm)
+            dir
+        }
 
     fun restoreSnapshot(id: String, snapshotDir: File) {
-        val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
-        SnapshotManager.restoreColdSnapshot(vm, snapshotDir)
+        store.mutate { items ->
+            val vm = items.firstOrNull { it.id == id } ?: error("VM introuvable.")
+            require(vm.state == VmState.OFF) { "Une restauration à froid exige l'état OFF confirmé." }
+            SnapshotManager.restoreColdSnapshot(vm, snapshotDir)
+        }
     }
 
-    fun exportVm(id: String, output: File, includeSnapshots: Boolean = true): File {
-        val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
-        return VmPackageManager.export(context, vm, output, includeSnapshots)
-    }
+    fun exportVm(id: String, output: File, includeSnapshots: Boolean = true): File =
+        store.mutate { items ->
+            val vm = items.firstOrNull { it.id == id } ?: error("VM introuvable.")
+            require(vm.state == VmState.OFF) { "L'export sécurisé exige l'état OFF confirmé." }
+            VmPackageManager.export(context, vm, output, includeSnapshots)
+        }
 
     fun importVm(packageFile: File): VmConfig = VmPackageManager.importPackage(context, packageFile)
 
