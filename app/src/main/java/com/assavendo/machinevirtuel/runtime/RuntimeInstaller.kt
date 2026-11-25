@@ -345,6 +345,8 @@ object RuntimeInstaller {
             "usr/bin/qemu-system-x86_64",
             "usr/share/droidvm/edk2-x86_64-code.fd",
             "usr/share/droidvm/edk2-x86_64-vars.fd",
+            "usr/share/droidvm/edk2-x86_64-secure-code.fd",
+            "usr/share/droidvm/edk2-x86_64-secure-vars.fd",
         )
         required.forEach { path ->
             check(seen.contains(path)) { "Entrée essentielle absente du manifeste x86: " + path }
