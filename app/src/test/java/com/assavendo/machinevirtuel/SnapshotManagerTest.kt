@@ -28,6 +28,22 @@ class SnapshotManagerTest {
         return Fixture(root, vm)
     }
 
+    @Test
+    fun coldSnapshotAndRestoreRejectErrorStateUntilOffIsConfirmed() {
+        val f = fixture()
+        try {
+            val errorVm = f.vm.copy(state = VmState.ERROR)
+            assertFails {
+                SnapshotManager.createColdSnapshot(f.root, errorVm, "must-not-copy")
+            }
+            assertFails {
+                SnapshotManager.restoreColdSnapshot(errorVm, File(f.root, "missing-snapshot"))
+            }
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
     @Test fun createsListsAndRestoresDiskAndNvramWithIntegrityChecks() {
         val f = fixture()
         try {
