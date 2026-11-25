@@ -32,6 +32,7 @@ data class UsbHostAttachment(
     val bus: Int,
     val address: Int,
     val guestReset: Boolean,
+    val requiresRoot: Boolean,
 )
 
 object UsbPassthroughManager {
@@ -128,9 +129,10 @@ object UsbPassthroughManager {
             require(device.bus != null && device.address != null) {
                 "Impossible de déterminer bus/adresse USB pour " + device.deviceName + "."
             }
-            require(device.directDeviceAccess) {
+            val requiresRoot = !device.directDeviceAccess
+            require(device.directDeviceAccess || RootProcessLauncher.hasRoot()) {
                 "Accès direct au nœud USB " + device.deviceName +
-                    " indisponible pour QEMU. Un runtime privilégié/root est requis."
+                    " indisponible et aucun runtime root utilisable n'est détecté."
             }
             require(used.add(device.deviceName)) {
                 "Le même périphérique USB est déjà attaché à cette VM."
@@ -142,6 +144,7 @@ object UsbPassthroughManager {
                 bus = device.bus,
                 address = device.address,
                 guestReset = config.guestReset,
+                requiresRoot = requiresRoot,
             )
         }
     }
