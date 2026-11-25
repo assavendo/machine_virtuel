@@ -51,9 +51,8 @@ class VmManager(private val context: Context) {
             mode = VmMode.AUTO,
             backend = decision.selected,
         )
-        DiskManager.ensureVmStorage(context.filesDir, vm)
-        store.save(store.list().toMutableList().apply { add(vm) })
-        return vm
+        vm.autoSnapshotOnInstall = false
+        return create(vm)
     }
 
     fun create(config: VmConfig): VmConfig {
