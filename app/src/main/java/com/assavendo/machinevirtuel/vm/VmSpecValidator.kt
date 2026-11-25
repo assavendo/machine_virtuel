@@ -134,6 +134,20 @@ object VmSpecValidator {
             issues += ValidationIssue("isoPath", "Une ISO d'installation doit être sélectionnée pour ce profil.", true)
         }
 
+        if (!os.contains("android") && (
+                vm.androidSystemPath.isNotBlank() ||
+                vm.androidVendorPath.isNotBlank() ||
+                vm.androidUserdataPath.isNotBlank() ||
+                vm.androidAdbEnabled
+            )
+        ) {
+            issues += ValidationIssue(
+                "androidArtifacts",
+                "Les partitions et le canal ADB Android ne peuvent être configurés que pour un guest Android.",
+                true,
+            )
+        }
+
         if (os.contains("android")) {
             if (vm.androidSystemPath.isBlank() || !File(vm.androidSystemPath).isFile) {
                 issues += ValidationIssue("androidSystemPath", "Un guest Android complet exige une image system.", true)
