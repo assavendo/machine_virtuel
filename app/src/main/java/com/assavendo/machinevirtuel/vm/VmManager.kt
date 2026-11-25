@@ -40,7 +40,6 @@ class VmManager(private val context: Context) {
         val decision = orchestrator.choose(seed, caps)
         val budget = ResourceAdmissionController
             .check(seed.copy(ramMb = 2048), store.list(), caps)
-        require(budget.allowed) { budget.reason }
         val selectedRam = budget.recommendedRamMb
         require(selectedRam >= 512) {
             "Mémoire disponible insuffisante pour créer une VM par défaut en sécurité."
