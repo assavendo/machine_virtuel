@@ -25,7 +25,7 @@ PhoenixVM applies the following runtime rules:
 
 A shared worker pool backs one serial queue per VM. This avoids a global lock around long QMP/crosvm operations: VM-A can progress independently of VM-B, while each VM's own lifecycle transitions remain ordered. Queue failures are reported and do not strand later commands for that VM.
 
-Process-monitoring and process-wait threads remain separate from the lifecycle queues. Monitoring is read/observe-only; all terminal state changes occur through the queue. VM store writes performed by the runtime service are serialized across VM IDs to prevent one VM's stale list snapshot from overwriting another VM's concurrent state transition. Exit classification also consults the handle's latest recovery marker and the service gate at finalization time, preventing a delayed callback from overwriting a recovery state during service destruction.
+Process-monitoring and process-wait threads remain separate from the lifecycle queues. Monitoring is read/observe-only; all terminal state changes occur through the queue. All process-local VmStore read/modify/write mutations share one lock across every store instance. Creation, clone, import, delete and runtime service updates now commit against the latest collection; process-exit finalization uses an atomic per-VM update rather than saving an older list snapshot. Exit classification also consults the handle's latest recovery marker and the service gate at finalization time, preventing a delayed callback from overwriting a recovery state during service destruction.
 
 ## Automated coverage
 
