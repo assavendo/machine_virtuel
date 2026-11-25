@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.StatFs
 import com.assavendo.machinevirtuel.security.PackageSignatureManager
 import com.assavendo.machinevirtuel.security.PackageSignatureVerifier
+import com.assavendo.machinevirtuel.host.HostCapabilityScanner
+import com.assavendo.machinevirtuel.performance.ResourceAdmissionController
 import com.assavendo.machinevirtuel.security.SecurityGuards
 import com.assavendo.machinevirtuel.vm.*
 import java.io.BufferedOutputStream
@@ -406,7 +408,13 @@ object VmPackageManager {
                 }
                 snapshotsPublished = true
             }
-            store.save(store.list().toMutableList().apply { add(vm) })
+            store.insertUnique(vm) { latest ->
+                val host = HostCapabilityScanner(context).scan()
+                val admission = ResourceAdmissionController.check(vm, latest, host)
+                require(admission.allowed) {
+                    "Import refusé par le contrôle de ressources : " + admission.reason
+                }
+            }
             return vm
         } catch (t: Throwable) {
             if (snapshotsPublished) finalSnapshotsDir.deleteRecursively()
