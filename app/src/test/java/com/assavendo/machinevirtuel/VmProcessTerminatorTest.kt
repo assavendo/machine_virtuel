@@ -33,13 +33,26 @@ class VmProcessTerminatorTest {
     }
 
     @Test
-    fun forceStopUsesDestroyBeforeForceAndReportsAnUncleanTermination() {
-        val process = FakeProcess(listOf(false, true))
+    fun destroyCanTerminateAProcessWithoutEscalatingToForceKill() {
+        val process = FakeProcess(
+            waitResults = listOf(false),
+            exitsOnDestroy = true,
+        )
 
         assertEquals(VmProcessTermination.TERMINATED, VmProcessTerminator.terminate(process, graceful = false))
         assertEquals(1, process.destroyCalls)
         assertEquals(0, process.forceCalls)
         assertEquals(false, process.isAlive)
+    }
+
+    @Test
+    fun alreadyExitedProcessIsNotSignalledAgain() {
+        val process = FakeProcess(emptyList(), initiallyAlive = false)
+
+        assertEquals(VmProcessTermination.ALREADY_EXITED, VmProcessTerminator.terminate(process, graceful = true))
+        assertEquals(0, process.waitCalls)
+        assertEquals(0, process.destroyCalls)
+        assertEquals(0, process.forceCalls)
     }
 
     @Test
@@ -58,9 +71,10 @@ class VmProcessTerminatorTest {
         waitResults: List<Boolean>,
         private val exitsOnDestroy: Boolean = false,
         private val exitsOnForce: Boolean = true,
+        initiallyAlive: Boolean = true,
     ) : Process() {
         private val results = ArrayDeque(waitResults)
-        private var alive = true
+        private var alive = initiallyAlive
         var waitCalls = 0
             private set
         var destroyCalls = 0
