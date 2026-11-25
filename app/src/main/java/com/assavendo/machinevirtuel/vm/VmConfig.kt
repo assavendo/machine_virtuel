@@ -71,6 +71,7 @@ data class VmConfig(
     var fullscreen: Boolean = false,
     var headless: Boolean = false,
     var audioEnabled: Boolean = true,
+    var audioMuted: Boolean = false,
     var audioFrequencyHz: Int = 48000,
     var audioChannels: Int = 2,
     var audioBufferMs: Int = 20,
