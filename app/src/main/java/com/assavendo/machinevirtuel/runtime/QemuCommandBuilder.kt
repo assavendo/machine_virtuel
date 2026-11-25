@@ -16,6 +16,7 @@ object QemuCommandBuilder {
         log: File,
         virtioFsSocket: File? = null,
         tpmHandle: TpmHandle? = null,
+        usbPassthrough: List<UsbHostAttachment> = emptyList(),
     ): List<String> {
         val qemu = when (vm.arch) {
             GuestArch.ARM64 -> paths.qemu
@@ -316,6 +317,15 @@ object QemuCommandBuilder {
         }
 
         args += "-device"; args += "qemu-xhci,id=usb"
+        usbPassthrough.forEach { usb ->
+            require(usb.bus in 1..999 && usb.address in 1..999) {
+                "Adresse USB hôte invalide."
+            }
+            args += "-device"
+            args += "usb-host,bus=usb.0,hostbus=" + usb.bus +
+                ",hostaddr=" + usb.address +
+                ",guest-reset=" + if (usb.guestReset) "on" else "off"
+        }
         args += "-vnc"; args += "127.0.0.1:" + (VncPorts.portFor(vm.id) - 5900)
         args += "-qmp"; args += "unix:" + qmp.absolutePath + ",server=on,wait=off"
         args += "-serial"; args += "file:" + serial.absolutePath
