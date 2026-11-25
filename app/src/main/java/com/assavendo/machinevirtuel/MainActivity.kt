@@ -611,7 +611,14 @@ class MainActivity : Activity() {
             append("Cache traduction : ").append(latest?.cacheHitRate?.let { "%.1f".format(it * 100.0) + " %" } ?: "indisponible").append("\n")
             append("Temps traduction moyen : ").append(latest?.translationMs?.let { "%.3f ms".format(it) } ?: "indisponible").append("\n")
             append("GPU : indisponible si le chemin n'est pas exposé par le backend/hôte").append("\n")
-            append("Audio underruns : indisponible si le backend AAudio ne les expose pas").append("\n\n")
+            append("Audio underruns : ")
+                .append(latest?.audioUnderruns?.toString() ?: "indisponible")
+                .append("\n")
+            append("Latence audio configurée : ")
+                .append(latest?.audioLatencyConfiguredMs?.let { "%.1f ms".format(it) } ?: "indisponible")
+                .append("\n")
+            append("Synchronisation AV : non mesurée sans télémétrie guest/audio adaptée")
+                .append("\n\n")
             append("Fenêtres 1/5/30 min :\n")
             windows.forEach { window ->
                 append(window.minutes).append(" min — ")
@@ -621,6 +628,10 @@ class MainActivity : Activity() {
                 append(", vCPU=").append(value(window.vCpuUtilizationAvg, " %"))
                 append(", cache=").append(
                     window.cacheHitRateAvg?.let { "%.1f".format(it * 100.0) + " %" } ?: "indisponible"
+                )
+                append(", underruns=").append(window.audioUnderrunsLast?.toString() ?: "indisponible")
+                append(", latence audio=").append(
+                    window.audioLatencyConfiguredMsAvg?.let { "%.1f ms".format(it) } ?: "indisponible"
                 )
                 append("\n")
             }
