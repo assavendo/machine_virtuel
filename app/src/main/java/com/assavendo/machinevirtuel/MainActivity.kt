@@ -587,10 +587,10 @@ class MainActivity : Activity() {
         artifactButton("Ajouter des fichiers ponctuels au dossier partagé", "shared-files", 714)
         content.addView(cardText().apply {
             text = buildString {
-                append("ISO : ").append(base.isoPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "non sélectionnée").append('\\n')
-                append("Disque existant : ").append(base.diskPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "aucun").append('\\n')
-                append("Kernel : ").append(base.kernelPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "aucun").append('\\n')
-                append("Android system : ").append(base.androidSystemPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "aucun").append('\\n')
+                append("ISO : ").append(base.isoPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "non sélectionnée").append('\n')
+                append("Disque existant : ").append(base.diskPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "aucun").append('\n')
+                append("Kernel : ").append(base.kernelPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "aucun").append('\n')
+                append("Android system : ").append(base.androidSystemPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "aucun").append('\n')
                 append("Android userdata : ").append(base.androidUserdataPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "aucun")
             }
         })
