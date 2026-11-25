@@ -431,7 +431,7 @@ class MainActivity : Activity() {
         val networkLabels = listOf(
             "DISABLED — aucun réseau",
             "NAT — réseau utilisateur",
-            "TAP — bridge/root si possible (interface précréée)",
+            "TAP — bridge/root si possible",
         )
         val network = spinner(networkLabels, networkModes.indexOf(base.networkMode))
         addLabel("Redirections (TCP:port_hôte:port_invité, UDP:port_hôte:port_invité ou port_hôte:port_invité)")
