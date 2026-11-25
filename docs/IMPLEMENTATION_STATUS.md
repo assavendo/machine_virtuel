@@ -1,5 +1,9 @@
 # PhoenixVM — implementation status against the source cahier
 
+## Latest implementation increment — guided full-system VM creation
+
+The create flow now follows the source specification's A–G sequence: architecture, guest OS/media, resources, graphics, networking, sharing, and optimization. Guest/architecture combinations are constrained; creation collects RAM, vCPU, virtual disk size/format, GPU policy, disabled/NAT/TAP networking and port forwards, a per-VM shared directory, optional transient shared files, and adaptive/performance/battery-saver profiles. ISO, existing disk, kernel, initrd, DTB and Android system/vendor/userdata artifacts are copied from Android's document provider into the VM's private directory using a temporary file, free-space checks and same-filesystem atomic rename. Imported disk containers are checked using non-executing signatures for QCOW2/VHDX/VDI/VMDK; untrusted image metadata is not parsed at creation time. VM creation validates unique name/ID, disk capacity bounds, media paths, shared directories, guest/architecture compatibility, network forwarding and aggregate RAM admission before persisting storage. Unit tests cover the pure guest-choice, port-forward, shared-directory and disk-header policies. This remains software-side coverage: guest installation/boot, real bridge/root networking, graphics acceleration, x86 extension availability and hardware/device compatibility are not claimed as accepted.
+
 A requirement is marked complete here only when the repository contains an actual implementation or a deterministic software-side mechanism. Physical acceptance is separated explicitly.
 
 ## Latest implementation increment — serialized VM lifecycle and confirmed process shutdown
