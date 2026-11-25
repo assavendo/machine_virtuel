@@ -222,48 +222,50 @@ class MainActivity : Activity() {
                 VmState.STARTING, VmState.STOPPING -> {
                     row1.addView(actionButton("Force Stop", bad) { VmRuntimeService.forceStop(this@MainActivity, vm.id) })
                 }
-                VmState.ERROR -> {
+                VmState.ERROR, VmState.RECOVERY, VmState.SUSPENDED -> {
                     row1.addView(actionButton("Récupération", teal) { showRecovery(vm) })
-                    row1.addView(space(6))
-                    row1.addView(actionButton("Démarrer", good) { VmRuntimeService.start(this@MainActivity, vm.id) })
                 }
                 else -> row1.addView(actionButton("Démarrer", good) { VmRuntimeService.start(this@MainActivity, vm.id) })
             }
-            row1.addView(space(6))
-            row1.addView(actionButton("ISO", violet) { chooseIso(vm.id) })
+            if (vm.state == VmState.OFF) {
+                row1.addView(space(6))
+                row1.addView(actionButton("ISO", violet) { chooseIso(vm.id) })
+            }
             card.addView(row1)
 
             val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            row2.addView(actionButton("Snapshot", teal) {
-                runCatching { manager.snapshot(vm.id, "manual") }
-                    .onSuccess { toast("Snapshot créé.") }
-                    .onFailure { toast("Snapshot : " + (it.message ?: "échec")) }
-            })
-            row2.addView(space(6))
+            if (vm.state == VmState.OFF) {
+                row2.addView(actionButton("Snapshot", teal) {
+                    runCatching { manager.snapshot(vm.id, "manual") }
+                        .onSuccess { toast("Snapshot créé.") }
+                        .onFailure { toast("Snapshot : " + (it.message ?: "échec")) }
+                })
+                row2.addView(space(6))
+                row2.addView(actionButton("Cloner", violet) { cloneVm(vm) })
+            }
             row2.addView(actionButton("Snapshots", teal) { showSnapshots(vm) })
             row2.addView(space(6))
             row2.addView(actionButton("Optimiser", accent) { showOptimization(vm) })
-            row2.addView(space(6))
-            row2.addView(actionButton("Cloner", violet) { cloneVm(vm) })
             card.addView(row2)
 
             val row3 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            row3.addView(actionButton("Exporter", accent) { exportVm(vm) })
-            row3.addView(space(6))
+            if (vm.state == VmState.OFF) {
+                row3.addView(actionButton("Exporter", accent) { exportVm(vm) })
+                row3.addView(space(6))
+                row3.addView(actionButton("Audio", teal) { showAudioSettings(vm) })
+                row3.addView(space(6))
+                row3.addView(actionButton("USB", violet) { showUsbPassthrough(vm) })
+                row3.addView(space(6))
+                row3.addView(actionButton("Supprimer", Color.rgb(95, 104, 118)) {
+                    runCatching { manager.delete(vm.id) }
+                        .onSuccess { toast("VM supprimée.") }
+                        .onFailure { toast(it.message ?: "Suppression impossible.") }
+                    refresh()
+                })
+            }
             row3.addView(actionButton("Rapport", teal) { exportDeveloperReport(vm) })
             row3.addView(space(6))
             row3.addView(actionButton("Métriques", accent) { showMetrics(vm) })
-            row3.addView(space(6))
-            row3.addView(actionButton("Audio", teal) { showAudioSettings(vm) })
-            row3.addView(space(6))
-            row3.addView(actionButton("USB", violet) { showUsbPassthrough(vm) })
-            row3.addView(space(6))
-            row3.addView(actionButton("Supprimer", Color.rgb(95, 104, 118)) {
-                runCatching { manager.delete(vm.id) }
-                    .onSuccess { toast("VM supprimée.") }
-                    .onFailure { toast(it.message ?: "Suppression impossible.") }
-                refresh()
-            })
             card.addView(row3)
 
             vmContainer.addView(card, LinearLayout.LayoutParams(-1, -2).apply {
@@ -677,7 +679,7 @@ class MainActivity : Activity() {
             toast(it.message ?: "Optimisation impossible.")
             return
         }
-        val canApply = vm.state == VmState.OFF || vm.state == VmState.ERROR
+        val canApply = vm.state == VmState.OFF
         val builder = AlertDialog.Builder(this)
             .setTitle("Auto Optimizer — " + vm.name)
             .setMessage(
@@ -705,7 +707,7 @@ class MainActivity : Activity() {
     }
 
     private fun showAudioSettings(vm: VmConfig) {
-        if (vm.state != VmState.OFF && vm.state != VmState.ERROR) {
+        if (vm.state != VmState.OFF) {
             toast("La VM doit être arrêtée pour modifier l'audio.")
             return
         }
