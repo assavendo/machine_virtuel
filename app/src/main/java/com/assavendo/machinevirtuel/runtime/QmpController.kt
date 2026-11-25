@@ -28,6 +28,20 @@ object QmpController {
     fun queryStatus(socketFile: File): String? =
         executeForResponse(socketFile, """{"execute":"query-status"}""")
 
+    fun queryVcpuThreadIds(socketFile: File): List<Long> =
+        runCatching {
+            val response = executeForResponse(socketFile, """{"execute":"query-cpus-fast"}""") ?: return@runCatching emptyList()
+            val json = org.json.JSONObject(response)
+            val values = json.optJSONArray("return") ?: return@runCatching emptyList()
+            buildList {
+                for (index in 0 until values.length()) {
+                    val item = values.optJSONObject(index) ?: continue
+                    val threadId = item.optLong("thread-id", -1L)
+                    if (threadId > 0L) add(threadId)
+                }
+            }
+        }.getOrDefault(emptyList())
+
     fun setBalloonTarget(socketFile: File, targetBytes: Long): Boolean {
         require(targetBytes >= 256L * 1024L * 1024L) { "Balloon target must preserve at least 256 MiB." }
         return execute(
