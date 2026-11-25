@@ -711,7 +711,7 @@ class MainActivity : Activity() {
     }
 
     private fun showDisplay(vmId: String) {
-        val view = VmDisplayView(this)
+        val view = VmDisplayView(this, vmId)
         val dialog = AlertDialog.Builder(this).setTitle("Écran VM").setView(view).setPositiveButton("Fermer", null).create()
         dialog.setOnDismissListener { view.disconnect() }
         dialog.setOnShowListener { view.postDelayed({ view.connect(VmRuntimeService.vncPort(vmId)) }, 1200) }
