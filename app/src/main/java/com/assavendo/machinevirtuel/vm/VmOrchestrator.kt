@@ -1,5 +1,6 @@
 package com.assavendo.machinevirtuel.vm
 
+import com.assavendo.machinevirtuel.engine.NativeEngine
 import com.assavendo.machinevirtuel.host.HostCapabilities
 
 data class BackendCandidate(val backend: BackendKind, val score: Int, val reasons: List<String>)
@@ -7,6 +8,7 @@ data class OrchestrationDecision(
     val selected: BackendKind,
     val candidates: List<BackendCandidate>,
     val warnings: List<String>,
+    val nativePolicyUsed: Boolean = false,
 )
 
 class VmOrchestrator {
@@ -30,22 +32,70 @@ class VmOrchestrator {
             add(BackendKind.QEMU_TCG, 100, "full-system x86 emulation")
         }
 
-        if (vm.performancePreset == PerformancePreset.ULTRA_PERFORMANCE)
-            candidates.replaceAll { it.copy(score = it.score + if (it.backend == BackendKind.QEMU_TCG) -10 else 5) }
-        if (vm.mode == VmMode.COMPATIBILITY)
-            candidates.replaceAll { it.copy(score = it.score + if (it.backend == BackendKind.QEMU_TCG) 20 else 0) }
+        if (vm.performancePreset == PerformancePreset.ULTRA_PERFORMANCE) {
+            candidates.replaceAll {
+                it.copy(score = it.score + if (it.backend == BackendKind.QEMU_TCG) -10 else 5)
+            }
+        }
+
+        if (vm.mode == VmMode.COMPATIBILITY) {
+            candidates.replaceAll {
+                it.copy(score = it.score + if (it.backend == BackendKind.QEMU_TCG) 20 else 0)
+            }
+        }
+
         if (host.thermalStatus >= 4) {
-            candidates.replaceAll { it.copy(score = it.score - if (it.backend != BackendKind.QEMU_TCG) 5 else 0) }
+            candidates.replaceAll {
+                it.copy(score = it.score - if (it.backend != BackendKind.QEMU_TCG) 5 else 0)
+            }
             warnings += "État thermique élevé : la performance soutenue peut être réduite."
         }
 
         if (requested != null) {
-            if (candidates.any { it.backend == requested })
-                return OrchestrationDecision(requested, candidates.sortedByDescending { it.score }, warnings)
+            if (candidates.any { it.backend == requested }) {
+                return OrchestrationDecision(
+                    requested,
+                    candidates.sortedByDescending { it.score },
+                    warnings,
+                    nativePolicyUsed = false,
+                )
+            }
             warnings += "Le backend demandé n'est pas disponible ; sélection automatique appliquée."
         }
 
+        val native = NativeEngine.selectBackend(
+            arm64Guest = vm.arch == GuestArch.ARM64,
+            kvm = host.kvm,
+            gunyah = host.gunyah,
+            genieZone = host.genieZone,
+            halla = host.halla,
+            avf = host.avfAvailable,
+            thermalStatus = host.thermalStatus,
+        )
+
+        val nativeKind = when (native.backend) {
+            "KVM" -> BackendKind.KVM
+            "GUNYAH" -> BackendKind.GUNYAH
+            "GENIEZONE" -> BackendKind.GENIEZONE
+            "HALLA" -> BackendKind.HALLA
+            "AVF" -> BackendKind.AVF
+            else -> BackendKind.QEMU_TCG
+        }
+
         val sorted = candidates.sortedByDescending { it.score }
-        return OrchestrationDecision(sorted.firstOrNull()?.backend ?: BackendKind.QEMU_TCG, sorted, warnings)
+        val selected = sorted.firstOrNull { it.backend == nativeKind }?.backend
+            ?: sorted.firstOrNull()?.backend
+            ?: BackendKind.QEMU_TCG
+
+        if (native.nativeAvailable) {
+            warnings += "Politique native Rust utilisée pour la sélection initiale."
+        }
+
+        return OrchestrationDecision(
+            selected = selected,
+            candidates = sorted,
+            warnings = warnings,
+            nativePolicyUsed = native.nativeAvailable,
+        )
     }
 }
