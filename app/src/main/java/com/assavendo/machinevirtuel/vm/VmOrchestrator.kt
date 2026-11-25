@@ -2,6 +2,7 @@ package com.assavendo.machinevirtuel.vm
 
 import com.assavendo.machinevirtuel.engine.NativeEngine
 import com.assavendo.machinevirtuel.host.HostCapabilities
+import com.assavendo.machinevirtuel.vm.NetworkMode
 
 data class BackendCandidate(val backend: BackendKind, val score: Int, val reasons: List<String>)
 data class OrchestrationDecision(
@@ -23,10 +24,16 @@ class VmOrchestrator {
 
         if (vm.arch == GuestArch.ARM64) {
             if (host.kvm) add(BackendKind.KVM, 100, "KVM /dev/kvm accessible")
-            if (host.gunyah) add(BackendKind.GUNYAH, 98, "Gunyah device detected")
-            if (host.genieZone) add(BackendKind.GENIEZONE, 97, "GenieZone device detected")
-            if (host.halla) add(BackendKind.HALLA, 96, "Halla device detected")
-            if (host.avfAvailable) add(BackendKind.AVF, 95, "AVF / VirtualizationService appears available")
+            // These crosvm paths are intentionally headless and do not expose Android
+            // display or user-mode NAT bridges yet. Never select them for an interactive VM.
+            if (vm.headless && vm.networkMode != NetworkMode.NAT) {
+                if (host.gunyah) add(BackendKind.GUNYAH, 98, "Gunyah device detected; headless crosvm path")
+                if (host.genieZone) add(BackendKind.GENIEZONE, 97, "GenieZone device detected; headless crosvm path")
+                if (host.halla) add(BackendKind.HALLA, 96, "Halla device detected; headless crosvm path")
+            }
+            if (host.avfHint || host.avfAvailable) {
+                warnings += "AVF détecté comme indice, mais son bridge de lancement PhoenixVM n'est pas disponible; il n'est pas sélectionné."
+            }
             add(BackendKind.QEMU_TCG, 70, "QEMU TCG universal software fallback")
         } else {
             add(BackendKind.QEMU_TCG, 100, "full-system x86 emulation")
