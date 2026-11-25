@@ -2,7 +2,6 @@ package com.assavendo.machinevirtuel.vm
 
 import com.assavendo.machinevirtuel.engine.NativeEngine
 import com.assavendo.machinevirtuel.host.HostCapabilities
-import com.assavendo.machinevirtuel.vm.NetworkMode
 
 data class BackendCandidate(val backend: BackendKind, val score: Int, val reasons: List<String>)
 data class OrchestrationDecision(
