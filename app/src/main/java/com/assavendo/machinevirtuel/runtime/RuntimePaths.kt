@@ -36,6 +36,8 @@ class RuntimePaths(
     val edk2GunyahVars = File(root, "usr/share/droidvm/edk2-gunyah.vars.fd")
     val edk2X86Code = File(optionalRoot, "usr/share/droidvm/edk2-x86_64-code.fd")
     val edk2X86Vars = File(optionalRoot, "usr/share/droidvm/edk2-x86_64-vars.fd")
+    val edk2X86SecureCode = File(optionalRoot, "usr/share/droidvm/edk2-x86_64-secure-code.fd")
+    val edk2X86SecureVars = File(optionalRoot, "usr/share/droidvm/edk2-x86_64-secure-vars.fd")
 
     fun isComplete(): Boolean =
         qemu.canExecute() && crosvm.canExecute() && qemuImg.canExecute() &&
@@ -45,6 +47,8 @@ class RuntimePaths(
         qemuX86.canExecute() || qemuX86Headless.canExecute() || qemuI386.canExecute()
 
     fun hasX86Uefi(): Boolean = edk2X86Code.isFile && edk2X86Vars.isFile
+    fun hasX86SecureBootUefi(): Boolean =
+        edk2X86SecureCode.isFile && edk2X86SecureVars.isFile
 
     fun libraryDir(arch: GuestArch): File =
         if (arch == GuestArch.ARM64) libDir else x86LibDir
