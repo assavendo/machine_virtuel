@@ -8,10 +8,8 @@ import java.io.File
 /**
  * Measures the host CPU time consumed by QEMU's vCPU threads.
  *
- * This is intentionally reported as vCPU host-thread utilization, not guest
- * CPU utilization: without a guest agent or paravirtualized guest counters,
- * PhoenixVM cannot truthfully infer how much time the guest itself spent
- * executing instructions.
+ * This is vCPU host-thread utilization, not guest CPU utilization. Without a
+ * guest agent or paravirtualized guest counters, guest CPU time is unknown.
  */
 class VmCpuThreadSampler {
     private val clockTicksPerSecond = runCatching {
@@ -31,7 +29,12 @@ class VmCpuThreadSampler {
 
         val nowNs = SystemClock.elapsedRealtimeNanos()
         val wallDeltaNs = if (lastWallNs == 0L) 0L else nowNs - lastWallNs
-        val baselineValid = wallDeltaNs > 0L && lastThreadIds == ids && cpuTicks >= lastCpuTicks
+        val previousTicks = lastCpuTicks
+        val baselineValid =
+            wallDeltaNs > 0L &&
+                lastThreadIds == ids &&
+                previousTicks > 0L &&
+                cpuTicks >= previousTicks
 
         lastWallNs = nowNs
         lastCpuTicks = cpuTicks
@@ -39,7 +42,7 @@ class VmCpuThreadSampler {
 
         if (!baselineValid) return null
 
-        val cpuSeconds = (cpuTicks - lastCpuTicksBeforeUpdate) / clockTicksPerSecond.toDouble()
+        val cpuSeconds = (cpuTicks - previousTicks) / clockTicksPerSecond.toDouble()
         val wallSeconds = wallDeltaNs / 1_000_000_000.0
         if (wallSeconds <= 0.0) return null
 
@@ -51,10 +54,7 @@ class VmCpuThreadSampler {
         lastWallNs = 0L
         lastCpuTicks = 0L
         lastThreadIds = emptySet()
-        lastCpuTicksBeforeUpdate = 0L
     }
-
-    private var lastCpuTicksBeforeUpdate = 0L
 
     private fun readThreadCpuTicks(tid: Long): Long? {
         val file = File("/proc/$tid/stat")
