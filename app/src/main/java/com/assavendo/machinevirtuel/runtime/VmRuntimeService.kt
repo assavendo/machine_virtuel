@@ -324,7 +324,7 @@ class VmRuntimeService : Service() {
         var cachedTranslationAggregate = TranslationCacheManager(this).aggregate(id)
         val vcpuSampler = VmCpuThreadSampler()
         val audioMonitor = if (vm.audioEnabled) {
-            AudioLogMonitor(FilePaths.vmLogFile(id))
+            AudioLogMonitor(FilePaths.log(id))
         } else {
             null
         }
