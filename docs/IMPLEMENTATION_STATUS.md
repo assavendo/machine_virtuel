@@ -75,6 +75,8 @@ The native boundary is fail-safe:
 - VirtIO network controller and explicit network validation.
 - VirtIO-FS path when verified virtiofsd is present; 9p/VirtFS fallback otherwise.
 - XHCI virtual USB controller.
+- Per-VM host USB passthrough configuration with Android UsbManager permission lifecycle, explicit device matching, hub rejection, bus/address resolution, direct-node/root access gating and QEMU `usb-host` launch translation.
+- USB passthrough is fail-closed: permission alone is not treated as sufficient host access, and non-QEMU/crosvm backends are not allowed to silently receive host USB devices.
 - Explicit host USB passthrough policy model that never grants devices globally by default.
 - TPM 2.0 orchestration through verified swtpm when present.
 
