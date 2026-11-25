@@ -144,12 +144,22 @@ class VmRuntimeService : Service() {
             }
 
             val host = HostCapabilityScanner(this).scan()
-            val admitted = runtimeGate.runIfOpen {
-                synchronized(admissionLock) {
-                    val admission = ResourceAdmissionController.check(vm, store.list(), host)
-                    check(admission.allowed) { admission.reason }
-                    check(persistVmUpdate(store, id) { it.state = VmState.STARTING } != null) {
-                        "VM configuration disappeared before startup admission."
+            // Wait for any in-progress cold disk operation without holding the
+            // service-close gate. Once admitted, STARTING is persisted before the lock
+            // is released, so no later snapshot/clone/export can see a false OFF state.
+            val admitted = store.withVmLock(id) {
+                runtimeGate.runIfOpen {
+                    synchronized(admissionLock) {
+                        val current = store.list().firstOrNull { it.id == id }
+                            ?: error("VM configuration disappeared before startup admission.")
+                        check(current.state == VmState.OFF) {
+                            "VM startup requires confirmed OFF state; current state is " + current.state.name
+                        }
+                        val admission = ResourceAdmissionController.check(current, store.list(), host)
+                        check(admission.allowed) { admission.reason }
+                        check(persistVmUpdate(store, id) { it.state = VmState.STARTING } != null) {
+                            "VM configuration disappeared before startup admission."
+                        }
                     }
                 }
             }
