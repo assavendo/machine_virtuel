@@ -66,6 +66,13 @@ object VmSpecValidator {
         ).validate().forEach { message ->
             issues += ValidationIssue("network", message, true)
         }
+        if (vm.networkMode == NetworkMode.TAP && vm.portForwards.isNotEmpty()) {
+            issues += ValidationIssue(
+                "network",
+                "Les redirections hostfwd sont prises en charge uniquement par le NAT QEMU; elles ne sont pas appliquées en mode TAP.",
+                true,
+            )
+        }
 
         if (vm.arch == GuestArch.X86_64 && vm.backend != BackendKind.QEMU_TCG)
             issues += ValidationIssue("backend", "Le guest x86_64 exige actuellement QEMU TCG.", false)
