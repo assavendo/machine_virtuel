@@ -188,6 +188,25 @@ class QemuCommandBuilderTest {
                 diskPath = f.disk.absolutePath, firmwarePath = f.nvram.absolutePath,
                 backend = BackendKind.QEMU_TCG, audioEnabled = false,
             )
+            val command = QemuCommandBuilder.build(
+                f.paths, vm, File(f.root, "qmp.sock"), File(f.root, "serial.log"), File(f.root, "qemu.log")
+            )
+            assertTrue(command.contains(f.paths.edk2X86Code.absolutePath))
+            assertFalse(command.contains(f.paths.edk2Qemu.absolutePath))
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
+    @Test fun x86IsRejectedWhenItsOwnUefiFirmwareIsUnavailable() {
+        val f = runtime()
+        try {
+            f.paths.edk2X86Code.delete()
+            val vm = VmConfig(
+                name = "x86-no-uefi", arch = GuestArch.X86_64,
+                diskPath = f.disk.absolutePath, firmwarePath = f.nvram.absolutePath,
+                backend = BackendKind.QEMU_TCG, audioEnabled = false,
+            )
             assertFailsWith<IllegalArgumentException> {
                 QemuCommandBuilder.build(
                     f.paths, vm, File(f.root, "qmp.sock"), File(f.root, "serial.log"), File(f.root, "qemu.log")
