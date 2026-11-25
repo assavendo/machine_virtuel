@@ -18,6 +18,7 @@ import com.assavendo.machinevirtuel.developer.DeveloperTools
 import com.assavendo.machinevirtuel.device.DeviceProfileDatabase
 import com.assavendo.machinevirtuel.guest.GuestCompatibilityCatalog
 import com.assavendo.machinevirtuel.migration.VmMigrationManager
+import com.assavendo.machinevirtuel.performance.ResourceAdmissionController
 import com.assavendo.machinevirtuel.runtime.SnapshotManager
 import com.assavendo.machinevirtuel.runtime.UsbPassthroughManager
 import com.assavendo.machinevirtuel.runtime.RuntimeInstaller
@@ -283,6 +284,7 @@ class MainActivity : Activity() {
             arch = GuestArch.ARM64,
             ramMb = defaultRam,
             vCpu = minOf(4, caps.cpuCount.coerceAtLeast(1)),
+            autoSnapshotOnInstall = false,
         )
         val vmId = base.id
         pendingVmCreationDraft = base
@@ -346,6 +348,10 @@ class MainActivity : Activity() {
             base.guestOs.contains("existing disk", true) -> GuestOsChoice.EXISTING_DISK
             else -> GuestOsChoice.LINUX
         }
+        section("Identité de la machine")
+        addLabel("Nom de la VM")
+        val vmName = edit(base.name)
+
         section("A — Architecture et système invité")
         addLabel("Système invité")
         val osSpinner = spinner(GuestOsChoice.entries.map { it.label }, GuestOsChoice.entries.indexOf(osChoice))
@@ -450,7 +456,7 @@ class MainActivity : Activity() {
             val allowed = selectedOs.allowedArchitectures().toList()
             val selectedArch = allowed[architectureSpinner.selectedItemPosition.coerceIn(0, allowed.lastIndex)]
             val config = base.copy(
-                name = base.name,
+                name = vmName.text.toString().trim(),
                 description = base.description,
                 guestOs = selectedOs.guestOs(selectedArch),
                 guestVersion = version.text.toString().trim(),
@@ -516,6 +522,15 @@ class MainActivity : Activity() {
         artifactButton("Choisir Android vendor.img (facultatif)", "android-vendor", 712)
         artifactButton("Choisir Android userdata.img", "android-userdata", 713)
         content.addView(artifactRow)
+        content.addView(cardText().apply {
+            text = buildString {
+                append("ISO : ").append(base.isoPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "non sélectionnée").append('\\n')
+                append("Disque existant : ").append(base.diskPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "aucun").append('\\n')
+                append("Kernel : ").append(base.kernelPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "aucun").append('\\n')
+                append("Android system : ").append(base.androidSystemPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "aucun").append('\\n')
+                append("Android userdata : ").append(base.androidUserdataPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "aucun")
+            }
+        })
 
         val scroll = ScrollView(this).apply { addView(content) }
         dialog = AlertDialog.Builder(this)
@@ -1126,6 +1141,35 @@ class MainActivity : Activity() {
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode in 706..713) {
+            val draft = pendingVmCreationDraft
+            val kind = pendingVmCreationArtifact
+            if (resultCode != RESULT_OK || data?.data == null) {
+                if (draft != null) createVm(draft)
+                return
+            }
+            if (draft == null || kind == null) {
+                toast("Brouillon de création introuvable ; recommence la sélection du fichier.")
+                return
+            }
+            val selectedUri = data.data!!
+            Thread({
+                val result = runCatching { copyVmCreationArtifact(draft, kind, selectedUri) }
+                handler.post {
+                    pendingVmCreationArtifact = null
+                    result.onSuccess { updated ->
+                        pendingVmCreationDraft = updated
+                        toast("Fichier importé et copié dans le stockage privé PhoenixVM.")
+                        createVm(updated)
+                    }.onFailure { error ->
+                        toast("Import du fichier impossible : " + (error.message ?: "erreur inconnue"))
+                        createVm(draft)
+                    }
+                }
+            }, "phoenixvm-create-artifact").start()
+            return
+        }
+
         super.onActivityResult(requestCode, resultCode, data)
         if (resultCode != RESULT_OK || data?.data == null) return
         val uri = data.data!!
@@ -1167,6 +1211,74 @@ class MainActivity : Activity() {
         toast("ISO importée et stockée localement.")
     }
 
+
+
+    private fun copyVmCreationArtifact(
+        draft: VmConfig,
+        kind: String,
+        uri: android.net.Uri,
+    ): VmConfig {
+        val root = File(filesDir, "vms").canonicalFile
+        val directory = File(root, draft.id).canonicalFile
+        require(directory.toPath().startsWith(root.toPath()) && directory != root) {
+            "Identifiant ou chemin de brouillon de VM invalide."
+        }
+        check(directory.mkdirs() || directory.isDirectory) {
+            "Impossible de préparer le stockage privé de la VM."
+        }
+        val targetName = when (kind) {
+            "iso" -> "installer.iso"
+            "disk" -> "disk." + com.assavendo.machinevirtuel.runtime.DiskManager.extension(draft.diskFormat)
+            "kernel" -> "kernel.Image"
+            "initrd" -> "initrd"
+            "dtb" -> "guest.dtb"
+            "android-system" -> "android-system.img"
+            "android-vendor" -> "android-vendor.img"
+            "android-userdata" -> "android-userdata.img"
+            else -> error("Type de fichier de création inconnu.")
+        }
+        val target = File(directory, targetName)
+        val temporary = File(directory, targetName + ".partial")
+        temporary.delete()
+        val input = contentResolver.openInputStream(uri)
+            ?: error("Android n'a pas pu ouvrir le fichier sélectionné.")
+        input.use { source ->
+            java.io.FileOutputStream(temporary).use { output ->
+                source.copyTo(output, 128 * 1024)
+                output.fd.sync()
+            }
+        }
+        require(temporary.isFile && temporary.length() > 0L) {
+            "Le fichier sélectionné est vide ou illisible."
+        }
+        require(temporary.length() <= directory.usableSpace + temporary.length()) {
+            "Espace de stockage insuffisant pour l'import."
+        }
+        if (target.exists() && !target.delete()) {
+            temporary.delete()
+            error("Impossible de remplacer l'ancien fichier de brouillon.")
+        }
+        check(temporary.renameTo(target)) {
+            temporary.delete()
+            "Impossible de finaliser l'import atomique du fichier."
+        }
+        val updated = draft.copy()
+        when (kind) {
+            "iso" -> updated.isoPath = target.absolutePath
+            "disk" -> {
+                updated.diskPath = target.absolutePath
+                val bytesPerGiB = 1024L * 1024L * 1024L
+                updated.diskSizeGiB = ((target.length() + bytesPerGiB - 1L) / bytesPerGiB).coerceAtLeast(1L)
+            }
+            "kernel" -> updated.kernelPath = target.absolutePath
+            "initrd" -> updated.initrdPath = target.absolutePath
+            "dtb" -> updated.dtbPath = target.absolutePath
+            "android-system" -> updated.androidSystemPath = target.absolutePath
+            "android-vendor" -> updated.androidVendorPath = target.absolutePath
+            "android-userdata" -> updated.androidUserdataPath = target.absolutePath
+        }
+        return updated
+    }
 
     private fun configureGestures() {
         val current = com.assavendo.machinevirtuel.ui.GestureSettingsStore.load(this)
