@@ -49,7 +49,7 @@ The native boundary is fail-safe:
 - Rust native orchestration policy is now invoked from the Android path through JNI, with Kotlin availability guards.
 - Translation profiling uses the Rust native tier decision when available, with a deterministic Kotlin fallback.
 - Persistent translation profile metadata now records execution count, cache hits/misses and cumulative translation time while remaining compatible with older profile records.
-- Multi-VM resource coordination is reevaluated during VM execution with thermal/memory-aware recommendations and QMP balloon recovery when supported.
+- Multi-VM resource coordination is reevaluated during VM execution with thermal/memory-aware recommendations and QMP balloon recovery when supported. RAM admission conservatively retains commitments for STOPPING, RECOVERY and ERROR VMs until their state is reconciled, because a delayed or failed termination may still own a live process.
 - CPU reductions that cannot be hot-applied safely are explicitly marked as next-start recommendations rather than being falsely reported as live changes.
 
 ### Memory / scheduling / performance
