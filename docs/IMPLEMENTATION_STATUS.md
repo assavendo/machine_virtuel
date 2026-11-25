@@ -47,6 +47,10 @@ The native boundary is fail-safe:
 - Balloon-based memory relief through QMP when explicitly enabled.
 - Host CPU, memory, thermal, frequency, I/O, network and pressure telemetry.
 - 1/5/30 minute metric history.
+- Runtime FPS measured from the actual RFB frame stream.
+- vCPU host-thread utilization measured from QMP `query-cpus-fast` thread IDs and `/proc` CPU time.
+- Persistent translation cache hit rate and average translation time are surfaced when profiles exist.
+- Guest CPU time, guest RAM, GPU utilization/memory and AAudio underruns remain explicitly unknown unless a backend/guest exposes trustworthy counters; they are never replaced with fabricated zeros.
 - Benchmark model and benchmark engine foundation; sustained-run catalog is defined.
 
 ### Graphics / input / audio
