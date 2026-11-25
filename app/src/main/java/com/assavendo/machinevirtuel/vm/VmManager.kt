@@ -71,7 +71,8 @@ class VmManager(private val context: Context) {
         check(issues.isEmpty()) {
             issues.joinToString("; ") { it.field + ": " + it.message }
         }
-        val admission = ResourceAdmissionController.check(config, current, capabilities())
+        val host = capabilities()
+        val admission = ResourceAdmissionController.check(config, current, host)
         check(admission.allowed) {
             "Création refusée par l'admission des ressources : " + admission.reason
         }
@@ -112,7 +113,7 @@ class VmManager(private val context: Context) {
         try {
             DiskManager.ensureVmStorage(context.filesDir, config, runtime)
             store.insertUnique(config) { latest ->
-                val latestAdmission = ResourceAdmissionController.check(config, latest, capabilities())
+                val latestAdmission = ResourceAdmissionController.check(config, latest, host)
                 check(latestAdmission.allowed) {
                     "Création refusée après revalidation des ressources : " + latestAdmission.reason
                 }
@@ -135,6 +136,7 @@ class VmManager(private val context: Context) {
 
     fun clone(id: String, newName: String): VmConfig {
         val source = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
+        val host = capabilities()
         require(source.state == VmState.OFF) { "Le clonage exige une VM arrêtée." }
         val clone = source.copy(
             id = UUID.randomUUID().toString(),
@@ -184,7 +186,7 @@ class VmManager(private val context: Context) {
             clone.androidUserdataPath = copyManagedArtifact(source.androidUserdataPath, "android-userdata.img")
             clone.tpmStatePath = copyManagedArtifact(source.tpmStatePath, "tpm-state")
             store.insertUnique(clone) { latest ->
-                val admission = ResourceAdmissionController.check(clone, latest, capabilities())
+                val admission = ResourceAdmissionController.check(clone, latest, host)
                 require(admission.allowed) {
                     "Clonage refusé par le contrôle de ressources : " + admission.reason
                 }
