@@ -102,6 +102,19 @@ class VmStoreTransactionTest {
     }
 
     @Test
+    fun nameWhitespaceCannotBypassCaseInsensitiveUniqueness() {
+        val store = VmStore(inMemoryPreferences())
+        store.insertUnique(VmConfig(name = "Phoenix"))
+        try {
+            store.insertUnique(VmConfig(name = "  phoenix  "))
+            throw AssertionError("Expected duplicate normalized name to be rejected.")
+        } catch (_: IllegalArgumentException) {
+            // Expected: names are trimmed before case-insensitive uniqueness checks.
+        }
+        assertEquals("Phoenix", store.list().single().name)
+    }
+
+    @Test
     fun concurrentSameNameInsertionsCannotPublishDuplicates() {
         val preferences = inMemoryPreferences()
         val storeA = VmStore(preferences)
