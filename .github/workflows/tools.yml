@@ -1,0 +1,25 @@
+name: Python tools
+
+on:
+  push:
+    paths:
+      - "tools/**"
+      - "docs/device-matrix/**"
+      - ".github/workflows/tools.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Unit tests
+        working-directory: tools
+        run: python3 -m unittest discover -p 'test_*.py' -v
+      - name: Device matrix
+        run: python3 tools/device_matrix_check.py docs/device-matrix/devices.json
