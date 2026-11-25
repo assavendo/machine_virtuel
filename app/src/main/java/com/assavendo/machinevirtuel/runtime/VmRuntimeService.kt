@@ -675,7 +675,10 @@ class VmRuntimeService : Service() {
             }
         }
 
-        if (!persistVmUpdateIfOpen(store, id) { it.state = VmState.STOPPING }) return
+        val stopAdmitted = runtimeGate.runIfOpen {
+            persistVmUpdate(store, id) { it.state = VmState.STOPPING }
+        }
+        if (!stopAdmitted) return
         val gracefulCommandAccepted = when {
             force -> false
             handle.qmp != null -> QmpController.systemPowerdown(handle.qmp)
@@ -691,7 +694,9 @@ class VmRuntimeService : Service() {
         if (termination == VmProcessTermination.STILL_ALIVE) {
             handle.recoveryRequiredOnExit = true
             val message = "Backend process did not exit after graceful/forced termination attempts."
-            val errorRecorded = persistVmUpdateIfOpen(store, id) { it.state = VmState.ERROR }
+            val errorRecorded = runtimeGate.runIfOpen {
+                persistVmUpdate(store, id) { it.state = VmState.ERROR }
+            }
             if (errorRecorded) {
                 VmLogger(this, id).warn(message)
                 VmEventBus.emit(VmEvent(id, VmEventType.VM_ERROR, message = message))
