@@ -154,6 +154,26 @@ class QemuCommandBuilderTest {
         }
     }
 
+    @Test fun networkDeviceUsesDeterministicPerVmMac() {
+        val f = runtime()
+        try {
+            val vm = VmConfig(
+                name = "network-mac",
+                diskPath = f.disk.absolutePath,
+                firmwarePath = f.nvram.absolutePath,
+                audioEnabled = false,
+                networkMode = NetworkMode.NAT,
+            )
+            val command = QemuCommandBuilder.build(
+                f.paths, vm, File(f.root, "qmp.sock"), File(f.root, "serial.log"), File(f.root, "qemu.log")
+            )
+            val expectedMac = NetworkPolicy.deterministicMac(vm.id)
+            assertTrue(command.any { it.contains("virtio-net-pci,netdev=net0,mac=$expectedMac") })
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
     @Test fun keyValuePathsWithCommasAreRejected() {
         val f = runtime()
         try {
