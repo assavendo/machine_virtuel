@@ -60,7 +60,7 @@ class VmOrchestrator {
                     nativePolicyUsed = false,
                 )
             }
-            warnings += "Le backend demandé n'est pas disponible ; sélection automatique appliquée."
+            warnings += "Backend indisponible : sélection automatique du meilleur fallback appliquée."
         }
 
         val native = NativeEngine.selectBackend(
