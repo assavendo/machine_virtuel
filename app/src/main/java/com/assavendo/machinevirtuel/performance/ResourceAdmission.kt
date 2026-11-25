@@ -13,10 +13,18 @@ data class ResourceAdmission(
 
 object ResourceAdmissionController {
     fun check(vm: VmConfig, current: List<VmConfig>, host: HostCapabilities): ResourceAdmission {
-        val active = current.filter {
-            it.id != vm.id && (it.state == VmState.RUNNING || it.state == VmState.STARTING ||
-                it.state == VmState.PAUSED || it.state == VmState.SUSPENDED)
-        }
+        // STOPPING/RECOVERY/ERROR may still own a live process after a failed or
+        // delayed termination. Account for their RAM conservatively until reconciled.
+        val memoryCommittedStates = setOf(
+            VmState.RUNNING,
+            VmState.STARTING,
+            VmState.PAUSED,
+            VmState.SUSPENDED,
+            VmState.STOPPING,
+            VmState.RECOVERY,
+            VmState.ERROR,
+        )
+        val active = current.filter { it.id != vm.id && it.state in memoryCommittedStates }
         val committedVmRam = active.sumOf { it.ramMb.coerceAtLeast(0).toLong() }
         val reserve = maxOf(768L, host.totalMemoryMb.coerceAtLeast(0L) / 10L)
         val physicalBudget = (host.availableMemoryMb - reserve).coerceAtLeast(0L)
