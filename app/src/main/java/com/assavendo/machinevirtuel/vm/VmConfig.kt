@@ -20,6 +20,13 @@ data class SharedDirectory(
     val readOnly: Boolean = false,
 )
 
+data class UsbPassthroughConfig(
+    val vendorId: Int,
+    val productId: Int,
+    val serialNumber: String = "",
+    val guestReset: Boolean = false,
+)
+
 data class VmConfig(
     val id: String = UUID.randomUUID().toString(),
     var name: String,
@@ -78,6 +85,7 @@ data class VmConfig(
     var mouseEnabled: Boolean = true,
     var keyboardEnabled: Boolean = true,
     var gamepadEnabled: Boolean = false,
+    var usbPassthrough: List<UsbPassthroughConfig> = emptyList(),
     var sharedFilesExplicitOnly: Boolean = true,
     var bootOrder: List<String> = listOf("disk", "cdrom", "network"),
     var autoSnapshotOnInstall: Boolean = true,
