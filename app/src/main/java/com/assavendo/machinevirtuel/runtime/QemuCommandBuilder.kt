@@ -322,7 +322,7 @@ object QemuCommandBuilder {
                 "Adresse USB hôte invalide."
             }
             args += "-device"
-            args += "usb-host,bus=usb.0,hostbus=" + usb.bus +
+            args += "usb-host,hostbus=" + usb.bus +
                 ",hostaddr=" + usb.address +
                 ",guest-reset=" + if (usb.guestReset) "true" else "false"
         }
