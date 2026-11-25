@@ -408,8 +408,8 @@ object VmPackageManager {
                 }
                 snapshotsPublished = true
             }
+            val host = HostCapabilityScanner(context).scan()
             store.insertUnique(vm) { latest ->
-                val host = HostCapabilityScanner(context).scan()
                 val admission = ResourceAdmissionController.check(vm, latest, host)
                 require(admission.allowed) {
                     "Import refusé par le contrôle de ressources : " + admission.reason
