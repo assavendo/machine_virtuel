@@ -324,7 +324,7 @@ object QemuCommandBuilder {
             args += "-device"
             args += "usb-host,bus=usb.0,hostbus=" + usb.bus +
                 ",hostaddr=" + usb.address +
-                ",guest-reset=" + if (usb.guestReset) "on" else "off"
+                ",guest-reset=" + if (usb.guestReset) "true" else "false"
         }
         args += "-vnc"; args += "127.0.0.1:" + (VncPorts.portFor(vm.id) - 5900)
         args += "-qmp"; args += "unix:" + qmp.absolutePath + ",server=on,wait=off"
