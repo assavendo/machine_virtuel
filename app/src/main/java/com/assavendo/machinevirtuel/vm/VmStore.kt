@@ -1,11 +1,17 @@
 package com.assavendo.machinevirtuel.vm
 
 import android.content.Context
+import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 
-class VmStore(context: Context) {
-    private val prefs = context.getSharedPreferences("phoenixvm_vms", Context.MODE_PRIVATE)
+class VmStore internal constructor(
+    private val prefs: SharedPreferences,
+) {
+    constructor(context: Context) : this(
+        context.getSharedPreferences("phoenixvm_vms", Context.MODE_PRIVATE)
+    )
+
     private val schemaVersion = 4
 
     companion object {
