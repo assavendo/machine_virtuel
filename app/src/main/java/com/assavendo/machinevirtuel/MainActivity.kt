@@ -7,7 +7,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
-import android.hardware.usb.UsbDevice
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
