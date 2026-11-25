@@ -72,6 +72,7 @@ class VmDisplayView(
         client?.close()
         client = null
         pointerPressed = false
+        VmDisplayFpsCounter.clear(vmId)
     }
 
     override fun onSize(width: Int, height: Int) {
@@ -292,5 +293,10 @@ private object VmDisplayFpsCounter {
             counter.windowStartMs = now
             counter.frames = 0L
         }
+    }
+
+    @Synchronized
+    fun clear(vmId: String) {
+        counters.remove(vmId)
     }
 }
