@@ -22,6 +22,18 @@ class VmSpecValidatorTest {
         assertTrue(VmSpecValidator.validate(x86).none { it.field == "secureBoot" && it.fatal })
     }
 
+    @Test
+    fun duplicateBootAliasesAreRejected() {
+        val vm = VmConfig(name = "duplicate-boot", bootOrder = listOf("cdrom", "iso"))
+        assertTrue(VmSpecValidator.validate(vm).any { it.field == "bootOrder" && it.fatal })
+    }
+
+    @Test
+    fun unknownBootDevicesAreRejected() {
+        val vm = VmConfig(name = "unknown-boot", bootOrder = listOf("disk", "floppy"))
+        assertTrue(VmSpecValidator.validate(vm).any { it.field == "bootOrder" && it.fatal })
+    }
+
     @Test fun androidGuestRequiresBootArtifacts() {
         val vm = VmConfig(
             name = "android",
