@@ -12,6 +12,7 @@ import com.assavendo.machinevirtuel.hypervisor.BackendLaunchSpec
 import com.assavendo.machinevirtuel.hypervisor.CrosvmBackend
 import com.assavendo.machinevirtuel.hypervisor.HypervisorBackend
 import com.assavendo.machinevirtuel.hypervisor.QemuBackend
+import com.assavendo.machinevirtuel.performance.AdaptiveResourceCoordinator
 import com.assavendo.machinevirtuel.performance.HostMetricsCollector
 import com.assavendo.machinevirtuel.performance.ResourceAdmissionController
 import com.assavendo.machinevirtuel.performance.DeviceTopology
@@ -285,30 +286,61 @@ class VmRuntimeService : Service() {
 
     private fun monitorVm(id: String, handle: Handle, vm: VmConfig) {
         val collector = HostMetricsCollector(this, handle.qmp?.let(::findQemuPid))
+        val coordinator = AdaptiveResourceCoordinator()
         var lastBalloonRequestMs = 0L
+        var lastPolicyMessage = ""
         while (processes[id] === handle && handle.process.isAlive) {
             runCatching {
                 val sample = collector.sample()
                 VmMetricsRegistry.record(id, sample)
+
+                val store = VmStore(this)
+                val host = HostCapabilityScanner(this).scan()
+                val decision = coordinator.decide(
+                    vm = vm,
+                    allVms = store.list(),
+                    topology = DeviceTopology.read(),
+                    host = host,
+                    metrics = sample,
+                )
+                if (decision.reason != lastPolicyMessage) {
+                    lastPolicyMessage = decision.reason
+                    VmEventBus.emit(
+                        VmEvent(
+                            id,
+                            VmEventType.RESOURCE_POLICY_UPDATED,
+                            message =
+                                "vCPU " + decision.recommendedVcpus + "/" + decision.configuredVcpus +
+                                    " • RAM " + decision.recommendedRamMb + "/" + decision.configuredRamMb +
+                                    " MiB • " + decision.reason
+                        )
+                    )
+                }
+
                 if (sample.availableMemoryMb < 256L) {
                     VmEventBus.emit(VmEvent(id, VmEventType.MEMORY_WARNING, message = "available RAM < 256 MB"))
                     updateNotification("VM memory pressure • Android available RAM < 256 MB")
-                } else if (sample.availableMemoryMb < 512L && vm.balloonEnabled && vm.ramMb >= 768 && handle.qmp != null) {
+                }
+
+                if (decision.shouldRequestBalloon && handle.qmp != null) {
                     val now = System.currentTimeMillis()
                     if (now - lastBalloonRequestMs >= 30_000L) {
-                        val targetMb = (vm.ramMb - 256).coerceAtLeast(512)
-                        val targetBytes = targetMb.toLong() * 1024L * 1024L
+                        val targetBytes = decision.recommendedRamMb.toLong() * 1024L * 1024L
                         if (QmpController.setBalloonTarget(handle.qmp, targetBytes)) {
                             lastBalloonRequestMs = now
                             VmEventBus.emit(
-                                VmEvent(id, VmEventType.MEMORY_WARNING,
-                                    message = "QMP accepted guest balloon target " + targetMb +
-                                        " MiB; guest driver/reclaim still required")
+                                VmEvent(
+                                    id,
+                                    VmEventType.MEMORY_WARNING,
+                                    message = "QMP accepted adaptive guest balloon target " +
+                                        decision.recommendedRamMb + " MiB; guest driver/reclaim still required"
+                                )
                             )
-                            updateNotification("Memory pressure • guest balloon target requested")
+                            updateNotification("Adaptive memory pressure policy applied")
                         }
                     }
                 }
+
                 if (sample.isThrottling) {
                     VmEventBus.emit(VmEvent(id, VmEventType.THERMAL_WARNING, message = "thermal throttling"))
                     updateNotification("VM thermal throttling detected")
