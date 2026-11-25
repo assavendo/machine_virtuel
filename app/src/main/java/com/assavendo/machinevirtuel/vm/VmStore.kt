@@ -71,8 +71,14 @@ class VmStore internal constructor(
         vm: VmConfig,
         validateCurrent: (List<VmConfig>) -> Unit = {},
     ): VmConfig = mutate { items ->
+        val normalizedName = vm.name.trim()
+        require(normalizedName.isNotEmpty()) { "Le nom de la VM est vide." }
+        require(normalizedName.length <= 80 && normalizedName.none { it.isISOControl() }) {
+            "Le nom doit contenir au plus 80 caractères imprimables."
+        }
+        vm.name = normalizedName
         require(items.none { it.id == vm.id }) { "Une VM utilise déjà cet identifiant." }
-        require(items.none { it.name.equals(vm.name, ignoreCase = true) }) {
+        require(items.none { it.name.trim().equals(normalizedName, ignoreCase = true) }) {
             "Une VM porte déjà ce nom ; les noms doivent être uniques."
         }
         validateCurrent(items)
