@@ -107,6 +107,10 @@ object VmSpecValidator {
             val disk = File(vm.diskPath)
             if (!disk.isFile || !disk.canRead() || !disk.canWrite() || disk.length() <= 0L) {
                 issues += ValidationIssue("diskPath", "L'image disque doit exister, être non vide et accessible en lecture/écriture.", true)
+            } else {
+                DiskImageFormatDetector.validate(disk, vm.diskFormat)?.let { message ->
+                    issues += ValidationIssue("diskFormat", message, true)
+                }
             }
         }
         if (os.contains("existing disk") && vm.diskPath.isBlank()) {
