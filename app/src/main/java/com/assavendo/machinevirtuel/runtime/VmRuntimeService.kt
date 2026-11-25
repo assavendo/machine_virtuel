@@ -872,32 +872,50 @@ class VmRuntimeService : Service() {
 
             try {
                 activeHandles.forEach { (id, handle) ->
-                    handle.stopRequested = true
-                    handle.recoveryRequiredOnExit = true
-                    val store = VmStore(this)
-                    val vm = store.list().firstOrNull { it.id == id }
-                    if (vm != null && vm.state != VmState.OFF) {
-                        val recoveryVm = persistVmUpdate(store, id) { it.state = VmState.RECOVERY } ?: vm
-                        val plan = RecoveryManager.plan(
-                            filesDir,
-                            recoveryVm,
-                            "Android runtime service was destroyed while the VM process was active.",
-                        )
-                        RecoveryPlanStore.write(filesDir, plan)
-                    }
+                    runCatching {
+                        handle.stopRequested = true
+                        handle.recoveryRequiredOnExit = true
+                        val store = VmStore(this)
+                        val vm = store.list().firstOrNull { it.id == id }
+                        if (vm != null) {
+                            val recoveryVm = persistVmUpdate(store, id) { it.state = VmState.RECOVERY } ?: vm
+                            val plan = RecoveryManager.plan(
+                                filesDir,
+                                recoveryVm,
+                                "Android runtime service was destroyed while the VM process was active.",
+                            )
+                            RecoveryPlanStore.write(filesDir, plan)
+                            VmEventBus.emit(
+                                VmEvent(
+                                    id,
+                                    VmEventType.RECOVERY_AVAILABLE,
+                                    message = plan.actions.joinToString(" • "),
+                                )
+                            )
+                        }
 
-                    cleanupExecutor?.execute {
-                        val termination = VmProcessTerminator.terminate(
-                            process = handle.process,
-                            graceful = false,
-                        )
-                        if (termination != VmProcessTermination.STILL_ALIVE) {
-                            if (processes.remove(id, handle)) {
-                                cleanupHandleResources(id, handle)
+                        cleanupExecutor?.execute {
+                            val termination = VmProcessTerminator.terminate(
+                                process = handle.process,
+                                graceful = false,
+                            )
+                            if (termination != VmProcessTermination.STILL_ALIVE) {
+                                if (processes.remove(id, handle)) {
+                                    cleanupHandleResources(id, handle)
+                                }
+                            } else {
+                                VmLogger(this, id).error(
+                                    "Backend process survived runtime service destruction; its handle and sidecar references were retained for recovery.",
+                                )
                             }
-                        } else {
+                        }
+                    }.onFailure { failure ->
+                        runCatching { handle.process.destroyForcibly() }
+                        runCatching {
                             VmLogger(this, id).error(
-                                "Backend process survived runtime service destruction; its handle and sidecar references were retained for recovery.",
+                                "Runtime shutdown recovery failed; process handle retained: " +
+                                    (failure.message ?: "unknown"),
+                                failure,
                             )
                         }
                     }
