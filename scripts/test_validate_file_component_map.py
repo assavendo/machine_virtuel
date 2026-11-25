@@ -2,7 +2,13 @@
 import copy
 import unittest
 
-import validate_file_component_map as V
+import importlib.util
+from pathlib import Path
+
+MODULE_PATH = Path(__file__).with_name("validate-file-component-map.py")
+SPEC = importlib.util.spec_from_file_location("validate_file_component_map", MODULE_PATH)
+V = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(V)
 
 
 SBOM = {
