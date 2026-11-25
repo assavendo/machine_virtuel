@@ -38,6 +38,8 @@ class MainActivity : Activity() {
     private lateinit var statusLabel: TextView
     private val handler = Handler(Looper.getMainLooper())
     private var isoTargetVm: String? = null
+    private var pendingVmCreationDraft: VmConfig? = null
+    private var pendingVmCreationArtifact: String? = null
 
     private val bg = Color.rgb(11, 14, 19)
     private val panel = Color.rgb(21, 26, 34)
@@ -268,85 +270,304 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun createVm() {
-        val layout = LinearLayout(this).apply {
+    private fun createVm(initial: VmConfig? = null) {
+        val caps = manager.capabilities()
+        val defaultRam = ResourceAdmissionController.check(
+            VmConfig(name = "PhoenixVM", ramMb = 2048),
+            manager.list(),
+            caps,
+        ).recommendedRamMb.coerceAtLeast(512)
+        val base = initial ?: VmConfig(
+            name = "Linux ARM64 VM",
+            guestOs = "Linux ARM64",
+            arch = GuestArch.ARM64,
+            ramMb = defaultRam,
+            vCpu = minOf(4, caps.cpuCount.coerceAtLeast(1)),
+        )
+        val vmId = base.id
+        pendingVmCreationDraft = base
+
+        val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(18, 0, 18, 0)
+            setPadding(18, 8, 18, 8)
         }
-        val name = EditText(this).apply {
-            hint = "Nom de la VM"
-            setTextColor(textColor)
-            setHintTextColor(muted)
-            setText("Linux ARM64 VM")
+        fun section(label: String) {
+            content.addView(TextView(this).apply {
+                text = label
+                setTextColor(violet)
+                textSize = 15f
+                setTypeface(null, Typeface.BOLD)
+                setPadding(0, 18, 0, 6)
+            })
         }
-        val arch = Spinner(this)
-        arch.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, GuestArch.entries.map { it.label })
-        val mode = Spinner(this)
-        mode.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, VmMode.entries.map { it.label })
-        val preset = Spinner(this)
-        preset.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, PerformancePreset.entries.map { it.label })
-        val secureBoot = CheckBox(this).apply {
-            text = "Secure Boot (x86_64)"
-            setTextColor(textColor)
-            isEnabled = arch.selectedItemPosition == GuestArch.X86_64.ordinal
+        fun addLabel(label: String) {
+            content.addView(TextView(this).apply {
+                text = label
+                setTextColor(textColor)
+                textSize = 13f
+                setPadding(0, 8, 0, 2)
+            })
         }
-        arch.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
-            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
-                secureBoot.isEnabled = false
-                secureBoot.isChecked = false
+        fun edit(value: String, inputType: Int = android.text.InputType.TYPE_CLASS_TEXT): EditText {
+            return EditText(this).apply {
+                setText(value)
+                setTextColor(textColor)
+                setHintTextColor(muted)
+                this.inputType = inputType
+                content.addView(this)
             }
+        }
+        fun spinner(items: List<String>, selected: Int): Spinner {
+            return Spinner(this).apply {
+                adapter = ArrayAdapter(
+                    this@MainActivity,
+                    android.R.layout.simple_spinner_dropdown_item,
+                    items,
+                )
+                setSelection(selected.coerceIn(0, (items.size - 1).coerceAtLeast(0)))
+                content.addView(this)
+            }
+        }
+        fun checkBox(label: String, checked: Boolean): CheckBox {
+            return CheckBox(this).apply {
+                text = label
+                setTextColor(textColor)
+                isChecked = checked
+                content.addView(this)
+            }
+        }
+
+        val osChoice = when {
+            base.guestOs.contains("windows", true) -> GuestOsChoice.WINDOWS
+            base.guestOs.contains("android", true) -> GuestOsChoice.ANDROID
+            base.guestOs.contains("bsd", true) -> GuestOsChoice.BSD
+            base.guestOs.contains("dos", true) || base.guestOs.contains("legacy", true) -> GuestOsChoice.DOS_LEGACY
+            base.guestOs.contains("custom iso", true) -> GuestOsChoice.CUSTOM_ISO
+            base.guestOs.contains("existing disk", true) -> GuestOsChoice.EXISTING_DISK
+            else -> GuestOsChoice.LINUX
+        }
+        section("A — Architecture et système invité")
+        addLabel("Système invité")
+        val osSpinner = spinner(GuestOsChoice.entries.map { it.label }, GuestOsChoice.entries.indexOf(osChoice))
+        addLabel("Architecture")
+        val architectureSpinner = Spinner(this)
+        fun updateArchitectures(preferred: GuestArch?) {
+            val choice = GuestOsChoice.entries[osSpinner.selectedItemPosition]
+            val allowed = choice.allowedArchitectures().toList()
+            architectureSpinner.adapter = ArrayAdapter(
+                this,
+                android.R.layout.simple_spinner_dropdown_item,
+                allowed.map { it.label },
+            )
+            val selected = preferred?.takeIf { it in allowed } ?: choice.defaultArchitecture
+            architectureSpinner.setSelection(allowed.indexOf(selected).coerceAtLeast(0))
+        }
+        updateArchitectures(base.arch)
+        content.addView(architectureSpinner)
+        osSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
             override fun onItemSelected(
                 parent: android.widget.AdapterView<*>?,
                 view: android.view.View?,
                 position: Int,
                 id: Long,
             ) {
-                secureBoot.isEnabled = position == GuestArch.X86_64.ordinal
-                if (!secureBoot.isEnabled) secureBoot.isChecked = false
+                val old = GuestArch.entries.firstOrNull { it.label == architectureSpinner.selectedItem?.toString() }
+                updateArchitectures(old)
             }
         }
-        layout.addView(TextView(this).apply { text = "Nom"; setTextColor(textColor) })
-        layout.addView(name)
-        layout.addView(TextView(this).apply { text = "Architecture"; setTextColor(textColor) })
-        layout.addView(arch)
-        layout.addView(TextView(this).apply { text = "Mode"; setTextColor(textColor) })
-        layout.addView(mode)
-        layout.addView(TextView(this).apply { text = "Profil"; setTextColor(textColor) })
-        layout.addView(preset)
-        layout.addView(secureBoot)
+        addLabel("Version / description (facultatif)")
+        val version = edit(base.guestVersion)
 
-        AlertDialog.Builder(this)
-            .setTitle("Création VM full-system")
-            .setMessage(
-                "Initialise disque, UEFI/NVRAM, réseau, VirtIO et profil de performance. " +
-                    "Secure Boot utilise le runtime OVMF Secure Boot vérifié uniquement pour x86_64. " +
-                    "Les guests Windows/Android restent à valider sur appareil réel."
+        section("B — Ressources de la machine")
+        addLabel("RAM (MiB)")
+        val ram = edit(base.ramMb.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
+        addLabel("Nombre de vCPU")
+        val vcpus = edit(base.vCpu.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
+        addLabel("Taille du disque virtuel (GiB)")
+        val diskSize = edit(base.diskSizeGiB.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
+        addLabel("Format du disque")
+        val diskFormats = DiskFormat.entries
+        val diskFormat = spinner(diskFormats.map { it.name }, diskFormats.indexOf(base.diskFormat))
+
+        section("C — Affichage et GPU")
+        addLabel("Backend graphique")
+        val gpuBackends = GpuBackend.entries
+        val gpu = spinner(
+            gpuBackends.map { it.name },
+            gpuBackends.indexOf(base.gpuBackend),
+        )
+        content.addView(subtitle(
+            "AUTO choisit le rendu logiciel tant qu'une accélération complète n'est pas vérifiée. " +
+                "VirGL/Gfxstream ne garantissent pas que le pilote du téléphone accepte le chemin."
+        ))
+
+        section("D — Réseau et connectivité")
+        addLabel("Mode réseau")
+        val networkModes = NetworkMode.entries
+        val network = spinner(networkModes.map { it.name }, networkModes.indexOf(base.networkMode))
+        addLabel("Redirections (TCP:port_hôte:port_invité, UDP:port_hôte:port_invité ou port_hôte:port_invité)")
+        val forwards = edit(
+            base.portForwards.joinToString(",") { "${it.protocol.uppercase()}:${it.hostPort}:${it.guestPort}" }
+        )
+        addLabel("Nom de l'interface TAP (mode TAP uniquement)")
+        val tapName = edit(base.tapName)
+
+        section("E — Dossiers partagés")
+        val shareDirectory = File(filesDir, "vms/$vmId/shared").canonicalFile
+        val share = checkBox("Créer le dossier partagé PhoenixVM", base.sharedDirs.isNotEmpty() || base.sharedDirPath.isNotBlank())
+        val shareLocation = cardText().apply {
+            text = "Dossier privé de partage :\n${shareDirectory.absolutePath}\n" +
+                "Les fichiers placés dans ce dossier sont exposés au guest via le tag « shared »."
+        }
+        content.addView(shareLocation)
+        content.addView(subtitle(
+            "Le presse-papiers hôte/invité n'est pas encore relié à un agent guest dans ce runtime ; " +
+                "il n'est donc pas présenté comme une fonction active."
+        ))
+
+        section("F — Optimisation et sécurité")
+        addLabel("Mode")
+        val modes = VmMode.entries
+        val mode = spinner(modes.map { it.label }, modes.indexOf(base.mode))
+        addLabel("Profil de performance")
+        val presets = PerformancePreset.entries
+        val preset = spinner(presets.map { it.label }, presets.indexOf(base.performancePreset))
+        val secureBoot = checkBox("Secure Boot (x86_64 uniquement)", base.secureBoot)
+        val autoSnapshot = checkBox("Créer un snapshot froid initial", base.autoSnapshotOnInstall)
+        val androidAdb = checkBox("Activer ADB réseau (Android invité uniquement)", base.androidAdbEnabled)
+        addLabel("Port hôte ADB")
+        val adbPort = edit(base.androidAdbHostPort.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
+
+        section("G — Médias d'installation et de démarrage")
+        content.addView(subtitle(
+            "Choisis les fichiers requis par le système invité. PhoenixVM les copie dans son stockage privé ; " +
+                "il ne conserve pas un URI temporaire du sélecteur Android."
+        ))
+        lateinit var dialog: AlertDialog
+        fun currentDraft(): VmConfig {
+            val selectedOs = GuestOsChoice.entries[osSpinner.selectedItemPosition]
+            val allowed = selectedOs.allowedArchitectures().toList()
+            val selectedArch = allowed[architectureSpinner.selectedItemPosition.coerceIn(0, allowed.lastIndex)]
+            val config = base.copy(
+                name = base.name,
+                description = base.description,
+                guestOs = selectedOs.guestOs(selectedArch),
+                guestVersion = version.text.toString().trim(),
+                arch = selectedArch,
+                ramMb = ram.text.toString().toIntOrNull() ?: -1,
+                vCpu = vcpus.text.toString().toIntOrNull() ?: -1,
+                diskSizeGiB = diskSize.text.toString().toLongOrNull() ?: -1L,
+                diskFormat = diskFormats[diskFormat.selectedItemPosition],
+                gpuBackend = gpuBackends[gpu.selectedItemPosition],
+                networkMode = networkModes[network.selectedItemPosition],
+                portForwards = VmCreationPolicy.parsePortForwards(forwards.text.toString()),
+                tapName = tapName.text.toString().trim(),
+                mode = modes[mode.selectedItemPosition],
+                performancePreset = presets[preset.selectedItemPosition],
+                secureBoot = secureBoot.isChecked,
+                autoSnapshotOnInstall = autoSnapshot.isChecked,
+                androidAdbEnabled = androidAdb.isChecked,
+                androidAdbHostPort = adbPort.text.toString().toIntOrNull() ?: -1,
+                sharedDirPath = "",
+                sharedDirs = if (share.isChecked) {
+                    check(shareDirectory.mkdirs() || shareDirectory.isDirectory) {
+                        "Impossible de préparer le dossier partagé privé."
+                    }
+                    listOf(SharedDirectory(shareDirectory.absolutePath, "shared", readOnly = false))
+                } else {
+                    emptyList()
+                },
+                headless = false,
             )
-            .setView(layout)
-            .setNegativeButton("Annuler", null)
-            .setPositiveButton("Créer") { _, _ ->
-                val selectedArch = GuestArch.entries[arch.selectedItemPosition]
-                val selectedMode = VmMode.entries[mode.selectedItemPosition]
-                val selectedPreset = PerformancePreset.entries[preset.selectedItemPosition]
-                runCatching {
-                    val seed = VmConfig(
-                        name = name.text.toString().ifBlank { "PhoenixVM" },
-                        arch = selectedArch,
-                        mode = selectedMode,
-                        performancePreset = selectedPreset,
-                        secureBoot = secureBoot.isChecked,
-                        guestOs = when (selectedArch) {
-                            GuestArch.ARM64 -> "Linux ARM64"
-                            GuestArch.X86_64 -> "Linux x86_64"
-                            GuestArch.X86_32 -> "DOS / legacy x86"
-                        }
-                    )
-                    seed.backend = VmOrchestrator().choose(seed, manager.capabilities()).selected
-                    manager.create(seed)
-                }.onFailure { toast(it.message ?: "Création impossible.") }
-                refresh()
+            val capabilities = caps
+            val suggested = VmOrchestrator().choose(config.copy(mode = VmMode.AUTO), capabilities).selected
+            config.backend = when (suggested) {
+                BackendKind.GUNYAH, BackendKind.GENIEZONE, BackendKind.HALLA, BackendKind.AVF ->
+                    if (capabilities.kvm) BackendKind.KVM else BackendKind.QEMU_TCG
+                else -> suggested
             }
-            .show()
+            if (config.arch != GuestArch.X86_64) config.secureBoot = false
+            return config
+        }
+        fun pickArtifact(kind: String, requestCode: Int) {
+            val draft = runCatching { currentDraft() }.getOrElse {
+                toast(it.message ?: "Configuration invalide.")
+                return
+            }
+            pendingVmCreationDraft = draft
+            pendingVmCreationArtifact = kind
+            dialog.dismiss()
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                type = "application/octet-stream"
+                addCategory(Intent.CATEGORY_OPENABLE)
+            }, requestCode)
+        }
+        val artifactRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun artifactButton(label: String, kind: String, requestCode: Int) {
+            artifactRow.addView(actionButton(label, teal) { pickArtifact(kind, requestCode) })
+        }
+        artifactButton("Choisir l'ISO personnalisée", "iso", 706)
+        artifactButton("Importer un disque existant", "disk", 707)
+        artifactButton("Choisir le kernel Android / Linux", "kernel", 708)
+        artifactButton("Choisir l'initrd (facultatif)", "initrd", 709)
+        artifactButton("Choisir le DTB (facultatif)", "dtb", 710)
+        artifactButton("Choisir Android system.img", "android-system", 711)
+        artifactButton("Choisir Android vendor.img (facultatif)", "android-vendor", 712)
+        artifactButton("Choisir Android userdata.img", "android-userdata", 713)
+        content.addView(artifactRow)
+
+        val scroll = ScrollView(this).apply { addView(content) }
+        dialog = AlertDialog.Builder(this)
+            .setTitle("Assistant de création VM — configuration complète")
+            .setView(scroll)
+            .setNegativeButton("Annuler", null)
+            .setPositiveButton("Créer la VM", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val config = runCatching { currentDraft() }.getOrElse {
+                    toast(it.message ?: "Configuration invalide.")
+                    return@setOnClickListener
+                }
+                if (config.name.isBlank()) {
+                    toast("Le nom de la VM ne peut pas être vide.")
+                    return@setOnClickListener
+                }
+                val issues = VmSpecValidator.validate(config).filter { it.fatal }
+                if (issues.isNotEmpty()) {
+                    toast(issues.joinToString("\n") { it.field + " : " + it.message })
+                    return@setOnClickListener
+                }
+                val existing = manager.list()
+                if (existing.any { it.name.equals(config.name, ignoreCase = true) }) {
+                    toast("Une VM porte déjà ce nom. Choisis un nom unique.")
+                    return@setOnClickListener
+                }
+                val admission = ResourceAdmissionController.check(config, existing, caps)
+                if (!admission.allowed) {
+                    toast(admission.reason)
+                    return@setOnClickListener
+                }
+                pendingVmCreationDraft = config
+                dialog.dismiss()
+                Toast.makeText(this, "Création de la VM en cours…", Toast.LENGTH_SHORT).show()
+                Thread({
+                    val result = runCatching { manager.create(config) }
+                    handler.post {
+                        result.onSuccess {
+                            pendingVmCreationDraft = null
+                            pendingVmCreationArtifact = null
+                            toast("VM créée : ${it.name}. Le démarrage invité reste à valider.")
+                        }.onFailure {
+                            toast("Création impossible : " + (it.message ?: "erreur inconnue"))
+                        }
+                        refresh()
+                    }
+                }, "phoenixvm-vm-create").start()
+            }
+        }
+        dialog.show()
     }
 
     private fun cloneVm(vm: VmConfig) {
