@@ -352,11 +352,14 @@ class MainActivity : Activity() {
         addLabel("Nom de la VM")
         val vmName = edit(base.name)
 
-        section("A — Architecture et système invité")
+        section("A — Architecture")
+        addLabel("Architecture invitée")
+        val architectureSpinner = Spinner(this)
+        content.addView(architectureSpinner)
+
+        section("B — Système invité et médias")
         addLabel("Système invité")
         val osSpinner = spinner(GuestOsChoice.entries.map { it.label }, GuestOsChoice.entries.indexOf(osChoice))
-        addLabel("Architecture")
-        val architectureSpinner = Spinner(this)
         fun updateArchitectures(preferred: GuestArch?) {
             val choice = GuestOsChoice.entries[osSpinner.selectedItemPosition]
             val allowed = choice.allowedArchitectures().toList()
@@ -369,7 +372,6 @@ class MainActivity : Activity() {
             architectureSpinner.setSelection(allowed.indexOf(selected).coerceAtLeast(0))
         }
         updateArchitectures(base.arch)
-        content.addView(architectureSpinner)
         osSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
             override fun onItemSelected(
@@ -384,8 +386,13 @@ class MainActivity : Activity() {
         }
         addLabel("Version / description (facultatif)")
         val version = edit(base.guestVersion)
+        val artifactRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(subtitle(
+            "Supports : ISO personnalisée, disque existant et images kernel/initrd/DTB/system/vendor/userdata pour Android. Les fichiers sont copiés dans l'espace privé de la VM."
+        ))
+        content.addView(artifactRow)
 
-        section("B — Ressources de la machine")
+        section("C — Ressources de la machine")
         addLabel("RAM (MiB)")
         val ram = edit(base.ramMb.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
         addLabel("Nombre de vCPU")
@@ -396,7 +403,7 @@ class MainActivity : Activity() {
         val diskFormats = DiskFormat.entries
         val diskFormat = spinner(diskFormats.map { it.name }, diskFormats.indexOf(base.diskFormat))
 
-        section("C — Affichage et GPU")
+        section("D — GPU et affichage")
         addLabel("Backend graphique")
         val gpuBackends = GpuBackend.entries
         val gpu = spinner(
@@ -408,7 +415,7 @@ class MainActivity : Activity() {
                 "VirGL/Gfxstream ne garantissent pas que le pilote du téléphone accepte le chemin."
         ))
 
-        section("D — Réseau et connectivité")
+        section("E — Réseau et connectivité")
         addLabel("Mode réseau")
         val networkModes = NetworkMode.entries
         val network = spinner(networkModes.map { it.name }, networkModes.indexOf(base.networkMode))
@@ -418,9 +425,10 @@ class MainActivity : Activity() {
         )
         addLabel("Nom de l'interface TAP (mode TAP uniquement)")
         val tapName = edit(base.tapName)
+        content.addView(subtitle("Le bridge réseau Android n'est pas configuré automatiquement. TAP exige une interface précréée et des privilèges adaptés ; NAT est le choix portable par défaut."))
 
-        section("E — Dossiers partagés")
-        val shareDirectory = File(filesDir, "vms/$vmId/shared").canonicalFile
+        section("F — Partage hôte / invité")
+        val shareDirectory = (getExternalFilesDir("PhoenixVM/Shared") ?: File(filesDir, "PhoenixVM/Shared")).canonicalFile
         val share = checkBox("Créer le dossier partagé PhoenixVM", base.sharedDirs.isNotEmpty() || base.sharedDirPath.isNotBlank())
         val shareLocation = cardText().apply {
             text = "Dossier privé de partage :\n${shareDirectory.absolutePath}\n" +
@@ -428,28 +436,37 @@ class MainActivity : Activity() {
         }
         content.addView(shareLocation)
         content.addView(subtitle(
-            "Le presse-papiers hôte/invité n'est pas encore relié à un agent guest dans ce runtime ; " +
-                "il n'est donc pas présenté comme une fonction active."
+            "Les fichiers ponctuels peuvent être déposés dans ce dossier partagé. Le presse-papiers hôte/invité n'est pas encore relié à un agent guest et reste désactivé."
         ))
 
-        section("F — Optimisation et sécurité")
+        section("G — Optimisation et sécurité")
         addLabel("Mode")
-        val modes = VmMode.entries
+        val modes = VmMode.entries.filter { it != VmMode.EXPERT }
         val mode = spinner(modes.map { it.label }, modes.indexOf(base.mode))
+        content.addView(subtitle("Le profil Battery Saver correspond au mode économie d’énergie demandé par le cahier des charges."))
         addLabel("Profil de performance")
         val presets = PerformancePreset.entries
         val preset = spinner(presets.map { it.label }, presets.indexOf(base.performancePreset))
         val secureBoot = checkBox("Secure Boot (x86_64 uniquement)", base.secureBoot)
+        fun updateSecureBootAvailability() {
+            val selected = GuestArch.entries.firstOrNull { it.label == architectureSpinner.selectedItem?.toString() }
+            secureBoot.isEnabled = selected == GuestArch.X86_64
+            if (!secureBoot.isEnabled) secureBoot.isChecked = false
+        }
+        architectureSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
+                updateSecureBootAvailability()
+            }
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                updateSecureBootAvailability()
+            }
+        }
+        updateSecureBootAvailability()
         val autoSnapshot = checkBox("Créer un snapshot froid initial", base.autoSnapshotOnInstall)
         val androidAdb = checkBox("Activer ADB réseau (Android invité uniquement)", base.androidAdbEnabled)
         addLabel("Port hôte ADB")
         val adbPort = edit(base.androidAdbHostPort.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
 
-        section("G — Médias d'installation et de démarrage")
-        content.addView(subtitle(
-            "Choisis les fichiers requis par le système invité. PhoenixVM les copie dans son stockage privé ; " +
-                "il ne conserve pas un URI temporaire du sélecteur Android."
-        ))
         lateinit var dialog: AlertDialog
         fun currentDraft(): VmConfig {
             val selectedOs = GuestOsChoice.entries[osSpinner.selectedItemPosition]
@@ -509,7 +526,6 @@ class MainActivity : Activity() {
                 addCategory(Intent.CATEGORY_OPENABLE)
             }, requestCode)
         }
-        val artifactRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fun artifactButton(label: String, kind: String, requestCode: Int) {
             artifactRow.addView(actionButton(label, teal) { pickArtifact(kind, requestCode) })
         }
@@ -521,7 +537,6 @@ class MainActivity : Activity() {
         artifactButton("Choisir Android system.img", "android-system", 711)
         artifactButton("Choisir Android vendor.img (facultatif)", "android-vendor", 712)
         artifactButton("Choisir Android userdata.img", "android-userdata", 713)
-        content.addView(artifactRow)
         content.addView(cardText().apply {
             text = buildString {
                 append("ISO : ").append(base.isoPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "non sélectionnée").append('\\n')
