@@ -68,6 +68,7 @@ class VmStoreTransactionTest {
         val firstEntered = CountDownLatch(1)
         val releaseFirst = CountDownLatch(1)
         val otherVmCompleted = CountDownLatch(1)
+        val sameVmAttempting = CountDownLatch(1)
         val sameVmCompleted = CountDownLatch(1)
 
         val first = thread(name = "vm-lock-a1") {
@@ -84,8 +85,10 @@ class VmStoreTransactionTest {
         assertTrue(otherVmCompleted.await(1, TimeUnit.SECONDS))
 
         val sameVm = thread(name = "vm-lock-a2") {
+            sameVmAttempting.countDown()
             managerStore.withVmLock("vm-a") { sameVmCompleted.countDown() }
         }
+        assertTrue(sameVmAttempting.await(5, TimeUnit.SECONDS))
         assertFalse(sameVmCompleted.await(100, TimeUnit.MILLISECONDS))
 
         releaseFirst.countDown()
