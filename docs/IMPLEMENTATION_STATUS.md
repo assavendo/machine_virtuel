@@ -2,6 +2,10 @@
 
 A requirement is marked complete here only when the repository contains an actual implementation or a deterministic software-side mechanism. Physical acceptance is separated explicitly.
 
+## Latest implementation increment — serialized VM lifecycle and confirmed process shutdown
+
+Lifecycle intents are now FIFO-serialized per VM while separate VMs remain independently schedulable. Process-exit callbacks are routed back through the same per-VM queue and use handle-identity removal, preventing a delayed callback from clearing a newer run. Pause/resume/reboot validate the persisted state, clean stop escalates through bounded graceful/destroy/force-kill stages, and the VM is only persisted as OFF after process termination is confirmed. Missing runtime handles are surfaced as RECOVERY rather than being represented as a successful stop. Unit tests cover per-VM FIFO order, cross-VM concurrency, queue failure recovery and process-termination escalation. Physical long-run/restart acceptance remains separate.
+
 ## Latest implementation increment — backend-aware QEMU sidecars
 
 QEMU auxiliary runtime processes are now selected by explicit backend capabilities rather than by the `QEMU_TCG` enum value. Both QEMU/KVM and QEMU/TCG can start the verified `virtiofsd` and `swtpm` helpers before the VM process. The crosvm command builder rejects a requested TPM instead of silently omitting it; the runtime can then try the next eligible QEMU fallback. Regression tests cover QEMU/KVM, QEMU/TCG and crosvm capability declarations and the crosvm TPM guard.
