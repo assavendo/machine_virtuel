@@ -55,20 +55,67 @@ class VmManager(private val context: Context) {
     }
 
     fun create(config: VmConfig): VmConfig {
+        config.name = config.name.trim()
+        require(config.name.length in 1..80) { "Le nom de la VM doit contenir entre 1 et 80 caractères." }
+        require(runCatching { UUID.fromString(config.id) }.isSuccess) {
+            "L'identifiant de la VM doit être un UUID valide."
+        }
+        require(config.state == VmState.OFF) { "Une nouvelle VM doit être créée à l'état OFF." }
+
+        val current = store.list()
+        require(current.none { it.id == config.id }) { "Une VM utilise déjà cet identifiant." }
+        require(current.none { it.name.equals(config.name, ignoreCase = true) }) {
+            "Une VM porte déjà ce nom ; les noms doivent être uniques."
+        }
         val issues = VmSpecValidator.validate(config).filter { it.fatal }
-        check(issues.isEmpty()) { issues.joinToString("; ") { it.field + ": " + it.message } }
-        val runtime = if (config.diskFormat == DiskFormat.RAW) null else RuntimeInstaller.ensure(context)
-        DiskManager.ensureVmStorage(context.filesDir, config, runtime)
-        store.save(store.list().toMutableList().apply { add(config) })
-        if (config.autoSnapshotOnInstall) {
-            runCatching {
-                SnapshotManager.createColdSnapshot(context.filesDir, config, "install")
-                SnapshotManager.enforceRetention(context.filesDir, config)
-            }.onFailure {
-                store.update(config.id) { it.autoSnapshotOnInstall = false }
+        check(issues.isEmpty()) {
+            issues.joinToString("; ") { it.field + ": " + it.message }
+        }
+        val admission = ResourceAdmissionController.check(config, current, capabilities())
+        check(admission.allowed) {
+            "Création refusée par l'admission des ressources : " + admission.reason
+        }
+
+        val vmRoot = File(context.filesDir, "vms").canonicalFile
+        val vmDir = File(vmRoot, config.id).canonicalFile
+        require(vmDir.toPath().startsWith(vmRoot.toPath()) && vmDir != vmRoot) {
+            "Le chemin de stockage de la VM est invalide."
+        }
+        val suppliedArtifacts = listOf(
+            config.diskPath, config.isoPath, config.kernelPath, config.initrdPath,
+            config.dtbPath, config.androidSystemPath, config.androidVendorPath,
+            config.androidUserdataPath, config.tpmStatePath,
+        ).filter { it.isNotBlank() }
+        suppliedArtifacts.forEach { path ->
+            val artifact = File(path).canonicalFile
+            require(artifact.toPath().startsWith(vmDir.toPath())) {
+                "Les médias de création doivent être copiés dans le stockage privé de cette VM."
             }
         }
-        return config
+
+        val runtime = if (config.diskFormat != DiskFormat.RAW && config.diskPath.isBlank()) {
+            RuntimeInstaller.ensure(context)
+        } else {
+            null
+        }
+        var persisted = false
+        try {
+            DiskManager.ensureVmStorage(context.filesDir, config, runtime)
+            store.save(current.toMutableList().apply { add(config) })
+            persisted = true
+            if (config.autoSnapshotOnInstall) {
+                runCatching {
+                    SnapshotManager.createColdSnapshot(context.filesDir, config, "install")
+                    SnapshotManager.enforceRetention(context.filesDir, config)
+                }.onFailure {
+                    store.update(config.id) { it.autoSnapshotOnInstall = false }
+                }
+            }
+            return config
+        } catch (error: Throwable) {
+            if (!persisted && vmDir.exists()) vmDir.deleteRecursively()
+            throw error
+        }
     }
 
     fun clone(id: String, newName: String): VmConfig {
