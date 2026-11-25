@@ -60,6 +60,7 @@ The native boundary is fail-safe:
 ### Storage / snapshots / packages
 - RAW/qcow2/vhdx/vdi/vmdk creation and qemu-img operations for resize/convert/clone/check/compact.
 - Per-VM UEFI/NVRAM and firmware provenance metadata.
+- x86_64 Secure Boot is implemented as a verified optional path using the pinned Debian OVMF Secure Boot code + Microsoft-keyed VARS template, with SMM/pflash protection, per-VM Secure Boot NVRAM and fail-closed runtime validation. ARM64 Secure Boot remains unavailable until a verified ARM64 Secure Boot firmware/variable-service runtime is provisioned.
 - Cold snapshots with SHA-256 manifest, protection, retention and restore.
 - VM package import/export with manifest and SHA-256 verification.
 - Optional Ed25519 package signature verification when signature/public-key sidecars are supplied.
