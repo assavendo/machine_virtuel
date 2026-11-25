@@ -31,12 +31,7 @@ class SnapshotManagerTest {
     @Test fun createsListsAndRestoresDiskAndNvramWithIntegrityChecks() {
         val f = fixture()
         try {
-            val snapshot = try {
-                SnapshotManager.createColdSnapshot(f.root, f.vm, "before update")
-            } catch (t: Throwable) {
-                println("SNAPSHOT_DEBUG: " + t.stackTraceToString())
-                throw t
-            }
+            val snapshot = SnapshotManager.createColdSnapshot(f.root, f.vm, "before update")
             assertEquals(1, SnapshotManager.list(f.root, f.vm.id).size)
             File(f.vm.diskPath).writeText("guest-disk-state-two")
             File(f.vm.firmwarePath).writeText("uefi-state-two")
