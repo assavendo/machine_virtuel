@@ -112,6 +112,18 @@ class VmManager(private val context: Context) {
         var persisted = false
         try {
             DiskManager.ensureVmStorage(context.filesDir, config, runtime)
+
+            // The initial cold snapshot must finish (or fail closed to "no auto snapshot")
+            // before the VM record becomes visible and startable in the dashboard.
+            if (config.autoSnapshotOnInstall) {
+                runCatching {
+                    SnapshotManager.createColdSnapshot(context.filesDir, config, "install")
+                    SnapshotManager.enforceRetention(context.filesDir, config)
+                }.onFailure {
+                    config.autoSnapshotOnInstall = false
+                }
+            }
+
             store.insertUnique(config) { latest ->
                 val latestAdmission = ResourceAdmissionController.check(config, latest, host)
                 check(latestAdmission.allowed) {
@@ -119,17 +131,12 @@ class VmManager(private val context: Context) {
                 }
             }
             persisted = true
-            if (config.autoSnapshotOnInstall) {
-                runCatching {
-                    SnapshotManager.createColdSnapshot(context.filesDir, config, "install")
-                    SnapshotManager.enforceRetention(context.filesDir, config)
-                }.onFailure {
-                    store.update(config.id) { it.autoSnapshotOnInstall = false }
-                }
-            }
             return config
         } catch (error: Throwable) {
-            if (!persisted && vmDir.exists()) vmDir.deleteRecursively()
+            if (!persisted) {
+                if (vmDir.exists()) vmDir.deleteRecursively()
+                File(context.filesDir, "snapshots/" + config.id).deleteRecursively()
+            }
             throw error
         }
     }
