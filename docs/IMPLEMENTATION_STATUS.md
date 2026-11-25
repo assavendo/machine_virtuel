@@ -2,6 +2,21 @@
 
 A requirement is marked complete here only when the repository contains an actual implementation or a deterministic software-side mechanism. Physical acceptance is separated explicitly.
 
+## Latest implementation increment — native orchestration policy
+
+The Android orchestrator now crosses a real JNI boundary into the Rust policy core for the initial backend decision. Kotlin still validates the returned backend against the live capability set before accepting it, so a stale or unavailable native decision cannot cause an invalid backend launch.
+
+The native core now exposes:
+- backend selection for ARM64 guests across KVM, Gunyah, GenieZone, Halla, AVF and QEMU TCG;
+- x86/x86_64 full-system selection as QEMU TCG;
+- thermal-aware conservative fallback;
+- translation tier classification COLD/WARM/HOT/VERY_HOT.
+
+The native boundary is fail-safe:
+- missing native library -> deterministic Kotlin fallback;
+- JNI call failure -> QEMU_TCG fallback for the native policy result;
+- expert-mode explicit request remains subject to the Android-side availability guard.
+
 ## Software work completed
 
 ### VM architecture and lifecycle
@@ -19,6 +34,7 @@ A requirement is marked complete here only when the repository contains an actua
 - x86_64 and x86/i386 full-system command paths use QEMU system emulators, never Wine/Winlator/user-mode compatibility.
 - QEMU TCG MTTCG policy and translation COLD/WARM/HOT/VERY_HOT profiling metadata.
 - Persistent translation-cache metadata keyed by VM/guest/translator/host features and cache level.
+- Rust native orchestration policy is now invoked from the Android path through JNI, with Kotlin availability guards.
 
 ### Memory / scheduling / performance
 - P/E-core topology discovery.
