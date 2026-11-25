@@ -55,6 +55,20 @@ class HypervisorManagerTest {
     }
 
     @Test
+    fun qemuSidecarsAreAvailableForBothQemuAcceleratorsButNotCrosvm() {
+        val qemuKvm = QemuBackend(BackendKind.KVM)
+        val qemuTcg = QemuBackend(BackendKind.QEMU_TCG)
+        val crosvmKvm = CrosvmBackend(BackendKind.KVM)
+
+        assertTrue(qemuKvm.supportsVirtioFsSidecar())
+        assertTrue(qemuKvm.supportsTpmSidecar())
+        assertTrue(qemuTcg.supportsVirtioFsSidecar())
+        assertTrue(qemuTcg.supportsTpmSidecar())
+        assertFalse(crosvmKvm.supportsVirtioFsSidecar())
+        assertFalse(crosvmKvm.supportsTpmSidecar())
+    }
+
+    @Test
     fun crosvmIsAllowedForHeadlessTapGuest() {
         val vm = VmConfig(
             name = "guest",

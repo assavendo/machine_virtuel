@@ -55,6 +55,8 @@ class QemuBackend(private val backendKind: BackendKind) : HypervisorBackend {
     )
 
     override fun supportsPauseResume() = true
+    override fun supportsVirtioFsSidecar() = true
+    override fun supportsTpmSidecar() = true
 }
 
 class CrosvmBackend(private val backendKind: BackendKind) : HypervisorBackend {

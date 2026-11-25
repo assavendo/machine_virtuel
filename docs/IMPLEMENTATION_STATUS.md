@@ -2,6 +2,10 @@
 
 A requirement is marked complete here only when the repository contains an actual implementation or a deterministic software-side mechanism. Physical acceptance is separated explicitly.
 
+## Latest implementation increment — backend-aware QEMU sidecars
+
+QEMU auxiliary runtime processes are now selected by explicit backend capabilities rather than by the `QEMU_TCG` enum value. Both QEMU/KVM and QEMU/TCG can start the verified `virtiofsd` and `swtpm` helpers before the VM process. The crosvm command builder rejects a requested TPM instead of silently omitting it; the runtime can then try the next eligible QEMU fallback. Regression tests cover QEMU/KVM, QEMU/TCG and crosvm capability declarations and the crosvm TPM guard.
+
 ## Latest implementation increment — native orchestration policy
 
 The Android orchestrator now crosses a real JNI boundary into the Rust policy core for the initial backend decision. Kotlin still validates the returned backend against the live capability set before accepting it, so a stale or unavailable native decision cannot cause an invalid backend launch.

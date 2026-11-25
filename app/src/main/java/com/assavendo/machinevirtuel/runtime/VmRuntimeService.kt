@@ -185,10 +185,10 @@ class VmRuntimeService : Service() {
                         it.state = VmState.STARTING
                         it.backend = backend.kind
                     }
-                    if (vm.sharedDirPath.isNotBlank() && backend.kind == BackendKind.QEMU_TCG) {
+                    if (vm.sharedDirPath.isNotBlank() && backend.supportsVirtioFsSidecar()) {
                         fsHandle = VirtioFsManager.start(paths, vm, dir, log)
                     }
-                    if (vm.tpmEnabled && backend.kind == BackendKind.QEMU_TCG) {
+                    if (vm.tpmEnabled && backend.supportsTpmSidecar()) {
                         tpmHandle = TpmManager.start(paths, vm, dir, log)
                     }
 

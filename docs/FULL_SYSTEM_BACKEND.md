@@ -28,7 +28,9 @@ The orchestrator scores KVM, Gunyah, GenieZone, Halla and AVF based on host capa
 
 ## Shared files
 
-When a verified virtiofsd exists, PhoenixVM starts it for the selected QEMU VM and adds vhost-user-fs-pci using shared guest memory. If virtiofsd cannot start, PhoenixVM falls back to QEMU's 9p VirtFS path rather than pretending that VirtIO-FS is active.
+When a verified virtiofsd exists, PhoenixVM starts it for the selected QEMU VM (QEMU/KVM or QEMU/TCG) and adds vhost-user-fs-pci using shared guest memory. If virtiofsd cannot start, PhoenixVM falls back to QEMU's 9p VirtFS path rather than pretending that VirtIO-FS is active.
+
+The QEMU sidecar decision is based on backend capability, not the accelerator label: QEMU/KVM and QEMU/TCG both support the QEMU-managed virtiofsd and swtpm helpers. The current crosvm Android path does not expose the verified swtpm integration and rejects VMs that request TPM 2.0 so the orchestrator can continue to a QEMU fallback.
 
 ## TPM
 

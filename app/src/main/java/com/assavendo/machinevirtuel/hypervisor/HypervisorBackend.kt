@@ -52,4 +52,10 @@ interface HypervisorBackend {
 
     fun supportsPauseResume(): Boolean = false
     fun supportsResize(): Boolean = false
+
+    /** Whether this backend can start the verified virtiofsd helper used by QEMU. */
+    fun supportsVirtioFsSidecar(): Boolean = false
+
+    /** Whether this backend can start the verified swtpm helper used by QEMU. */
+    fun supportsTpmSidecar(): Boolean = false
 }

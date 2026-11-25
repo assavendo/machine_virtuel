@@ -8,6 +8,7 @@ import com.assavendo.machinevirtuel.vm.VmConfig
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class CrosvmCommandBuilderTest {
@@ -141,6 +142,28 @@ class CrosvmCommandBuilderTest {
             val i = command.indexOf("--net")
             assertTrue(i >= 0)
             assertEquals("tap-name=pvmtap0", command[i + 1])
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun tpmRequestFailsClosedInsteadOfBeingSilentlyIgnored() {
+        val f = fixture()
+        try {
+            val vm = VmConfig(
+                name = "tpm",
+                arch = GuestArch.ARM64,
+                backend = BackendKind.KVM,
+                diskPath = f.disk.absolutePath,
+                firmwarePath = f.firmware.absolutePath,
+                tpmEnabled = true,
+                audioEnabled = false,
+                networkMode = com.assavendo.machinevirtuel.vm.NetworkMode.DISABLED,
+            )
+            assertFailsWith<IllegalArgumentException> {
+                CrosvmCommandBuilder.build(f.paths, vm, File(f.root, "control.sock"))
+            }
         } finally {
             f.root.deleteRecursively()
         }

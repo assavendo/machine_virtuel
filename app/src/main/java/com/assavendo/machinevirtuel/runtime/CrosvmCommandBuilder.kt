@@ -13,6 +13,9 @@ object CrosvmCommandBuilder {
         require(paths.crosvm.canExecute()) {
             "Le runtime crosvm n'est pas installé ou exécutable."
         }
+        require(!vm.tpmEnabled) {
+            "Le backend crosvm Android ne prend pas encore en charge le TPM 2.0 via swtpm; utilisez QEMU."
+        }
         require(vm.diskPath.isNotBlank()) { "Une VM full-system doit avoir un disque virtuel." }
         val disk = File(vm.diskPath).canonicalFile
         require(disk.isFile && disk.length() > 0L) {
