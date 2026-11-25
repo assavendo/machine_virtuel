@@ -82,6 +82,28 @@ class VmSpecValidatorTest {
 
 
     @Test
+    fun optionalBootImagesMustBeReadableAndNonEmptyWhenProvided() {
+        val root = createTempDir(prefix = "vm-boot-artifacts-")
+        try {
+            val emptyInitrd = java.io.File(root, "initrd").apply { createNewFile() }
+            val emptyDtb = java.io.File(root, "guest.dtb").apply { createNewFile() }
+            val emptyVendor = java.io.File(root, "vendor.img").apply { createNewFile() }
+            val vm = VmConfig(
+                name = "linux-empty-artifacts",
+                initrdPath = emptyInitrd.absolutePath,
+                dtbPath = emptyDtb.absolutePath,
+                androidVendorPath = emptyVendor.absolutePath,
+            )
+            val issues = VmSpecValidator.validate(vm)
+            assertTrue(issues.any { it.field == "initrdPath" && it.fatal })
+            assertTrue(issues.any { it.field == "dtbPath" && it.fatal })
+            assertTrue(issues.any { it.field == "androidVendorPath" && it.fatal })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun nonAndroidGuestCannotCarryAndroidOnlyPartitionsOrAdb() {
         val vm = VmConfig(
             name = "linux-with-android-data",
