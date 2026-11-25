@@ -9,13 +9,13 @@ The source specification (section 6) defines the states `OFF`, `STARTING`, `RUNN
 PhoenixVM applies the following runtime rules:
 
 1. Commands for the same VM are accepted in FIFO order. Commands for different VM IDs may execute concurrently.
-2. A duplicate start is idempotent while that VM already has a live backend process.
+2. A duplicate start is idempotent while that VM already has a live backend process. A new start is admitted only from `OFF`; persisted active/error states without a registered process are reconciled to `RECOVERY` instead of launching a possible duplicate guest.
 3. Pause is accepted only from `RUNNING`; resume is accepted only from `PAUSED`; reboot is accepted only while a live process is in `RUNNING` or `PAUSED`.
 4. A stop received during startup waits behind the startup command. It therefore observes either a completed backend handle or a recorded startup failure; it cannot race ahead of process registration.
 5. Process waiters never mutate VM state directly. They enqueue an exit transition into the same per-VM command queue.
 6. Exit cleanup removes a process with the key-and-handle identity pair. A delayed exit notification for an older process cannot remove a newer process registered for the same VM ID.
 7. Clean/force stop follows bounded escalation: accepted graceful request and wait, process destroy and wait, then destroy-forcibly and final wait. A VM is stored as `OFF` only when process exit is confirmed. A process that exits before the stop command is handled as an unexpected exit; a stop that requires destroy/force escalation is stored as `RECOVERY` with a plan because guest filesystem consistency is not guaranteed. Failure to confirm termination remains visible as `ERROR`; the process handle retains the recovery-required marker so a later exit callback cannot erase the recovery requirement.
-8. If the store says a VM is active but no runtime process handle exists, a stop request moves it to `RECOVERY` and writes a recovery plan instead of falsely reporting `OFF`.
+8. If the store says a VM is active or in `ERROR` but no runtime process handle exists, a start/stop request moves it to `RECOVERY` and writes a recovery plan instead of launching a duplicate or falsely reporting `OFF`.
 
 ## Concurrency and resource isolation
 

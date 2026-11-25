@@ -96,7 +96,7 @@ class VmRuntimeService : Service() {
     private fun startVm(id: String) {
         val store = VmStore(this)
         val logger = VmLogger(this, id)
-        val original = store.list().firstOrNull { it.id == id } ?: return
+        var original = store.list().firstOrNull { it.id == id } ?: return
         val existing = processes[id]
         if (existing != null) {
             if (existing.process.isAlive) return
@@ -108,6 +108,15 @@ class VmRuntimeService : Service() {
                 requestedStop = existing.stopRequested,
                 recoveryRequired = existing.recoveryRequiredOnExit,
             )
+            original = store.list().firstOrNull { it.id == id } ?: return
+        }
+        if (original.state != VmState.OFF) {
+            if (original.state == VmState.RECOVERY) {
+                updateNotification("VM " + original.name + ": recovery required before restart")
+            } else {
+                markMissingRuntimeHandle(id, original)
+            }
+            return
         }
 
         val vm = original.copy()
@@ -630,6 +639,7 @@ class VmRuntimeService : Service() {
                 VmState.PAUSED,
                 VmState.SUSPENDED,
                 VmState.STOPPING,
+                VmState.ERROR,
             )
         ) return
 
@@ -754,7 +764,7 @@ class VmRuntimeService : Service() {
         processes.entries.toList().forEach { (id, handle) ->
             val store = VmStore(this)
             val vm = store.list().firstOrNull { it.id == id }
-            if (vm != null && vm.state != VmState.OFF && vm.state != VmState.ERROR) {
+            if (vm != null && vm.state != VmState.OFF) {
                 store.update(id) { it.state = VmState.RECOVERY }
                 val plan = RecoveryManager.plan(
                     filesDir,
@@ -771,7 +781,7 @@ class VmRuntimeService : Service() {
         super.onDestroy()
     }
 
-    private data class Handle(
+    private class Handle(
         val process: Process,
         val backend: BackendKind,
         val qmp: File?,
