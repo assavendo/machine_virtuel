@@ -1,6 +1,7 @@
 package com.assavendo.machinevirtuel.runtime
 
 import android.os.Build
+import com.assavendo.machinevirtuel.engine.NativeEngine
 import java.io.File
 
 data class RuntimeDiagnostic(
@@ -55,6 +56,12 @@ object RuntimeDiagnostics {
             } else {
                 "QEMU x86 et/ou OVMF x86_64 absent(s); Windows/Linux x86_64 ne sera pas lancé avec le firmware ARM64."
             },
+        )
+
+        results += RuntimeDiagnostic(
+            component = "Rust native core",
+            ok = NativeEngine.isAvailable(),
+            detail = NativeEngine.version(),
         )
 
         val marker = paths.marker()
