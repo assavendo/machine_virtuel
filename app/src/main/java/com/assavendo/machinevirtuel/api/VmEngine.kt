@@ -3,18 +3,17 @@ package com.assavendo.machinevirtuel.api
 import android.content.Context
 import com.assavendo.machinevirtuel.performance.HostMetricsCollector
 import com.assavendo.machinevirtuel.vm.VmManager
-import com.assavendo.machinevirtuel.vm.VmStore
 import com.assavendo.machinevirtuel.runtime.VmRuntimeService
 import java.io.File
 
 class VmEngine(private val context: Context) : VmEngineApi {
     private val manager = VmManager(context)
-    private val store = VmStore(context)
     private val metricsCollector = HostMetricsCollector(context)
 
     override fun create(config: com.assavendo.machinevirtuel.vm.VmConfig) = manager.create(config)
     override fun start(id: String) {
-        manager.markStarting(id)
+        // VmRuntimeService owns the complete, atomic OFF -> STARTING admission.
+        // The API must not publish a transient state before runtime validation.
         VmRuntimeService.start(context, id)
     }
     override fun stop(id: String) = VmRuntimeService.stop(context, id)
