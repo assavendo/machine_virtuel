@@ -551,12 +551,6 @@ class VmRuntimeService : Service() {
             finalizeBackendExit(id, handle, exit, requestedStop = false)
             return
         }
-
-        if (!handle.process.isAlive) {
-            val exit = runCatching { handle.process.exitValue() }.getOrDefault(-1)
-            finalizeBackendExit(id, handle, exit, requestedStop = false)
-            return
-        }
         handle.stopRequested = true
 
         if (current.state == VmState.PAUSED && !force) {
@@ -645,16 +639,12 @@ class VmRuntimeService : Service() {
         val store = VmStore(this)
         val current = store.list()
         val vm = current.firstOrNull { it.id == id }
-        val unexpectedFailure = exitCode != 0 && !recoveryRequired
-        val needsRecovery = unexpectedFailure || recoveryRequired
+        val disposition = VmExitPolicy.resolve(exitCode, requestedStop, recoveryRequired)
+        val needsRecovery = disposition.requiresRecoveryPlan
         if (vm != null) {
-            vm.state = when {
-                unexpectedFailure -> VmState.ERROR
-                recoveryRequired -> VmState.RECOVERY
-                else -> VmState.OFF
-            }
+            vm.state = disposition.state
             if (needsRecovery) {
-                val reason = if (unexpectedFailure) {
+                val reason = if (disposition.unexpectedFailure) {
                     "Backend " + handle.backend.label + " exited unexpectedly with code " + exitCode
                 } else {
                     "Backend " + handle.backend.label + " required forced process termination; guest filesystem consistency is not guaranteed"
@@ -674,7 +664,7 @@ class VmRuntimeService : Service() {
             store.save(current)
         }
 
-        val eventType = if (unexpectedFailure) VmEventType.VM_ERROR else VmEventType.VM_STOPPED
+        val eventType = if (disposition.unexpectedFailure) VmEventType.VM_ERROR else VmEventType.VM_STOPPED
         val message = when {
             unexpectedFailure -> "unexpected exit=$exitCode"
             recoveryRequired -> "unclean termination; recovery required"

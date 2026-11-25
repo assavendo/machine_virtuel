@@ -32,7 +32,8 @@ JVM tests assert:
 - queue progression after a command fails;
 - graceful exit without unnecessary escalation;
 - escalation to forced termination when a backend does not exit;
-- failure remains failure when the process is still alive after the final termination attempt.
+- failure remains failure when the process is still alive after the final termination attempt;
+- clean, unexpected, forced and delayed process exits are mapped to OFF, ERROR or RECOVERY by a pure policy covered with unit tests.
 
 ## Acceptance boundary
 
