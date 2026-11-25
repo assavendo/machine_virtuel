@@ -483,6 +483,31 @@ class MainActivity : Activity() {
         val androidAdb = checkBox("Activer ADB réseau (Android invité uniquement)", base.androidAdbEnabled)
         addLabel("Port hôte ADB")
         val adbPort = edit(base.androidAdbHostPort.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
+        fun updateAndroidControls() {
+            val isAndroid = GuestOsChoice.entries[osSpinner.selectedItemPosition] == GuestOsChoice.ANDROID
+            androidAdb.isEnabled = isAndroid
+            if (!isAndroid) androidAdb.isChecked = false
+            adbPort.isEnabled = isAndroid && androidAdb.isChecked
+        }
+        osSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
+                updateAndroidControls()
+            }
+            override fun onItemSelected(
+                parent: android.widget.AdapterView<*>?,
+                view: android.view.View?,
+                position: Int,
+                id: Long,
+            ) {
+                val previous = GuestArch.entries.firstOrNull {
+                    it.label == architectureSpinner.selectedItem?.toString()
+                }
+                updateArchitectures(previous)
+                updateAndroidControls()
+            }
+        }
+        androidAdb.setOnCheckedChangeListener { _, _ -> updateAndroidControls() }
+        updateAndroidControls()
 
         lateinit var dialog: AlertDialog
         fun currentDraft(): VmConfig {
@@ -507,8 +532,11 @@ class MainActivity : Activity() {
                 performancePreset = presets[preset.selectedItemPosition],
                 secureBoot = secureBoot.isChecked,
                 autoSnapshotOnInstall = autoSnapshot.isChecked,
-                androidAdbEnabled = androidAdb.isChecked,
+                androidAdbEnabled = selectedOs == GuestOsChoice.ANDROID && androidAdb.isChecked,
                 androidAdbHostPort = adbPort.text.toString().toIntOrNull() ?: -1,
+                androidSystemPath = if (selectedOs == GuestOsChoice.ANDROID) base.androidSystemPath else "",
+                androidVendorPath = if (selectedOs == GuestOsChoice.ANDROID) base.androidVendorPath else "",
+                androidUserdataPath = if (selectedOs == GuestOsChoice.ANDROID) base.androidUserdataPath else "",
                 sharedDirPath = "",
                 sharedDirs = if (share.isChecked) {
                     check(shareDirectory.mkdirs() || shareDirectory.isDirectory) {
