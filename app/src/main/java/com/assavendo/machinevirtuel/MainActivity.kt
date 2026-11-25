@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.hardware.usb.UsbDevice
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -19,6 +20,7 @@ import com.assavendo.machinevirtuel.device.DeviceProfileDatabase
 import com.assavendo.machinevirtuel.guest.GuestCompatibilityCatalog
 import com.assavendo.machinevirtuel.migration.VmMigrationManager
 import com.assavendo.machinevirtuel.runtime.SnapshotManager
+import com.assavendo.machinevirtuel.runtime.UsbPassthroughManager
 import com.assavendo.machinevirtuel.runtime.RuntimeInstaller
 import com.assavendo.machinevirtuel.runtime.VmRuntimeService
 import com.assavendo.machinevirtuel.runtime.RecoveryPlanStore
@@ -250,6 +252,8 @@ class MainActivity : Activity() {
             row3.addView(space(6))
             row3.addView(actionButton("Métriques", accent) { showMetrics(vm) })
             row3.addView(space(6))
+            row3.addView(actionButton("USB", violet) { showUsbPassthrough(vm) })
+            row3.addView(space(6))
             row3.addView(actionButton("Supprimer", Color.rgb(95, 104, 118)) {
                 VmRuntimeService.forceStop(this@MainActivity, vm.id)
                 manager.delete(vm.id)
@@ -397,6 +401,116 @@ class MainActivity : Activity() {
             }
         }
         builder.show()
+    }
+
+    private fun showUsbPassthrough(vm: VmConfig) {
+        val attached = vm.usbPassthrough
+        val devices = UsbPassthroughManager.list(this)
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(8, 4, 8, 4)
+        }
+
+        body.addView(TextView(this).apply {
+            text = "Périphériques attachés : " + attached.size + "/8"
+            setTextColor(textColor)
+            textSize = 15f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(0, 0, 0, 12)
+        })
+
+        attached.forEach { config ->
+            body.addView(TextView(this).apply {
+                text = "ATTACHÉ 0x%04x:0x%04x".format(config.vendorId, config.productId) +
+                    if (config.serialNumber.isBlank()) "" else " • série=" + config.serialNumber
+                setTextColor(good)
+                setPadding(0, 6, 0, 2)
+            })
+            body.addView(actionButton("Détacher", bad) {
+                runCatching { manager.detachUsb(vm.id, config) }
+                    .onSuccess {
+                        toast("Périphérique USB détaché de la VM.")
+                        refresh()
+                        showUsbPassthrough(vm)
+                    }
+                    .onFailure { toast(it.message ?: "Détachement impossible.") }
+            })
+        }
+
+        if (devices.isEmpty()) {
+            body.addView(cardText().apply {
+                text = "Aucun périphérique USB hôte détecté par Android."
+            })
+        } else {
+            devices.forEach { device ->
+                val display = buildString {
+                    append("0x%04x:0x%04x".format(device.vendorId, device.productId))
+                    device.productName?.takeIf { it.isNotBlank() }?.let { append(" • ").append(it) }
+                    device.manufacturerName?.takeIf { it.isNotBlank() }?.let { append(" • ").append(it) }
+                    device.serialNumber?.takeIf { it.isNotBlank() }?.let { append(" • série=").append(it) }
+                    append("\n").append(device.deviceName)
+                    append(" • permission=").append(if (device.hasPermission) "oui" else "non")
+                    append(" • accès direct=").append(if (device.directDeviceAccess) "oui" else "non")
+                    if (device.isHub) append(" • HUB refusé")
+                    if (!device.directDeviceAccess && com.assavendo.machinevirtuel.runtime.RootProcessLauncher.hasRoot()) {
+                        append(" • root disponible")
+                    }
+                }
+                body.addView(TextView(this).apply {
+                    text = display
+                    setTextColor(if (device.isHub) bad else textColor)
+                    setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13f)
+                    setPadding(0, 10, 0, 4)
+                })
+                if (!device.isHub) {
+                    val action = actionButton(
+                        if (device.hasPermission) "Attacher" else "Autoriser puis attacher",
+                        accent,
+                    ) {
+                        val usbDevice = UsbPassthroughManager.findDevice(this, device.deviceName)
+                        if (usbDevice == null) {
+                            toast("Périphérique USB disparu.")
+                        } else {
+                            val attach = {
+                                val config = UsbPassthroughConfig(
+                                    vendorId = device.vendorId,
+                                    productId = device.productId,
+                                    serialNumber = device.serialNumber.orEmpty(),
+                                    guestReset = false,
+                                )
+                                runCatching { manager.attachUsb(vm.id, config) }
+                                    .onSuccess {
+                                        toast("USB attaché à la VM. Le passage hôte sera validé au prochain démarrage.")
+                                        refresh()
+                                    }
+                                    .onFailure { toast(it.message ?: "Attachement impossible.") }
+                            }
+                            if (device.hasPermission) {
+                                attach()
+                            } else {
+                                UsbPassthroughManager.requestPermission(this, usbDevice) { granted ->
+                                    runOnUiThread {
+                                        if (granted) attach()
+                                        else toast("Permission USB refusée.")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    body.addView(action)
+                }
+            }
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("USB hôte — " + vm.name)
+            .setView(body)
+            .setMessage(
+                "Seuls les périphériques sélectionnés pour cette VM peuvent être passés à QEMU. " +
+                    "Les hubs sont refusés. L'accès direct ou root reste obligatoire au démarrage."
+            )
+            .setPositiveButton("Fermer", null)
+            .show()
     }
 
     private fun showMetrics(vm: VmConfig) {
