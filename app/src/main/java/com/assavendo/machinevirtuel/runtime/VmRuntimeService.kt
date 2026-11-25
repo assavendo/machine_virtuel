@@ -289,17 +289,29 @@ class VmRuntimeService : Service() {
         val coordinator = AdaptiveResourceCoordinator()
         var lastBalloonRequestMs = 0L
         var lastPolicyMessage = ""
+        var lastPolicyInputsRefreshMs = 0L
+        var cachedHost: com.assavendo.machinevirtuel.host.HostCapabilities? = null
+        var cachedTopology: com.assavendo.machinevirtuel.performance.CpuTopology? = null
+        var cachedVms: List<VmConfig> = emptyList()
         while (processes[id] === handle && handle.process.isAlive) {
             runCatching {
                 val sample = collector.sample()
                 VmMetricsRegistry.record(id, sample)
 
-                val store = VmStore(this)
-                val host = HostCapabilityScanner(this).scan()
+                val now = System.currentTimeMillis()
+                if (cachedHost == null || now - lastPolicyInputsRefreshMs >= 5_000L) {
+                    val store = VmStore(this)
+                    cachedHost = HostCapabilityScanner(this).scan()
+                    cachedTopology = DeviceTopology.read()
+                    cachedVms = store.list()
+                    lastPolicyInputsRefreshMs = now
+                }
+                val host = cachedHost ?: error("Host capability cache unavailable.")
+                val topology = cachedTopology ?: error("CPU topology cache unavailable.")
                 val decision = coordinator.decide(
                     vm = vm,
-                    allVms = store.list(),
-                    topology = DeviceTopology.read(),
+                    allVms = cachedVms,
+                    topology = topology,
                     host = host,
                     metrics = sample,
                 )
