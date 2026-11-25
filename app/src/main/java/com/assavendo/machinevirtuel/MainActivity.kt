@@ -122,7 +122,7 @@ class MainActivity : Activity() {
 
         content.addView(TextView(this).apply {
             text = "Règle : PhoenixVM exécute une vraie VM complète. Wine, Winlator, Box64, Box86 et FEX ne remplacent jamais le VMM."
-            setTextColor(muted)
+            setTextColor(this@MainActivity.muted)
             textSize = 12f
             setPadding(4, 22, 4, 0)
         })
@@ -418,7 +418,7 @@ class MainActivity : Activity() {
             setTextColor(textColor)
             isChecked = vm.audioEnabled
         }
-        val muted = CheckBox(this).apply {
+        val muteToggle = CheckBox(this).apply {
             text = "Mute"
             setTextColor(textColor)
             isChecked = vm.audioMuted
@@ -442,7 +442,7 @@ class MainActivity : Activity() {
             setTextColor(textColor)
         }
         layout.addView(enabled)
-        layout.addView(muted)
+        layout.addView(muteToggle)
         layout.addView(TextView(this).apply { text = "Fréquence"; setTextColor(textColor) })
         layout.addView(frequency)
         layout.addView(TextView(this).apply { text = "Canaux"; setTextColor(textColor) })
@@ -465,7 +465,7 @@ class MainActivity : Activity() {
                     manager.updateAudio(
                         vm.id,
                         enabled.isChecked,
-                        muted.isChecked,
+                        muteToggle.isChecked,
                         frequency.text.toString().toInt(),
                         channels.text.toString().toInt(),
                         buffer.text.toString().toInt(),
