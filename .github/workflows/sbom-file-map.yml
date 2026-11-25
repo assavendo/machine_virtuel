@@ -1,0 +1,24 @@
+name: SBOM file-to-component map
+
+on:
+  push:
+    paths:
+      - "THIRD_PARTY/**"
+      - "scripts/*file-component-map*"
+      - ".github/workflows/sbom-file-map.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Unit tests
+        run: python3 scripts/test_validate_file_component_map.py
+      - name: Validate file-to-component map
+        run: python3 scripts/validate-file-component-map.py

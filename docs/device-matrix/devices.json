@@ -1,0 +1,5 @@
+{
+  "schema": 1,
+  "note": "Empty on purpose: no device has been measured yet. Add an entry only with evidence files (see docs/DEVICE_MATRIX.md).",
+  "devices": []
+}
