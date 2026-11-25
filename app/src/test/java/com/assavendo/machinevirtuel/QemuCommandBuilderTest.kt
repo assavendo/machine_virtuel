@@ -191,8 +191,8 @@ class QemuCommandBuilderTest {
             val command = QemuCommandBuilder.build(
                 f.paths, vm, File(f.root, "qmp.sock"), File(f.root, "serial.log"), File(f.root, "qemu.log")
             )
-            assertTrue(command.contains(f.paths.edk2X86Code.absolutePath))
-            assertFalse(command.contains(f.paths.edk2Qemu.absolutePath))
+            assertTrue(command.any { it.contains(f.paths.edk2X86Code.absolutePath) })
+            assertFalse(command.any { it.contains(f.paths.edk2Qemu.absolutePath) })
         } finally {
             f.root.deleteRecursively()
         }
