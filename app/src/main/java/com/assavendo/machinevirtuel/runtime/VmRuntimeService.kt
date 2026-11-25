@@ -766,15 +766,14 @@ class VmRuntimeService : Service() {
             handle.recoveryRequiredOnExit ||
             runtimeGate.isClosed()
         val disposition = VmExitPolicy.resolve(exitCode, requestedStop, effectiveRecoveryRequired)
-        val vm = synchronized(admissionLock) {
-            val current = store.list()
-            current.firstOrNull { it.id == id }?.let { item ->
-                val previousState = item.copy()
+        var previousVm: VmConfig? = null
+        synchronized(admissionLock) {
+            store.update(id) { item ->
+                previousVm = item.copy()
                 item.state = disposition.state
-                store.save(current)
-                previousState
             }
         }
+        val vm = previousVm
         if (vm != null && disposition.requiresRecoveryPlan) {
             val reason = if (disposition.unexpectedFailure) {
                 "Backend " + handle.backend.label + " exited unexpectedly with code " + exitCode
