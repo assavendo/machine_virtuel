@@ -259,8 +259,9 @@ class MainActivity : Activity() {
             row3.addView(actionButton("USB", violet) { showUsbPassthrough(vm) })
             row3.addView(space(6))
             row3.addView(actionButton("Supprimer", Color.rgb(95, 104, 118)) {
-                VmRuntimeService.forceStop(this@MainActivity, vm.id)
-                manager.delete(vm.id)
+                runCatching { manager.delete(vm.id) }
+                    .onSuccess { toast("VM supprimée.") }
+                    .onFailure { toast(it.message ?: "Suppression impossible.") }
                 refresh()
             })
             card.addView(row3)
