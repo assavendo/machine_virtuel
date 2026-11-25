@@ -88,10 +88,11 @@ class VmStoreTransactionTest {
 
     private fun inMemoryPreferences(): SharedPreferences {
         val values = mutableMapOf<String, Any?>()
+        val proxyClassLoader = VmStoreTransactionTest::class.java.classLoader
         var editor: SharedPreferences.Editor? = null
 
         editor = Proxy.newProxyInstance(
-            SharedPreferences.Editor::class.java.classLoader,
+            proxyClassLoader,
             arrayOf(SharedPreferences.Editor::class.java),
         ) { _, method, args ->
             val key = args?.getOrNull(0) as? String
@@ -116,7 +117,7 @@ class VmStoreTransactionTest {
         } as SharedPreferences.Editor
 
         return Proxy.newProxyInstance(
-            SharedPreferences::class.java.classLoader,
+            proxyClassLoader,
             arrayOf(SharedPreferences::class.java),
         ) { _, method, args ->
             val key = args?.getOrNull(0) as? String
