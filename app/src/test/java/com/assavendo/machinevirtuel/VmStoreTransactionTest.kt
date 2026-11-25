@@ -16,7 +16,9 @@ import kotlin.test.assertTrue
 class VmStoreTransactionTest {
     @Test
     fun stateUpdateCannotBeLostBehindConcurrentVmInsertion() {
-        val store = VmStore(inMemoryPreferences())
+        val preferences = inMemoryPreferences()
+        val store = VmStore(preferences)
+        val runtimeStore = VmStore(preferences)
         val existing = VmConfig(name = "existing")
         val inserted = VmConfig(name = "inserted")
         store.insertUnique(existing)
@@ -39,7 +41,7 @@ class VmStoreTransactionTest {
 
         val updateThread = thread(name = "vm-store-update") {
             updateStarted.countDown()
-            store.update(existing.id) { it.state = VmState.RUNNING }
+            runtimeStore.update(existing.id) { it.state = VmState.RUNNING }
             updateCompleted.countDown()
         }
         assertTrue(updateStarted.await(5, TimeUnit.SECONDS))
@@ -60,7 +62,9 @@ class VmStoreTransactionTest {
 
     @Test
     fun concurrentSameNameInsertionsCannotPublishDuplicates() {
-        val store = VmStore(inMemoryPreferences())
+        val preferences = inMemoryPreferences()
+        val storeA = VmStore(preferences)
+        val storeB = VmStore(preferences)
         val start = CountDownLatch(1)
         val done = CountDownLatch(2)
         val successful = java.util.concurrent.atomic.AtomicInteger(0)
@@ -70,7 +74,7 @@ class VmStoreTransactionTest {
             thread(name = "vm-store-duplicate-$index") {
                 try {
                     check(start.await(5, TimeUnit.SECONDS))
-                    store.insertUnique(VmConfig(name = "same-name"))
+                    (if (index == 0) storeA else storeB).insertUnique(VmConfig(name = "same-name"))
                     successful.incrementAndGet()
                 } catch (_: IllegalArgumentException) {
                     rejected.incrementAndGet()
@@ -83,7 +87,7 @@ class VmStoreTransactionTest {
         assertTrue(done.await(5, TimeUnit.SECONDS))
         assertEquals(1, successful.get())
         assertEquals(1, rejected.get())
-        assertEquals(1, store.list().size)
+        assertEquals(1, storeA.list().size)
     }
 
     private fun inMemoryPreferences(): SharedPreferences {
