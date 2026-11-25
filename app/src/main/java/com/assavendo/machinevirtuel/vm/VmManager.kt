@@ -143,14 +143,11 @@ class VmManager(private val context: Context) {
 
     fun clone(id: String, newName: String): VmConfig {
         val host = capabilities()
-        return store.mutate { items ->
-            val source = items.firstOrNull { it.id == id } ?: error("VM introuvable.")
+        return store.withVmLock(id) {
+            val source = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
             require(source.state == VmState.OFF) { "Le clonage exige une VM dont l'état OFF est confirmé." }
             val cloneName = newName.trim().ifBlank { source.name + " Clone" }
             require(cloneName.length in 1..80) { "Le nom du clone doit contenir entre 1 et 80 caractères." }
-            require(items.none { it.name.equals(cloneName, ignoreCase = true) }) {
-                "Une VM porte déjà ce nom ; les noms doivent être uniques."
-            }
             val clone = source.copy(
                 id = UUID.randomUUID().toString(),
                 name = cloneName,
@@ -182,11 +179,16 @@ class VmManager(private val context: Context) {
                 val target = File(targetDir, targetName).canonicalFile
                 require(target.toPath().startsWith(targetDir.toPath())) { "Chemin d'artefact du clone invalide." }
                 if (sourceFile.isDirectory) {
-                    check(sourceFile.copyRecursively(target, overwrite = false)) { "Impossible de copier un artefact du clone." }
-                } else sourceFile.copyTo(target, overwrite = false)
+                    check(sourceFile.copyRecursively(target, overwrite = false)) {
+                        "Impossible de copier un artefact du clone."
+                    }
+                } else {
+                    sourceFile.copyTo(target, overwrite = false)
+                }
                 copied[sourceFile.absolutePath] = target.absolutePath
                 return target.absolutePath
             }
+
             try {
                 val targetDisk = File(targetDir, "disk." + DiskManager.extension(source.diskFormat))
                 sourceDisk.copyTo(targetDisk, overwrite = false)
@@ -199,9 +201,18 @@ class VmManager(private val context: Context) {
                 clone.androidVendorPath = copyManagedArtifact(source.androidVendorPath, "android-vendor.img")
                 clone.androidUserdataPath = copyManagedArtifact(source.androidUserdataPath, "android-userdata.img")
                 clone.tpmStatePath = copyManagedArtifact(source.tpmStatePath, "tpm-state")
-                val admission = ResourceAdmissionController.check(clone, items, host)
-                require(admission.allowed) { "Clonage refusé par le contrôle de ressources : " + admission.reason }
-                items.add(clone)
+
+                store.insertUnique(clone) { latest ->
+                    val currentSource = latest.firstOrNull { it.id == id }
+                        ?: error("La VM source a été supprimée pendant le clonage.")
+                    require(currentSource.state == VmState.OFF) {
+                        "La VM source n'est plus à l'état OFF ; clonage annulé."
+                    }
+                    val admission = ResourceAdmissionController.check(clone, latest, host)
+                    require(admission.allowed) {
+                        "Clonage refusé par le contrôle de ressources : " + admission.reason
+                    }
+                }
                 clone
             } catch (failure: Throwable) {
                 targetDir.deleteRecursively()
@@ -210,11 +221,15 @@ class VmManager(private val context: Context) {
         }
     }
 
-    fun setIso(id: String, path: String): VmConfig? = store.update(id) {
-        require(it.state == VmState.OFF) { "Une ISO ne peut être modifiée que lorsque la VM est à l'état OFF confirmé." }
-        val iso = File(path).canonicalFile
-        require(iso.isFile && iso.canRead() && iso.length() > 0L) { "L'image ISO est absente, vide ou illisible." }
-        it.isoPath = iso.absolutePath
+    fun setIso(id: String, path: String): VmConfig? = store.withVmLock(id) {
+        store.update(id) {
+            require(it.state == VmState.OFF) { "Une ISO ne peut être modifiée que lorsque la VM est à l'état OFF confirmé." }
+            val iso = File(path).canonicalFile
+            require(iso.isFile && iso.canRead() && iso.length() > 0L) {
+                "L'image ISO est absente, vide ou illisible."
+            }
+            it.isoPath = iso.absolutePath
+        }
     }
 
     fun updateAudio(
@@ -224,23 +239,26 @@ class VmManager(private val context: Context) {
         frequencyHz: Int,
         channels: Int,
         bufferMs: Int,
-    ): VmConfig? = store.update(id) {
-        require(it.state == VmState.OFF) {
-            "La configuration audio exige l'état OFF confirmé ; ERROR peut encore correspondre à un processus vivant."
+    ): VmConfig? = store.withVmLock(id) {
+        store.update(id) {
+            require(it.state == VmState.OFF) {
+                "La configuration audio exige l'état OFF confirmé ; ERROR peut encore correspondre à un processus vivant."
+            }
+            require(frequencyHz in 8_000..192_000)
+            require(channels in 1..8)
+            require(bufferMs in 2..500)
+            it.audioEnabled = enabled
+            it.audioMuted = muted
+            it.audioFrequencyHz = frequencyHz
+            it.audioChannels = channels
+            it.audioBufferMs = bufferMs
         }
-        require(frequencyHz in 8_000..192_000)
-        require(channels in 1..8)
-        require(bufferMs in 2..500)
-        it.audioEnabled = enabled
-        it.audioMuted = muted
-        it.audioFrequencyHz = frequencyHz
-        it.audioChannels = channels
-        it.audioBufferMs = bufferMs
     }
 
     fun attachUsb(id: String, config: UsbPassthroughConfig): VmConfig? =
-        store.update(id) {
-            require(it.state == VmState.OFF) { "Le passthrough USB ne peut être modifié que lorsque la VM est à l'état OFF confirmé." }
+        store.withVmLock(id) {
+            store.update(id) {
+                require(it.state == VmState.OFF) { "Le passthrough USB ne peut être modifié que lorsque la VM est à l'état OFF confirmé." }
             require(it.usbPassthrough.none { existing ->
                 existing.vendorId == config.vendorId &&
                     existing.productId == config.productId &&
@@ -249,16 +267,19 @@ class VmManager(private val context: Context) {
             require(it.usbPassthrough.size < 8) {
                 "Une VM ne peut pas attacher plus de 8 périphériques USB hôte."
             }
-            it.usbPassthrough = it.usbPassthrough + config
+                it.usbPassthrough = it.usbPassthrough + config
+            }
         }
 
     fun detachUsb(id: String, config: UsbPassthroughConfig): VmConfig? =
-        store.update(id) {
-            require(it.state == VmState.OFF) { "Le passthrough USB ne peut être modifié que lorsque la VM est à l'état OFF confirmé." }
-            it.usbPassthrough = it.usbPassthrough.filterNot { existing ->
-                existing.vendorId == config.vendorId &&
-                    existing.productId == config.productId &&
-                    existing.serialNumber == config.serialNumber
+        store.withVmLock(id) {
+            store.update(id) {
+                require(it.state == VmState.OFF) { "Le passthrough USB ne peut être modifié que lorsque la VM est à l'état OFF confirmé." }
+                it.usbPassthrough = it.usbPassthrough.filterNot { existing ->
+                    existing.vendorId == config.vendorId &&
+                        existing.productId == config.productId &&
+                        existing.serialNumber == config.serialNumber
+                }
             }
         }
 
@@ -266,10 +287,8 @@ class VmManager(private val context: Context) {
     fun stop(id: String) = store.update(id) { it.state = VmState.OFF }
 
     fun delete(id: String) {
-        val removed = store.mutate { items ->
-            val vm = items.firstOrNull { it.id == id } ?: return@mutate null
-            // ERROR can still represent a live process whose termination was not confirmed.
-            // Only OFF is safe for destructive removal; RECOVERY/ERROR must be reconciled first.
+        store.withVmLock(id) {
+            val vm = store.list().firstOrNull { it.id == id } ?: return@withVmLock
             require(vm.state == VmState.OFF) {
                 "La VM doit être arrêtée proprement et confirmée OFF avant sa suppression."
             }
@@ -282,9 +301,7 @@ class VmManager(private val context: Context) {
             val firmware = vm.firmwarePath.takeIf { it.isNotBlank() }?.let(::File)?.canonicalFile
             val tpm = vm.tpmStatePath.takeIf { it.isNotBlank() }?.let(::File)?.canonicalFile
             fun deleteManaged(file: File?) {
-                if (file != null && file.toPath().startsWith(managedDir.toPath())) {
-                    file.deleteRecursively()
-                }
+                if (file != null && file.toPath().startsWith(managedDir.toPath())) file.deleteRecursively()
             }
             deleteManaged(disk)
             deleteManaged(firmware)
@@ -292,10 +309,13 @@ class VmManager(private val context: Context) {
             managedDir.deleteRecursively()
             File(context.filesDir, "snapshots/" + id).deleteRecursively()
             File(context.filesDir, "logs/" + id).deleteRecursively()
-            items.removeAll { it.id == id }
-            vm
-        } ?: return
-        cache.clear(removed.id)
+            val removed = store.remove(id) { latest ->
+                require(latest.state == VmState.OFF) {
+                    "La VM a changé d'état pendant sa suppression ; opération annulée."
+                }
+            } ?: return@withVmLock
+            cache.clear(removed.id)
+        }
     }
 
     fun selectBackend(id: String): OrchestrationDecision {
@@ -311,22 +331,26 @@ class VmManager(private val context: Context) {
     fun applyOptimization(id: String): VmConfig {
         val sampledMetrics = metrics.sample()
         val host = capabilities()
-        return store.mutate { items ->
-            val vm = items.firstOrNull { it.id == id } ?: error("VM introuvable.")
-            require(vm.state == VmState.OFF) { "Appliquer une optimisation de ressources exige l'état OFF confirmé." }
-            val decision = optimizer.decide(vm, sampledMetrics)
-            val admission = ResourceAdmissionController.check(
-                vm.copy(ramMb = decision.ramMb, vCpu = decision.vCpu),
-                items,
-                host,
-            )
-            require(admission.allowed) {
-                "Optimisation refusée par le contrôle de ressources : " + admission.reason
+        return store.withVmLock(id) {
+            store.mutate { items ->
+                val vm = items.firstOrNull { it.id == id } ?: error("VM introuvable.")
+                require(vm.state == VmState.OFF) {
+                    "Appliquer une optimisation de ressources exige l'état OFF confirmé."
+                }
+                val decision = optimizer.decide(vm, sampledMetrics)
+                val admission = ResourceAdmissionController.check(
+                    vm.copy(ramMb = decision.ramMb, vCpu = decision.vCpu),
+                    items,
+                    host,
+                )
+                require(admission.allowed) {
+                    "Optimisation refusée par le contrôle de ressources : " + admission.reason
+                }
+                vm.vCpu = decision.vCpu
+                vm.ramMb = decision.ramMb
+                vm.monitoringIntervalMs = decision.monitoringIntervalMs
+                vm
             }
-            vm.vCpu = decision.vCpu
-            vm.ramMb = decision.ramMb
-            vm.monitoringIntervalMs = decision.monitoringIntervalMs
-            vm
         }
     }
 
@@ -340,8 +364,8 @@ class VmManager(private val context: Context) {
     )
 
     fun snapshot(id: String, label: String): File =
-        store.mutate { items ->
-            val vm = items.firstOrNull { it.id == id } ?: error("VM introuvable.")
+        store.withVmLock(id) {
+            val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
             require(vm.state == VmState.OFF) { "Une capture à froid exige l'état OFF confirmé." }
             val dir = SnapshotManager.createColdSnapshot(context.filesDir, vm, label)
             SnapshotManager.enforceRetention(context.filesDir, vm)
@@ -349,16 +373,16 @@ class VmManager(private val context: Context) {
         }
 
     fun restoreSnapshot(id: String, snapshotDir: File) {
-        store.mutate { items ->
-            val vm = items.firstOrNull { it.id == id } ?: error("VM introuvable.")
+        store.withVmLock(id) {
+            val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
             require(vm.state == VmState.OFF) { "Une restauration à froid exige l'état OFF confirmé." }
             SnapshotManager.restoreColdSnapshot(vm, snapshotDir)
         }
     }
 
     fun exportVm(id: String, output: File, includeSnapshots: Boolean = true): File =
-        store.mutate { items ->
-            val vm = items.firstOrNull { it.id == id } ?: error("VM introuvable.")
+        store.withVmLock(id) {
+            val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
             require(vm.state == VmState.OFF) { "L'export sécurisé exige l'état OFF confirmé." }
             VmPackageManager.export(context, vm, output, includeSnapshots)
         }
