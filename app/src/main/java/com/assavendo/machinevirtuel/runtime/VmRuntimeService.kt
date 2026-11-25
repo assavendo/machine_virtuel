@@ -96,6 +96,7 @@ class VmRuntimeService : Service() {
         try {
             VmSpecValidator.validate(vm).firstOrNull { it.fatal }?.let { error(it.message) }
             val paths = RuntimeInstaller.ensure(this)
+            val usbAttachments = UsbPassthroughManager.resolveAll(this, vm.usbPassthrough)
 
             if (vm.networkMode == NetworkMode.TAP) {
                 val tap = TapNetworkManager()
@@ -153,8 +154,17 @@ class VmRuntimeService : Service() {
                     }
                 }
             }
-            check(candidates.isNotEmpty()) {
-                "Aucun backend réellement exécutable pour cette VM."
+            val launchCandidates = if (usbAttachments.isNotEmpty()) {
+                candidates.filterIsInstance<QemuBackend>()
+            } else {
+                candidates
+            }
+            check(launchCandidates.isNotEmpty()) {
+                if (usbAttachments.isNotEmpty()) {
+                    "Le passthrough USB hôte exige un backend QEMU système réellement exécutable."
+                } else {
+                    "Aucun backend réellement exécutable pour cette VM."
+                }
             }
 
             val dir = FilePaths.vmDir(id)
@@ -166,7 +176,7 @@ class VmRuntimeService : Service() {
             log.delete()
 
             var handle: Handle? = null
-            for (backend in candidates) {
+            for (backend in launchCandidates) {
                 var fsHandle: VirtioFsHandle? = null
                 var tpmHandle: TpmHandle? = null
                 try {
@@ -182,10 +192,24 @@ class VmRuntimeService : Service() {
                         tpmHandle = TpmManager.start(paths, vm, dir, log)
                     }
 
-                    val spec = backend.launchSpec(paths, vm.copy(backend = backend.kind), qmp, serial, log)
+                    val spec = backend.launchSpec(
+                        paths,
+                        vm.copy(backend = backend.kind),
+                        qmp,
+                        serial,
+                        log,
+                        usbPassthrough = usbAttachments,
+                    )
                     val controlSocket = spec.controlSocket
                     controlSocket?.delete()
-                    val process = startBackend(spec, dir, paths, vm.arch, log)
+                    val process = startBackend(
+                        spec,
+                        dir,
+                        paths,
+                        vm.arch,
+                        log,
+                        preferRoot = usbAttachments.any { it.requiresRoot },
+                    )
                     try {
                         val ready = spec.qmpSocket
                         if (ready != null) {
@@ -414,13 +438,14 @@ class VmRuntimeService : Service() {
         paths: RuntimePaths,
         arch: GuestArch,
         log: File,
+        preferRoot: Boolean = false,
     ): Process {
         val environment = buildMap {
             putAll(spec.environment)
             put("LD_LIBRARY_PATH", paths.libraryDir(arch).absolutePath)
         }
         val process = RootProcessLauncher.start(
-            spec.command, dir, environment, preferRoot = false
+            spec.command, dir, environment, preferRoot = preferRoot
         )
         attachLogs(process, log)
         return process

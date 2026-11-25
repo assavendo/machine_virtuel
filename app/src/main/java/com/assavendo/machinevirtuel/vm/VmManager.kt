@@ -125,6 +125,28 @@ class VmManager(private val context: Context) {
     }
 
     fun setIso(id: String, path: String): VmConfig? = store.update(id) { it.isoPath = path }
+
+    fun attachUsb(id: String, config: UsbPassthroughConfig): VmConfig? =
+        store.update(id) {
+            require(it.usbPassthrough.none { existing ->
+                existing.vendorId == config.vendorId &&
+                    existing.productId == config.productId &&
+                    existing.serialNumber == config.serialNumber
+            }) { "Ce périphérique USB est déjà attaché à cette VM." }
+            require(it.usbPassthrough.size < 8) {
+                "Une VM ne peut pas attacher plus de 8 périphériques USB hôte."
+            }
+            it.usbPassthrough = it.usbPassthrough + config
+        }
+
+    fun detachUsb(id: String, config: UsbPassthroughConfig): VmConfig? =
+        store.update(id) {
+            it.usbPassthrough = it.usbPassthrough.filterNot { existing ->
+                existing.vendorId == config.vendorId &&
+                    existing.productId == config.productId &&
+                    existing.serialNumber == config.serialNumber
+            }
+        }
     fun markStarting(id: String): VmConfig? = store.update(id) { it.state = VmState.STARTING }
     fun stop(id: String) = store.update(id) { it.state = VmState.OFF }
 

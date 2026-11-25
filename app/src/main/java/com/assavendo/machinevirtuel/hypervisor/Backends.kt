@@ -5,6 +5,7 @@ import com.assavendo.machinevirtuel.runtime.CrosvmCommandBuilder
 import com.assavendo.machinevirtuel.runtime.FilePaths
 import com.assavendo.machinevirtuel.runtime.QemuCommandBuilder
 import com.assavendo.machinevirtuel.runtime.RuntimePaths
+import com.assavendo.machinevirtuel.runtime.UsbHostAttachment
 import com.assavendo.machinevirtuel.vm.BackendKind
 import com.assavendo.machinevirtuel.vm.GuestArch
 import com.assavendo.machinevirtuel.vm.VmConfig
@@ -35,8 +36,16 @@ class QemuBackend(private val backendKind: BackendKind) : HypervisorBackend {
         qmp: File,
         serial: File,
         log: File,
+        usbPassthrough: List<UsbHostAttachment> = emptyList(),
     ): BackendLaunchSpec = BackendLaunchSpec(
-        command = QemuCommandBuilder.build(paths, vm.copy(backend = backendKind), qmp, serial, log),
+        command = QemuCommandBuilder.build(
+            paths,
+            vm.copy(backend = backendKind),
+            qmp,
+            serial,
+            log,
+            usbPassthrough = usbPassthrough,
+        ),
         environment = mapOf(
             "LD_LIBRARY_PATH" to paths.libDir.absolutePath,
             "QEMU_AUDIO_DRV" to "none",
@@ -78,7 +87,11 @@ class CrosvmBackend(private val backendKind: BackendKind) : HypervisorBackend {
         qmp: File,
         serial: File,
         log: File,
+        usbPassthrough: List<UsbHostAttachment> = emptyList(),
     ): BackendLaunchSpec {
+        require(usbPassthrough.isEmpty()) {
+            "Le passthrough USB hôte est uniquement disponible sur le backend QEMU vérifié."
+        }
         val controlSocket = FilePaths.controlSocket(vm.id)
         return BackendLaunchSpec(
             command = CrosvmCommandBuilder.build(paths, vm.copy(backend = backendKind), controlSocket),

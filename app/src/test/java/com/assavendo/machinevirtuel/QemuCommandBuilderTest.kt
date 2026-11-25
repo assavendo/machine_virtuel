@@ -59,6 +59,40 @@ class QemuCommandBuilderTest {
     }
 
     @Test
+    fun usbHostAttachmentIsTranslatedToQemuUsbHostDevice() {
+        val f = runtime()
+        try {
+            val vm = VmConfig(
+                name = "usb",
+                diskPath = f.disk.absolutePath,
+                firmwarePath = f.nvram.absolutePath,
+                audioEnabled = false,
+            )
+            val attachment = UsbHostAttachment(
+                vendorId = 0x1234,
+                productId = 0xabcd,
+                bus = 2,
+                address = 17,
+                guestReset = false,
+                requiresRoot = false,
+            )
+            val command = QemuCommandBuilder.build(
+                f.paths,
+                vm,
+                File(f.root, "qmp.sock"),
+                File(f.root, "serial.log"),
+                File(f.root, "qemu.log"),
+                usbPassthrough = listOf(attachment),
+            )
+            assertTrue(command.any {
+                it == "usb-host,hostbus=2,hostaddr=17,guest-reset=false"
+            })
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun x86SecureBootEnablesSmmAndSecurePflash() {
         val f = runtime()
         try {

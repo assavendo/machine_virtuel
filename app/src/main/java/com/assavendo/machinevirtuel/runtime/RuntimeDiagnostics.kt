@@ -79,6 +79,16 @@ object RuntimeDiagnostics {
             ok = marker.isFile && marker.readText().isNotBlank(),
             detail = if (marker.isFile) marker.readText() else "missing",
         )
+        val usbDevices = UsbPassthroughManager.list(context)
+        results += RuntimeDiagnostic(
+            component = "Android USB host",
+            ok = context.getSystemService(android.hardware.usb.UsbManager::class.java) != null,
+            detail = usbDevices.joinToString("; ") {
+                it.deviceName + " " + "%04x:%04x".format(it.vendorId, it.productId) +
+                    " permission=" + it.hasPermission +
+                    " direct=" + it.directDeviceAccess
+            }.ifBlank { "Aucun périphérique USB hôte exposé par Android." },
+        )
         results += RuntimeDiagnostic(
             component = "Host ABI",
             ok = Build.SUPPORTED_ABIS.any { it == "arm64-v8a" },

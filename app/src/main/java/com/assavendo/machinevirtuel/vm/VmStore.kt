@@ -6,7 +6,7 @@ import org.json.JSONObject
 
 class VmStore(context: Context) {
     private val prefs = context.getSharedPreferences("phoenixvm_vms", Context.MODE_PRIVATE)
-    private val schemaVersion = 3
+    private val schemaVersion = 4
 
     fun list(): MutableList<VmConfig> {
         val result = mutableListOf<VmConfig>()
@@ -62,6 +62,24 @@ class VmStore(context: Context) {
                 )
             }
         }
+        val usbPassthrough = mutableListOf<UsbPassthroughConfig>()
+        o.optJSONArray("usbPassthrough")?.let { usb ->
+            for (j in 0 until usb.length()) {
+                val item = usb.optJSONObject(j) ?: continue
+                val vendorId = item.optInt("vendorId", -1)
+                val productId = item.optInt("productId", -1)
+                if (vendorId !in 0..0xffff || productId !in 0..0xffff) continue
+                val serial = item.optString("serialNumber", "")
+                if (serial.length > 256) continue
+                usbPassthrough += UsbPassthroughConfig(
+                    vendorId = vendorId,
+                    productId = productId,
+                    serialNumber = serial,
+                    guestReset = item.optBoolean("guestReset", false),
+                )
+            }
+        }
+
         val bootOrder = mutableListOf<String>()
         o.optJSONArray("bootOrder")?.let { array ->
             for (j in 0 until array.length()) bootOrder += array.optString(j)
@@ -123,6 +141,7 @@ class VmStore(context: Context) {
             mouseEnabled = o.optBoolean("mouseEnabled", true),
             keyboardEnabled = o.optBoolean("keyboardEnabled", true),
             gamepadEnabled = o.optBoolean("gamepadEnabled", false),
+            usbPassthrough = usbPassthrough,
             sharedFilesExplicitOnly = o.optBoolean("sharedFilesExplicitOnly", true),
             bootOrder = if (bootOrder.isEmpty()) listOf("disk", "cdrom", "network") else bootOrder,
             autoSnapshotOnInstall = o.optBoolean("autoSnapshotOnInstall", true),
@@ -168,7 +187,18 @@ class VmStore(context: Context) {
         vm.portForwards.forEach { pf.put(JSONObject().apply { put("protocol", it.protocol); put("hostPort", it.hostPort); put("guestPort", it.guestPort) }) }
         put("portForwards", pf)
         put("clipboardEnabled", vm.clipboardEnabled); put("touchEnabled", vm.touchEnabled); put("mouseEnabled", vm.mouseEnabled)
-        put("keyboardEnabled", vm.keyboardEnabled); put("gamepadEnabled", vm.gamepadEnabled); put("sharedFilesExplicitOnly", vm.sharedFilesExplicitOnly)
+        put("keyboardEnabled", vm.keyboardEnabled); put("gamepadEnabled", vm.gamepadEnabled)
+        val usb = JSONArray()
+        vm.usbPassthrough.take(8).forEach {
+            usb.put(JSONObject().apply {
+                put("vendorId", it.vendorId)
+                put("productId", it.productId)
+                put("serialNumber", it.serialNumber)
+                put("guestReset", it.guestReset)
+            })
+        }
+        put("usbPassthrough", usb)
+        put("sharedFilesExplicitOnly", vm.sharedFilesExplicitOnly)
         put("bootOrder", JSONArray(vm.bootOrder)); put("autoSnapshotOnInstall", vm.autoSnapshotOnInstall)
         put("autoSnapshotIntervalMin", vm.autoSnapshotIntervalMin); put("maxSnapshots", vm.maxSnapshots)
         put("securityMode", vm.securityMode); put("vmPriority", vm.vmPriority)
