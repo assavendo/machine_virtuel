@@ -540,6 +540,7 @@ class MainActivity : Activity() {
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type = "application/octet-stream"
                 addCategory(Intent.CATEGORY_OPENABLE)
+                if (requestCode == 714) putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             }, requestCode)
         }
         fun artifactButton(label: String, kind: String, requestCode: Int) {
@@ -554,6 +555,7 @@ class MainActivity : Activity() {
         artifactButton("Choisir Android system.img", "android-system", 711)
         artifactButton("Choisir Android vendor.img (facultatif)", "android-vendor", 712)
         artifactButton("Choisir Android userdata.img", "android-userdata", 713)
+        artifactButton("Ajouter des fichiers ponctuels au dossier partagé", "shared-files", 714)
         content.addView(cardText().apply {
             text = buildString {
                 append("ISO : ").append(base.isoPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "non sélectionnée").append('\\n')
@@ -1178,6 +1180,7 @@ class MainActivity : Activity() {
             val kind = pendingVmCreationArtifact
             val hasSelectedFile = data?.data != null || (requestCode == 714 && data?.clipData != null)
             if (resultCode != RESULT_OK || data == null || !hasSelectedFile) {
+                pendingVmCreationArtifact = null
                 if (draft != null) createVm(draft)
                 return
             }
@@ -1293,23 +1296,29 @@ class MainActivity : Activity() {
         val target = File(directory, targetName)
         val temporary = File(directory, targetName + ".partial")
         temporary.delete()
-        val availableBeforeImport = directory.usableSpace
+        val reservedBytes = 64L * 1024L * 1024L
         try {
             val input = contentResolver.openInputStream(uri)
                 ?: error("Android n'a pas pu ouvrir le fichier sélectionné.")
             input.use { source ->
                 java.io.FileOutputStream(temporary).use { output ->
-                    source.copyTo(output, 128 * 1024)
+                    val buffer = ByteArray(128 * 1024)
+                    while (true) {
+                        val count = source.read(buffer)
+                        if (count < 0) break
+                        if (count == 0) continue
+                        require(directory.usableSpace >= count.toLong() + reservedBytes) {
+                            "Espace insuffisant pour importer $targetName; 64 Mio sont conservés en réserve."
+                        }
+                        output.write(buffer, 0, count)
+                    }
                     output.fd.sync()
                 }
             }
             require(temporary.isFile && temporary.length() > 0L) {
                 "Le fichier sélectionné est vide ou illisible."
             }
-            require(temporary.length() <= availableBeforeImport) {
-                "Espace de stockage insuffisant pour importer ce fichier."
-            }
-            // POSIX rename replaces the previous target atomically on the same filesystem.
+            // Same-filesystem rename keeps the previous file intact until the new copy is complete.
             android.system.Os.rename(temporary.absolutePath, target.absolutePath)
         } catch (error: Throwable) {
             temporary.delete()
@@ -1346,62 +1355,76 @@ class MainActivity : Activity() {
         check(shareDir.mkdirs() || shareDir.isDirectory) {
             "Impossible de préparer le dossier partagé de la VM."
         }
-        uris.forEachIndexed { index, uri ->
-            val displayName = contentResolver.query(
-                uri,
-                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
-                null,
-                null,
-                null,
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) cursor.getString(0) else null
-            }
-            val rawName = displayName?.takeIf { it.isNotBlank() } ?: "shared-file-$index"
-            val safeName = rawName
-                .replace(Regex("[^A-Za-z0-9._ -]"), "_")
-                .replace(Regex("\\s+"), "_")
-                .trim('.', ' ', '_')
-                .take(120)
-                .ifBlank { "shared-file-$index" }
-            val dot = safeName.lastIndexOf('.')
-            val stem = if (dot > 0) safeName.substring(0, dot) else safeName
-            val extension = if (dot > 0) safeName.substring(dot) else ""
-            var target = File(shareDir, safeName)
-            var suffix = 2
-            while (target.exists()) {
-                val suffixText = "-$suffix"
-                target = File(shareDir, stem.take(120 - suffixText.length - extension.length) + suffixText + extension)
-                suffix++
-            }
-            require(target.canonicalFile.parentFile == shareDir) { "Nom de fichier partagé invalide." }
-            val temporary = File(shareDir, target.name + ".partial")
-            temporary.delete()
-            val available = shareDir.usableSpace
-            try {
-                val input = contentResolver.openInputStream(uri)
-                    ?: error("Android n'a pas pu ouvrir le fichier sélectionné.")
-                input.use { source ->
-                    java.io.FileOutputStream(temporary).use { output ->
-                        val buffer = ByteArray(128 * 1024)
-                        var total = 0L
-                        while (true) {
-                            val count = source.read(buffer)
-                            if (count < 0) break
-                            total += count
-                            require(total <= available) { "Espace insuffisant pour le fichier partagé $safeName." }
-                            output.write(buffer, 0, count)
-                        }
-                        output.fd.sync()
-                    }
+        val committedFiles = mutableListOf<File>()
+        val reservedBytes = 64L * 1024L * 1024L
+        try {
+            uris.forEachIndexed { index, uri ->
+                val displayName = contentResolver.query(
+                    uri,
+                    arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null,
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
                 }
-                require(temporary.isFile && temporary.length() > 0L) {
-                    "Le fichier partagé $safeName est vide ou illisible."
+                val rawName = displayName?.takeIf { it.isNotBlank() } ?: "shared-file-$index"
+                val safeName = rawName
+                    .replace(Regex("[^A-Za-z0-9._ -]"), "_")
+                    .replace(Regex("\\s+"), "_")
+                    .trim('.', ' ', '_')
+                    .take(120)
+                    .ifBlank { "shared-file-$index" }
+                val dot = safeName.lastIndexOf('.')
+                val stem = if (dot > 0) safeName.substring(0, dot) else safeName
+                val extension = if (dot > 0) safeName.substring(dot) else ""
+                var target = File(shareDir, safeName)
+                var suffix = 2
+                while (target.exists()) {
+                    val suffixText = "-$suffix"
+                    target = File(
+                        shareDir,
+                        stem.take(120 - suffixText.length - extension.length) + suffixText + extension,
+                    )
+                    suffix++
                 }
-                android.system.Os.rename(temporary.absolutePath, target.absolutePath)
-            } catch (error: Throwable) {
+                require(target.canonicalFile.parentFile == shareDir) {
+                    "Nom de fichier partagé invalide."
+                }
+                val temporary = File(shareDir, target.name + ".partial")
                 temporary.delete()
-                throw error
+                try {
+                    val input = contentResolver.openInputStream(uri)
+                        ?: error("Android n'a pas pu ouvrir le fichier partagé.")
+                    input.use { source ->
+                        java.io.FileOutputStream(temporary).use { output ->
+                            val buffer = ByteArray(128 * 1024)
+                            while (true) {
+                                val count = source.read(buffer)
+                                if (count < 0) break
+                                if (count == 0) continue
+                                require(shareDir.usableSpace >= count.toLong() + reservedBytes) {
+                                    "Espace insuffisant pour le fichier partagé $safeName; 64 Mio sont conservés en réserve."
+                                }
+                                output.write(buffer, 0, count)
+                            }
+                            output.fd.sync()
+                        }
+                    }
+                    require(temporary.isFile && temporary.length() > 0L) {
+                        "Le fichier partagé $safeName est vide ou illisible."
+                    }
+                    android.system.Os.rename(temporary.absolutePath, target.absolutePath)
+                    committedFiles += target
+                } catch (error: Throwable) {
+                    temporary.delete()
+                    throw error
+                }
             }
+        } catch (error: Throwable) {
+            // Multi-select is transactional: do not leave a partially imported batch.
+            committedFiles.forEach { it.delete() }
+            throw error
         }
         val share = SharedDirectory(shareDir.absolutePath, "shared", readOnly = false)
         return draft.copy(
