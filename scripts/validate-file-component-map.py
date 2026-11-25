@@ -67,8 +67,7 @@ def main():
     mapping = json.loads(MAP_FILE.read_text(encoding="utf-8"))
     errors, resolved, additional = validate(sbom, mapping)
     if errors:
-        print("
-".join(errors), file=sys.stderr)
+        print("\n".join(errors), file=sys.stderr)
         raise SystemExit(f"FILE_COMPONENT_MAP invalid: {len(errors)} problem(s)")
     inferred = sum(1 for r in resolved.values() if r["confidence"] == "inferred")
     unverified = sum(1 for c in additional.values() if not c.get("verified"))

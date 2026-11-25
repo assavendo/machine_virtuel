@@ -296,7 +296,7 @@ object QemuCommandBuilder {
         }
 
         if (vm.audioEnabled) {
-            val audio = AudioPolicy.from(vm)
+            val audio = AudioRuntimePolicy.from(vm)
             args += "-audiodev"
             args += audio.qemuAudioDeviceSpec()
             args += "-device"; args += "virtio-sound-pci,audiodev=snd0,disable-legacy=on,disable-modern=off"

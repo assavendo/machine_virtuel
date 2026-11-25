@@ -62,7 +62,7 @@ class VmCpuThreadSampler {
         val line = runCatching { file.readText() }.getOrNull() ?: return null
         val endOfCommand = line.lastIndexOf(')')
         if (endOfCommand < 0 || endOfCommand + 1 >= line.length) return null
-        val fields = line.substring(endOfCommand + 1).trim().split(Regex("\s+"))
+        val fields = line.substring(endOfCommand + 1).trim().split(Regex("\\s+"))
         if (fields.size <= 12) return null
         val userTicks = fields[11].toLongOrNull() ?: return null
         val systemTicks = fields[12].toLongOrNull() ?: return null

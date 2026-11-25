@@ -95,7 +95,7 @@ class LintTest(unittest.TestCase):
         d, p = self.make_package(version=1)
         with d:
             with zipfile.ZipFile(p, "a") as z:
-                z.writestr(r"direvil", b"x")
+                z.writestr("dir" + chr(92) + "evil", b"x")
             self.assertTrue(any("invalid ZIP path" in x for x in L.lint(p)[0]))
 
     def test_duplicate_entry(self):
