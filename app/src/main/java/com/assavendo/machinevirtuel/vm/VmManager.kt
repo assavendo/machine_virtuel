@@ -124,8 +124,9 @@ class VmManager(private val context: Context) {
                 }
             }
 
+            val finalHost = capabilities()
             store.insertUnique(config) { latest ->
-                val latestAdmission = ResourceAdmissionController.check(config, latest, host)
+                val latestAdmission = ResourceAdmissionController.check(config, latest, finalHost)
                 check(latestAdmission.allowed) {
                     "Création refusée après revalidation des ressources : " + latestAdmission.reason
                 }
@@ -202,13 +203,14 @@ class VmManager(private val context: Context) {
                 clone.androidUserdataPath = copyManagedArtifact(source.androidUserdataPath, "android-userdata.img")
                 clone.tpmStatePath = copyManagedArtifact(source.tpmStatePath, "tpm-state")
 
+                val finalHost = capabilities()
                 store.insertUnique(clone) { latest ->
                     val currentSource = latest.firstOrNull { it.id == id }
                         ?: error("La VM source a été supprimée pendant le clonage.")
                     require(currentSource.state == VmState.OFF) {
                         "La VM source n'est plus à l'état OFF ; clonage annulé."
                     }
-                    val admission = ResourceAdmissionController.check(clone, latest, host)
+                    val admission = ResourceAdmissionController.check(clone, latest, finalHost)
                     require(admission.allowed) {
                         "Clonage refusé par le contrôle de ressources : " + admission.reason
                     }
