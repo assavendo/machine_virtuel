@@ -287,9 +287,6 @@ class VmManager(private val context: Context) {
             }
         }
 
-    fun markStarting(id: String): VmConfig? = store.update(id) { it.state = VmState.STARTING }
-    fun stop(id: String) = store.update(id) { it.state = VmState.OFF }
-
     fun delete(id: String) {
         store.withVmLock(id) {
             val vm = store.list().firstOrNull { it.id == id } ?: return@withVmLock
