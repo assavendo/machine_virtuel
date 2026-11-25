@@ -39,4 +39,6 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:1.87")
     testImplementation("org.jetbrains.kotlin:kotlin-test:2.2.10")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:2.2.10")
+    // Android provides org.json at runtime; local JVM unit tests need the reference implementation.
+    testImplementation("org.json:json:20260814")
 }
