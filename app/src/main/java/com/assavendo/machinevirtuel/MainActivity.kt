@@ -400,8 +400,9 @@ class MainActivity : Activity() {
         val ram = edit(base.ramMb.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
         addLabel("Nombre de vCPU")
         val vcpus = edit(base.vCpu.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
-        addLabel("Taille du disque virtuel (GiB)")
+        addLabel("Capacité du nouveau disque (GiB)")
         val diskSize = edit(base.diskSizeGiB.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
+        content.addView(subtitle("Cette capacité est utilisée pour un disque neuf. Un disque importé conserve la capacité définie dans son image ; PhoenixVM n'en exécute pas le parseur de métadonnées à l'import."))
         addLabel("Format du disque")
         val diskFormats = DiskFormat.entries
         val diskFormat = spinner(diskFormats.map { it.name }, diskFormats.indexOf(base.diskFormat))
@@ -439,7 +440,7 @@ class MainActivity : Activity() {
         )
         addLabel("Nom de l'interface TAP (mode TAP uniquement)")
         val tapName = edit(base.tapName)
-        content.addView(subtitle("Le bridge réseau Android n'est pas configuré automatiquement. TAP exige une interface précréée et des privilèges adaptés ; NAT est le choix portable par défaut."))
+        content.addView(subtitle("TAP tente de préparer l'interface avec les privilèges disponibles, mais dépend du root, de SELinux et du support OEM. Les redirections de ports hostfwd sont réservées à NAT ; elles sont refusées en TAP."))
 
         section("F — Partage hôte / invité")
         val shareDirectory = File(filesDir, "vms/$vmId/shared").canonicalFile
