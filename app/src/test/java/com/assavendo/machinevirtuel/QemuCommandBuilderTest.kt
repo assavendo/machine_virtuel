@@ -85,7 +85,7 @@ class QemuCommandBuilderTest {
                 usbPassthrough = listOf(attachment),
             )
             assertTrue(command.any {
-                it == "usb-host,bus=usb.0,hostbus=2,hostaddr=17,guest-reset=false"
+                it == "usb-host,hostbus=2,hostaddr=17,guest-reset=false"
             })
         } finally {
             f.root.deleteRecursively()
