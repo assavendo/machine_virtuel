@@ -428,7 +428,7 @@ class MainActivity : Activity() {
         content.addView(subtitle("Le bridge réseau Android n'est pas configuré automatiquement. TAP exige une interface précréée et des privilèges adaptés ; NAT est le choix portable par défaut."))
 
         section("F — Partage hôte / invité")
-        val shareDirectory = (getExternalFilesDir("PhoenixVM/Shared") ?: File(filesDir, "PhoenixVM/Shared")).canonicalFile
+        val shareDirectory = File(filesDir, "vms/$vmId/shared").canonicalFile
         val share = checkBox("Créer le dossier partagé PhoenixVM", base.sharedDirs.isNotEmpty() || base.sharedDirPath.isNotBlank())
         val shareLocation = cardText().apply {
             text = "Dossier privé de partage :\n${shareDirectory.absolutePath}\n" +
@@ -1156,7 +1156,7 @@ class MainActivity : Activity() {
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode in 706..713) {
+        if (requestCode in 706..714) {
             val draft = pendingVmCreationDraft
             val kind = pendingVmCreationArtifact
             if (resultCode != RESULT_OK || data?.data == null) {
@@ -1168,13 +1168,32 @@ class MainActivity : Activity() {
                 return
             }
             val selectedUri = data.data!!
+            val selectedKind = kind
             Thread({
-                val result = runCatching { copyVmCreationArtifact(draft, kind, selectedUri) }
+                val result = runCatching {
+                    if (selectedKind == "shared-files") {
+                        val uris = buildList {
+                            val clip = data.clipData
+                            if (clip != null) {
+                                for (index in 0 until clip.itemCount) clip.getItemAt(index).uri?.let(::add)
+                            } else {
+                                add(selectedUri)
+                            }
+                        }
+                        require(uris.isNotEmpty()) { "Aucun fichier n'a été sélectionné." }
+                        copyVmCreationSharedFiles(draft, uris)
+                    } else {
+                        copyVmCreationArtifact(draft, selectedKind, selectedUri)
+                    }
+                }
                 handler.post {
                     pendingVmCreationArtifact = null
                     result.onSuccess { updated ->
                         pendingVmCreationDraft = updated
-                        toast("Fichier importé et copié dans le stockage privé PhoenixVM.")
+                        toast(
+                            if (selectedKind == "shared-files") "Fichiers ajoutés au partage de cette VM."
+                            else "Fichier importé et copié dans le stockage privé PhoenixVM."
+                        )
                         createVm(updated)
                     }.onFailure { error ->
                         toast("Import du fichier impossible : " + (error.message ?: "erreur inconnue"))
@@ -1280,11 +1299,7 @@ class MainActivity : Activity() {
         val updated = draft.copy()
         when (kind) {
             "iso" -> updated.isoPath = target.absolutePath
-            "disk" -> {
-                updated.diskPath = target.absolutePath
-                val bytesPerGiB = 1024L * 1024L * 1024L
-                updated.diskSizeGiB = ((target.length() + bytesPerGiB - 1L) / bytesPerGiB).coerceAtLeast(1L)
-            }
+            "disk" -> updated.diskPath = target.absolutePath
             "kernel" -> updated.kernelPath = target.absolutePath
             "initrd" -> updated.initrdPath = target.absolutePath
             "dtb" -> updated.dtbPath = target.absolutePath
@@ -1293,6 +1308,87 @@ class MainActivity : Activity() {
             "android-userdata" -> updated.androidUserdataPath = target.absolutePath
         }
         return updated
+    }
+
+    private fun copyVmCreationSharedFiles(
+        draft: VmConfig,
+        uris: List<android.net.Uri>,
+    ): VmConfig {
+        require(uris.size <= 64) { "Au maximum 64 fichiers peuvent être ajoutés en une fois." }
+        val vmRoot = File(filesDir, "vms").canonicalFile
+        val vmDir = File(vmRoot, draft.id).canonicalFile
+        require(vmDir.toPath().startsWith(vmRoot.toPath()) && vmDir != vmRoot) {
+            "Identifiant ou chemin de VM invalide."
+        }
+        val shareDir = File(vmDir, "shared").canonicalFile
+        require(shareDir.toPath().startsWith(vmDir.toPath()) && shareDir != vmDir) {
+            "Chemin du dossier partagé invalide."
+        }
+        check(shareDir.mkdirs() || shareDir.isDirectory) {
+            "Impossible de préparer le dossier partagé de la VM."
+        }
+        uris.forEachIndexed { index, uri ->
+            val displayName = contentResolver.query(
+                uri,
+                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+            val rawName = displayName?.takeIf { it.isNotBlank() } ?: "shared-file-$index"
+            val safeName = rawName
+                .replace(Regex("[^A-Za-z0-9._ -]"), "_")
+                .replace(Regex("\\s+"), "_")
+                .trim('.', ' ', '_')
+                .take(120)
+                .ifBlank { "shared-file-$index" }
+            val dot = safeName.lastIndexOf('.')
+            val stem = if (dot > 0) safeName.substring(0, dot) else safeName
+            val extension = if (dot > 0) safeName.substring(dot) else ""
+            var target = File(shareDir, safeName)
+            var suffix = 2
+            while (target.exists()) {
+                val suffixText = "-$suffix"
+                target = File(shareDir, stem.take(120 - suffixText.length - extension.length) + suffixText + extension)
+                suffix++
+            }
+            require(target.canonicalFile.parentFile == shareDir) { "Nom de fichier partagé invalide." }
+            val temporary = File(shareDir, target.name + ".partial")
+            temporary.delete()
+            val available = shareDir.usableSpace
+            try {
+                val input = contentResolver.openInputStream(uri)
+                    ?: error("Android n'a pas pu ouvrir le fichier sélectionné.")
+                input.use { source ->
+                    java.io.FileOutputStream(temporary).use { output ->
+                        val buffer = ByteArray(128 * 1024)
+                        var total = 0L
+                        while (true) {
+                            val count = source.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            require(total <= available) { "Espace insuffisant pour le fichier partagé $safeName." }
+                            output.write(buffer, 0, count)
+                        }
+                        output.fd.sync()
+                    }
+                }
+                require(temporary.isFile && temporary.length() > 0L) {
+                    "Le fichier partagé $safeName est vide ou illisible."
+                }
+                android.system.Os.rename(temporary.absolutePath, target.absolutePath)
+            } catch (error: Throwable) {
+                temporary.delete()
+                throw error
+            }
+        }
+        val share = SharedDirectory(shareDir.absolutePath, "shared", readOnly = false)
+        return draft.copy(
+            sharedDirPath = "",
+            sharedDirs = (draft.sharedDirs.filterNot { it.tag == "shared" } + share),
+        )
     }
 
     private fun configureGestures() {
