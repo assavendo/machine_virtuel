@@ -180,7 +180,7 @@ class VmStore(context: Context) {
         put("backend", vm.backend.name); put("mode", vm.mode.name); put("performancePreset", vm.performancePreset.name)
         put("profile", vm.profile.name); put("gpuBackend", vm.gpuBackend.name)
         put("displayWidth", vm.displayWidth); put("displayHeight", vm.displayHeight); put("dpi", vm.dpi); put("fullscreen", vm.fullscreen); put("headless", vm.headless)
-        put("audioEnabled", vm.audioEnabled); put("audioFrequencyHz", vm.audioFrequencyHz); put("audioChannels", vm.audioChannels); put("audioBufferMs", vm.audioBufferMs)
+        put("audioEnabled", vm.audioEnabled); put("audioMuted", vm.audioMuted); put("audioFrequencyHz", vm.audioFrequencyHz); put("audioChannels", vm.audioChannels); put("audioBufferMs", vm.audioBufferMs)
         put("balloonEnabled", vm.balloonEnabled); put("memoryPreallocate", vm.memoryPreallocate); put("ioThreads", vm.ioThreads)
         put("networkMode", vm.networkMode.name); put("tapName", vm.tapName)
         val pf = JSONArray()
