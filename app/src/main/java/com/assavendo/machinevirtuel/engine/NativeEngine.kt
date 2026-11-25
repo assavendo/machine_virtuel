@@ -23,7 +23,10 @@ object NativeEngine {
     )
 
     fun isLoaded(): Boolean = loaded
-    fun isAvailable(): Boolean = loaded
+    fun isAvailable(): Boolean = loaded && runCatching {
+        nativeVersion()
+        true
+    }.getOrDefault(false)
 
     fun version(): String {
         if (!loaded) return "Native core not packaged"
@@ -44,7 +47,7 @@ object NativeEngine {
             return NativeBackendDecision("QEMU_TCG", false)
         }
 
-        val backend = runCatching {
+        val result = runCatching {
             nativeSelectBackend(
                 arm64Guest,
                 kvm,
@@ -54,9 +57,12 @@ object NativeEngine {
                 avf,
                 thermalStatus,
             )
-        }.getOrDefault("QEMU_TCG")
+        }
 
-        return NativeBackendDecision(backend, true)
+        return result.fold(
+            onSuccess = { NativeBackendDecision(it, true) },
+            onFailure = { NativeBackendDecision("QEMU_TCG", false) },
+        )
     }
 
     fun translationTier(executions: Long): String {
