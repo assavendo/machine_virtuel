@@ -25,8 +25,8 @@ object VmPackageManager {
     private const val MAX_TOTAL_BYTES = 4_398_046_511_104L // 4 TiB; also bounded by available device storage.
 
     fun export(context: Context, vm: VmConfig, output: File, includeSnapshots: Boolean = false): File {
-        require(vm.state == VmState.OFF || vm.state == VmState.ERROR) {
-            "L'export sécurisé exige une VM complètement arrêtée."
+        require(vm.state == VmState.OFF) {
+            "L'export sécurisé exige l'état OFF confirmé ; ERROR peut encore correspondre à un processus vivant."
         }
         val disk = File(vm.diskPath).canonicalFile
         require(disk.isFile && disk.canRead()) { "Disque VM introuvable ou illisible." }
