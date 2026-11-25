@@ -403,8 +403,16 @@ class VmRuntimeService : Service() {
             if (!recorded || orphanedProcess) {
                 persistVmUpdate(store, id) { it.state = VmState.RECOVERY }
             }
-            val failedVm = store.list().firstOrNull { it.id == id } ?: vm
-            val plan = RecoveryManager.plan(filesDir, failedVm, t.message ?: "VM start failed")
+            val failedVm = store.list().firstOrNull { it.id == id }
+            if (failedVm == null && !orphanedProcess) {
+                // A queued start may lose the race to a confirmed OFF deletion.
+                // No backend was admitted/launched, so do not leave recovery metadata
+                // for a VM which no longer exists.
+                RecoveryPlanStore.clear(filesDir, id)
+                logger.info("VM startup cancelled because its configuration was removed before admission.")
+                return
+            }
+            val plan = RecoveryManager.plan(filesDir, failedVm ?: vm, t.message ?: "VM start failed")
             RecoveryPlanStore.write(filesDir, plan)
             VmEventBus.emit(
                 VmEvent(
