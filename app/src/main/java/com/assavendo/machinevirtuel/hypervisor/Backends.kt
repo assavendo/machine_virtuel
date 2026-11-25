@@ -36,7 +36,7 @@ class QemuBackend(private val backendKind: BackendKind) : HypervisorBackend {
         qmp: File,
         serial: File,
         log: File,
-        usbPassthrough: List<UsbHostAttachment> = emptyList(),
+        usbPassthrough: List<UsbHostAttachment>,
     ): BackendLaunchSpec = BackendLaunchSpec(
         command = QemuCommandBuilder.build(
             paths,
@@ -87,7 +87,7 @@ class CrosvmBackend(private val backendKind: BackendKind) : HypervisorBackend {
         qmp: File,
         serial: File,
         log: File,
-        usbPassthrough: List<UsbHostAttachment> = emptyList(),
+        usbPassthrough: List<UsbHostAttachment>,
     ): BackendLaunchSpec {
         require(usbPassthrough.isEmpty()) {
             "Le passthrough USB hôte est uniquement disponible sur le backend QEMU vérifié."
