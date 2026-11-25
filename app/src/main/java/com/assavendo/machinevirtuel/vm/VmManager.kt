@@ -258,15 +258,17 @@ class VmManager(private val context: Context) {
     fun attachUsb(id: String, config: UsbPassthroughConfig): VmConfig? =
         store.withVmLock(id) {
             store.update(id) {
-                require(it.state == VmState.OFF) { "Le passthrough USB ne peut être modifié que lorsque la VM est à l'état OFF confirmé." }
-            require(it.usbPassthrough.none { existing ->
-                existing.vendorId == config.vendorId &&
-                    existing.productId == config.productId &&
-                    existing.serialNumber == config.serialNumber
-            }) { "Ce périphérique USB est déjà attaché à cette VM." }
-            require(it.usbPassthrough.size < 8) {
-                "Une VM ne peut pas attacher plus de 8 périphériques USB hôte."
-            }
+                require(it.state == VmState.OFF) {
+                    "Le passthrough USB ne peut être modifié que lorsque la VM est à l'état OFF confirmé."
+                }
+                require(it.usbPassthrough.none { existing ->
+                    existing.vendorId == config.vendorId &&
+                        existing.productId == config.productId &&
+                        existing.serialNumber == config.serialNumber
+                }) { "Ce périphérique USB est déjà attaché à cette VM." }
+                require(it.usbPassthrough.size < 8) {
+                    "Une VM ne peut pas attacher plus de 8 périphériques USB hôte."
+                }
                 it.usbPassthrough = it.usbPassthrough + config
             }
         }
