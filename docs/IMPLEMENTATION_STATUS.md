@@ -51,6 +51,7 @@ The native boundary is fail-safe:
 
 ### Graphics / input / audio
 - VirtIO GPU software, VirGL and Gfxstream/rutabaga command modes with VNC/RFB display baseline.
+- GPU capability reporting distinguishes host Vulkan availability from actually verified VM GPU acceleration; unverified paths are never advertised as accelerated.
 - Dynamic resolution/fit behavior and configurable edge swipe, pinch and three-finger gestures.
 - VirtIO input devices, keyboard mapping and touch/mouse input path.
 - VirtIO sound with Android AAudio backend selection.
