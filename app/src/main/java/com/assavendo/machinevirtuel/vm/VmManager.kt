@@ -1,6 +1,7 @@
 package com.assavendo.machinevirtuel.vm
 
 import android.content.Context
+import android.os.StatFs
 import com.assavendo.machinevirtuel.cache.TranslationCacheManager
 import com.assavendo.machinevirtuel.host.HostCapabilityScanner
 import com.assavendo.machinevirtuel.performance.HostMetricsCollector
@@ -39,6 +40,7 @@ class VmManager(private val context: Context) {
         val decision = orchestrator.choose(seed, caps)
         val budget = ResourceAdmissionController
             .check(seed.copy(ramMb = 2048), store.list(), caps)
+        require(budget.allowed) { budget.reason }
         val selectedRam = budget.recommendedRamMb
         require(selectedRam >= 512) {
             "Mémoire disponible insuffisante pour créer une VM par défaut en sécurité."
@@ -81,6 +83,16 @@ class VmManager(private val context: Context) {
         require(vmDir.toPath().startsWith(vmRoot.toPath()) && vmDir != vmRoot) {
             "Le chemin de stockage de la VM est invalide."
         }
+        if (config.diskPath.isBlank()) {
+            val requiredBytes = Math.multiplyExact(config.diskSizeGiB, 1024L * 1024L * 1024L)
+            val availableBytes = StatFs(context.filesDir.absolutePath).availableBytes
+            require(requiredBytes <= availableBytes) {
+                "Espace de stockage insuffisant pour créer le disque virtuel : " +
+                    config.diskSizeGiB + " Gio demandés, " +
+                    (availableBytes / (1024L * 1024L)) + " Mio disponibles."
+            }
+        }
+
         val suppliedArtifacts = listOf(
             config.diskPath, config.isoPath, config.kernelPath, config.initrdPath,
             config.dtbPath, config.androidSystemPath, config.androidVendorPath,
