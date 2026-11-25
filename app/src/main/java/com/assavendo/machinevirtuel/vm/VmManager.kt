@@ -227,8 +227,8 @@ class VmManager(private val context: Context) {
         bufferMs: Int,
     ): VmConfig? {
         val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
-        require(vm.state == VmState.OFF || vm.state == VmState.ERROR) {
-            "La configuration audio doit être modifiée lorsque la VM est arrêtée."
+        require(vm.state == VmState.OFF) {
+            "La configuration audio exige l'état OFF confirmé ; ERROR peut encore correspondre à un processus vivant."
         }
         require(frequencyHz in 8_000..192_000)
         require(channels in 1..8)
@@ -311,8 +311,8 @@ class VmManager(private val context: Context) {
 
     fun applyOptimization(id: String): VmConfig {
         val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
-        require(vm.state == VmState.OFF || vm.state == VmState.ERROR) {
-            "Appliquer une optimisation de ressources exige une VM arrêtée."
+        require(vm.state == VmState.OFF) {
+            "Appliquer une optimisation de ressources exige l'état OFF confirmé."
         }
         val decision = optimizer.decide(vm, metrics.sample())
         val admission = ResourceAdmissionController.check(
