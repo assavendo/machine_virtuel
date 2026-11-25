@@ -24,8 +24,8 @@ object SnapshotManager {
     private const val FORMAT_VERSION = 2
 
     fun createColdSnapshot(base: File, vm: VmConfig, label: String): File {
-        require(vm.state == VmState.OFF || vm.state == VmState.ERROR) {
-            "Une capture à froid exige une VM complètement arrêtée."
+        require(vm.state == VmState.OFF) {
+            "Une capture à froid exige l'état OFF confirmé ; ERROR peut encore correspondre à un processus vivant."
         }
         require(vm.id.matches(Regex("[A-Za-z0-9-]{1,64}"))) { "Identifiant VM invalide." }
         val source = File(vm.diskPath).canonicalFile
@@ -136,8 +136,8 @@ object SnapshotManager {
     }
 
     fun restoreColdSnapshot(vm: VmConfig, snapshotDir: File) {
-        require(vm.state == VmState.OFF || vm.state == VmState.ERROR) {
-            "La restauration exige une VM complètement arrêtée."
+        require(vm.state == VmState.OFF) {
+            "La restauration exige l'état OFF confirmé ; ERROR peut encore correspondre à un processus vivant."
         }
         val canonical = requireSnapshotDirectory(vm.id, snapshotDir)
         val manifest = File(canonical, "manifest.json")
