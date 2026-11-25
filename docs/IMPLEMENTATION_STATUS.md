@@ -35,6 +35,8 @@ The native boundary is fail-safe:
 - QEMU TCG MTTCG policy and translation COLD/WARM/HOT/VERY_HOT profiling metadata.
 - Persistent translation-cache metadata keyed by VM/guest/translator/host features and cache level.
 - Rust native orchestration policy is now invoked from the Android path through JNI, with Kotlin availability guards.
+- Translation profiling uses the Rust native tier decision when available, with a deterministic Kotlin fallback.
+- Persistent translation profile metadata now records execution count, cache hits/misses and cumulative translation time while remaining compatible with older profile records.
 
 ### Memory / scheduling / performance
 - P/E-core topology discovery.
@@ -115,7 +117,7 @@ The native boundary is fail-safe:
 
 The application must not report hardware acceleration, native Surface presentation, TPM, VirtIO-FS, x86 support or performance gains unless the corresponding real runtime component has started successfully. Software-side capability detection is not proof of physical availability.
 
-The x86 translation tier and persistent-cache work in this app is policy/metadata around QEMU TCG; it does not claim to replace QEMU's internal translator with a new native JIT.
+The x86 translation tier and persistent-cache work in this app is policy/metadata around QEMU TCG; it does not claim to replace QEMU's internal translator with a new native JIT. QEMU TCG remains authoritative for executable translation blocks; PhoenixVM only classifies activity, persists compatible metadata and tunes the QEMU TB cache size.
 
 ## Validation boundary
 

@@ -65,19 +65,30 @@ object NativeEngine {
         )
     }
 
-    fun translationTier(executions: Long): String {
+    data class NativeTranslationDecision(
+        val tier: String,
+        val nativeAvailable: Boolean,
+    )
+
+    fun translationDecision(executions: Long): NativeTranslationDecision {
         val safeExecutions = executions.coerceAtLeast(0L)
-        if (!loaded) {
-            return when {
-                safeExecutions >= 100_000L -> "VERY_HOT"
-                safeExecutions >= 10_000L -> "HOT"
-                safeExecutions >= 100L -> "WARM"
-                else -> "COLD"
-            }
+        val fallback = when {
+            safeExecutions >= 100_000L -> "VERY_HOT"
+            safeExecutions >= 10_000L -> "HOT"
+            safeExecutions >= 100L -> "WARM"
+            else -> "COLD"
         }
-        return runCatching { nativeTranslationTier(safeExecutions) }
-            .getOrDefault("COLD")
+        if (!loaded) return NativeTranslationDecision(fallback, false)
+
+        return runCatching {
+            NativeTranslationDecision(nativeTranslationTier(safeExecutions), true)
+        }.getOrElse {
+            NativeTranslationDecision(fallback, false)
+        }
     }
+
+    fun translationTier(executions: Long): String =
+        translationDecision(executions).tier
 
     @JvmStatic
     private external fun nativeVersion(): String

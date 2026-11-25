@@ -34,6 +34,9 @@ data class TranslationProfile(
     val hotBlocks: Long,
     val coldBlocks: Long,
     val executionCount: Long,
+    val cacheHits: Long = 0,
+    val cacheMisses: Long = 0,
+    val totalTranslationMs: Double = 0.0,
     val lastSeenMs: Long,
     val compatibilityFingerprint: String,
 )
@@ -189,11 +192,19 @@ class TranslationCacheManager(context: Context) {
         require(profile.compatibilityFingerprint == keyId(key)) {
             "Translation profile fingerprint does not match the cache key."
         }
+        require(profile.cacheHits >= 0 && profile.cacheMisses >= 0)
+        require(profile.cacheHits + profile.cacheMisses == profile.executionCount) {
+            "Translation cache hit/miss counts must equal execution count."
+        }
+        require(profile.totalTranslationMs.isFinite() && profile.totalTranslationMs >= 0.0)
         val json = JSONObject()
             .put("state", profile.state)
             .put("hot_blocks", profile.hotBlocks)
             .put("cold_blocks", profile.coldBlocks)
             .put("execution_count", profile.executionCount)
+            .put("cache_hits", profile.cacheHits)
+            .put("cache_misses", profile.cacheMisses)
+            .put("total_translation_ms", profile.totalTranslationMs)
             .put("last_seen_ms", profile.lastSeenMs)
             .put("compatibility_fingerprint", profile.compatibilityFingerprint)
         putManifest(key, json.toString(), allowGlobalLevel3)
@@ -209,6 +220,9 @@ class TranslationCacheManager(context: Context) {
                 hotBlocks = json.getLong("hot_blocks"),
                 coldBlocks = json.getLong("cold_blocks"),
                 executionCount = json.getLong("execution_count"),
+                cacheHits = json.optLong("cache_hits", 0L),
+                cacheMisses = json.optLong("cache_misses", 0L),
+                totalTranslationMs = json.optDouble("total_translation_ms", 0.0),
                 lastSeenMs = json.getLong("last_seen_ms"),
                 compatibilityFingerprint = json.getString("compatibility_fingerprint"),
             )

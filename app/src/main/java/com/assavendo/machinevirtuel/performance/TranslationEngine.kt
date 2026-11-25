@@ -3,6 +3,7 @@ package com.assavendo.machinevirtuel.performance
 import com.assavendo.machinevirtuel.cache.TranslationCacheKey
 import com.assavendo.machinevirtuel.cache.TranslationCacheManager
 import com.assavendo.machinevirtuel.cache.TranslationProfile as CacheTranslationProfile
+import com.assavendo.machinevirtuel.engine.NativeEngine
 
 enum class TranslationTier { COLD, WARM, HOT, VERY_HOT }
 
@@ -29,11 +30,12 @@ class TranslationEngine(private val cache: TranslationCacheManager) {
         val existing = profiles[cacheId] ?: cache.getProfile(key, allowGlobalLevel3)?.let {
             TranslationProfile(
                 fingerprint = cacheId,
-                tier = runCatching { TranslationTier.valueOf(it.state) }.getOrDefault(TranslationTier.COLD),
+                tier = TranslationTierPolicy.fromNativeName(it.state)
+                    ?: TranslationTierPolicy.fromExecutions(it.executionCount),
                 executions = it.executionCount,
-                translationMs = 0.0,
-                cacheHits = 0,
-                cacheMisses = 0,
+                translationMs = it.totalTranslationMs,
+                cacheHits = it.cacheHits,
+                cacheMisses = it.cacheMisses,
             )
         } ?: TranslationProfile(cacheId)
 
@@ -41,12 +43,15 @@ class TranslationEngine(private val cache: TranslationCacheManager) {
         existing.executions++
         existing.translationMs += translatedMs.coerceAtLeast(0.0)
         if (cacheHit) existing.cacheHits++ else existing.cacheMisses++
-        existing.tier = when {
-            existing.executions >= 100_000 -> TranslationTier.VERY_HOT
-            existing.executions >= 10_000 -> TranslationTier.HOT
-            existing.executions >= 100 -> TranslationTier.WARM
-            else -> TranslationTier.COLD
+
+        val nativeDecision = NativeEngine.translationDecision(existing.executions)
+        val nativeTier = TranslationTierPolicy.fromNativeName(nativeDecision.tier)
+        existing.tier = if (nativeDecision.nativeAvailable && nativeTier != null) {
+            nativeTier
+        } else {
+            TranslationTierPolicy.fromExecutions(existing.executions)
         }
+
         profiles[cacheId] = existing
 
         val shouldPersist = existing.executions == 1L ||
@@ -61,6 +66,9 @@ class TranslationEngine(private val cache: TranslationCacheManager) {
                     hotBlocks = 0L,
                     coldBlocks = 0L,
                     executionCount = existing.executions,
+                    cacheHits = existing.cacheHits,
+                    cacheMisses = existing.cacheMisses,
+                    totalTranslationMs = existing.translationMs,
                     lastSeenMs = System.currentTimeMillis(),
                     compatibilityFingerprint = cacheId,
                 ),
