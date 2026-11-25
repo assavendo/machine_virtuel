@@ -1159,7 +1159,8 @@ class MainActivity : Activity() {
         if (requestCode in 706..714) {
             val draft = pendingVmCreationDraft
             val kind = pendingVmCreationArtifact
-            if (resultCode != RESULT_OK || data?.data == null) {
+            val hasSelectedFile = data?.data != null || (requestCode == 714 && data?.clipData != null)
+            if (resultCode != RESULT_OK || data == null || !hasSelectedFile) {
                 if (draft != null) createVm(draft)
                 return
             }
@@ -1167,7 +1168,8 @@ class MainActivity : Activity() {
                 toast("Brouillon de création introuvable ; recommence la sélection du fichier.")
                 return
             }
-            val selectedUri = data.data!!
+            val selectedUri = data.data ?: data.clipData?.getItemAt(0)?.uri
+                ?: error("Aucun fichier valide n'a été sélectionné.")
             val selectedKind = kind
             Thread({
                 val result = runCatching {
