@@ -14,7 +14,7 @@ PhoenixVM applies the following runtime rules:
 4. A stop received during startup waits behind the startup command. It therefore observes either a completed backend handle or a recorded startup failure; it cannot race ahead of process registration.
 5. Process waiters never mutate VM state directly. They enqueue an exit transition into the same per-VM command queue.
 6. Exit cleanup removes a process with the key-and-handle identity pair. A delayed exit notification for an older process cannot remove a newer process registered for the same VM ID.
-7. Clean/force stop follows bounded escalation: accepted graceful request and wait, process destroy and wait, then destroy-forcibly and final wait. A VM is stored as `OFF` only when process exit is confirmed. Failure to confirm termination remains visible as `ERROR`.
+7. Clean/force stop follows bounded escalation: accepted graceful request and wait, process destroy and wait, then destroy-forcibly and final wait. A VM is stored as `OFF` only when process exit is confirmed. A process that exits before the stop command is handled as an unexpected exit; a stop that requires destroy/force escalation is stored as `RECOVERY` with a plan because guest filesystem consistency is not guaranteed. Failure to confirm termination remains visible as `ERROR`.
 8. If the store says a VM is active but no runtime process handle exists, a stop request moves it to `RECOVERY` and writes a recovery plan instead of falsely reporting `OFF`.
 
 ## Concurrency and resource isolation

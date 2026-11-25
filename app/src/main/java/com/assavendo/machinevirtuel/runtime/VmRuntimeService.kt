@@ -282,7 +282,7 @@ class VmRuntimeService : Service() {
             }
         } catch (t: Throwable) {
             launchedHandle?.let { active ->
-                if (VmProcessTerminator.terminate(active.process, graceful = false)) {
+                if (VmProcessTerminator.terminate(active.process, graceful = false) != VmProcessTermination.STILL_ALIVE) {
                     processes.remove(id, active)
                     cleanupHandleResources(id, active)
                 }
@@ -540,6 +540,12 @@ class VmRuntimeService : Service() {
             return
         }
 
+        if (!handle.process.isAlive) {
+            val exit = runCatching { handle.process.exitValue() }.getOrDefault(-1)
+            finalizeBackendExit(id, handle, exit, requestedStop = false)
+            return
+        }
+
         if (current.state == VmState.PAUSED && !force) {
             val resumed = when {
                 handle.qmp != null -> QmpController.resume(handle.qmp)
@@ -560,11 +566,11 @@ class VmRuntimeService : Service() {
                 runCrosvmControl(RuntimePaths(this), "stop", handle.controlSocket)
             else -> false
         }
-        val stopped = VmProcessTerminator.terminate(
+        val termination = VmProcessTerminator.terminate(
             process = handle.process,
             graceful = !force && gracefulCommandAccepted,
         )
-        if (!stopped) {
+        if (termination == VmProcessTermination.STILL_ALIVE) {
             val message = "Backend process did not exit after graceful/forced termination attempts."
             store.update(id) { it.state = VmState.ERROR }
             VmLogger(this, id).warn(message)
@@ -572,9 +578,20 @@ class VmRuntimeService : Service() {
             updateNotification("VM " + current.name + ": termination could not be confirmed")
             return
         }
+        if (termination == VmProcessTermination.ALREADY_EXITED) {
+            val exit = runCatching { handle.process.exitValue() }.getOrDefault(-1)
+            finalizeBackendExit(id, handle, exit, requestedStop = false)
+            return
+        }
 
         val exit = runCatching { handle.process.exitValue() }.getOrDefault(0)
-        finalizeBackendExit(id, handle, exit, requestedStop = true)
+        finalizeBackendExit(
+            id,
+            handle,
+            exit,
+            requestedStop = true,
+            recoveryRequired = termination != VmProcessTermination.GRACEFUL,
+        )
     }
 
     private fun markMissingRuntimeHandle(id: String, current: VmConfig) {
@@ -604,6 +621,7 @@ class VmRuntimeService : Service() {
         handle: Handle,
         exitCode: Int,
         requestedStop: Boolean,
+        recoveryRequired: Boolean = false,
     ) {
         // A delayed waiter for an old process must never remove or overwrite a newer VM run.
         if (!processes.remove(id, handle)) return
@@ -613,14 +631,20 @@ class VmRuntimeService : Service() {
         val current = store.list()
         val vm = current.firstOrNull { it.id == id }
         val unexpectedExit = !requestedStop && exitCode != 0
+        val needsRecovery = unexpectedExit || recoveryRequired
         if (vm != null) {
-            vm.state = if (unexpectedExit) VmState.ERROR else VmState.OFF
-            if (unexpectedExit) {
-                val plan = RecoveryManager.plan(
-                    filesDir,
-                    vm,
-                    "Backend " + handle.backend.label + " exited with code " + exitCode,
-                )
+            vm.state = when {
+                unexpectedExit -> VmState.ERROR
+                recoveryRequired -> VmState.RECOVERY
+                else -> VmState.OFF
+            }
+            if (needsRecovery) {
+                val reason = if (unexpectedExit) {
+                    "Backend " + handle.backend.label + " exited unexpectedly with code " + exitCode
+                } else {
+                    "Backend " + handle.backend.label + " required forced process termination; guest filesystem consistency is not guaranteed"
+                }
+                val plan = RecoveryManager.plan(filesDir, vm, reason)
                 RecoveryPlanStore.write(filesDir, plan)
                 VmEventBus.emit(
                     VmEvent(
@@ -636,9 +660,14 @@ class VmRuntimeService : Service() {
         }
 
         val eventType = if (unexpectedExit) VmEventType.VM_ERROR else VmEventType.VM_STOPPED
-        VmEventBus.emit(VmEvent(id, eventType, message = "exit=" + exitCode))
-        VmLogger(this, id).info("VM stopped with exit code " + exitCode)
-        updateNotification("VM stopped • exit " + exitCode)
+        val message = when {
+            unexpectedExit -> "unexpected exit=$exitCode"
+            recoveryRequired -> "forced termination; recovery required"
+            else -> "exit=$exitCode"
+        }
+        VmEventBus.emit(VmEvent(id, eventType, message = message))
+        VmLogger(this, id).info("VM stopped: " + message)
+        updateNotification("VM stopped • " + message)
     }
 
     private fun cleanupHandleResources(id: String, handle: Handle) {

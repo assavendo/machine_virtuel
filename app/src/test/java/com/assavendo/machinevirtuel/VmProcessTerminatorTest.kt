@@ -1,5 +1,6 @@
 package com.assavendo.machinevirtuel
 
+import com.assavendo.machinevirtuel.runtime.VmProcessTermination
 import com.assavendo.machinevirtuel.runtime.VmProcessTerminator
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -8,28 +9,37 @@ import java.io.OutputStream
 import java.util.ArrayDeque
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
+import kotlin.test.assertEquals
 
 class VmProcessTerminatorTest {
     @Test
     fun gracefulExitDoesNotEscalate() {
         val process = FakeProcess(listOf(true))
 
-        assertTrue(VmProcessTerminator.terminate(process, graceful = true))
-        assertTrue(process.waitCalls == 1)
-        assertTrue(process.destroyCalls == 0)
-        assertTrue(process.forceCalls == 0)
+        assertEquals(VmProcessTermination.GRACEFUL, VmProcessTerminator.terminate(process, graceful = true))
+        assertEquals(1, process.waitCalls)
+        assertEquals(0, process.destroyCalls)
+        assertEquals(0, process.forceCalls)
     }
 
     @Test
     fun nonResponsiveProcessIsEscalatedAndConfirmedDead() {
         val process = FakeProcess(listOf(false, false, true))
 
-        assertTrue(VmProcessTerminator.terminate(process, graceful = true))
-        assertTrue(process.destroyCalls == 1)
-        assertTrue(process.forceCalls == 1)
-        assertFalse(process.isAlive)
+        assertEquals(VmProcessTermination.FORCED, VmProcessTerminator.terminate(process, graceful = true))
+        assertEquals(1, process.destroyCalls)
+        assertEquals(1, process.forceCalls)
+        assertEquals(false, process.isAlive)
+    }
+
+    @Test
+    fun forceStopUsesDestroyBeforeForceAndReportsAnUncleanTermination() {
+        val process = FakeProcess(listOf(false, true))
+
+        assertEquals(VmProcessTermination.TERMINATED, VmProcessTerminator.terminate(process, graceful = false))
+        assertEquals(1, process.destroyCalls)
+        assertEquals(0, process.forceCalls)
+        assertEquals(false, process.isAlive)
     }
 
     @Test
@@ -39,9 +49,9 @@ class VmProcessTerminatorTest {
             exitsOnForce = false,
         )
 
-        assertFalse(VmProcessTerminator.terminate(process, graceful = true))
-        assertTrue(process.forceCalls == 1)
-        assertTrue(process.isAlive)
+        assertEquals(VmProcessTermination.STILL_ALIVE, VmProcessTerminator.terminate(process, graceful = true))
+        assertEquals(1, process.forceCalls)
+        assertEquals(true, process.isAlive)
     }
 
     private class FakeProcess(
