@@ -52,6 +52,10 @@ object VmSpecValidator {
                 true
             )
         }
+        VmBootOrder.validate(vm.bootOrder)?.let { message ->
+            issues += ValidationIssue("bootOrder", message, true)
+        }
+
         if (vm.diskPath.isNotBlank() && !File(vm.diskPath).exists())
             issues += ValidationIssue("diskPath", "L'image disque est introuvable.", true)
 
