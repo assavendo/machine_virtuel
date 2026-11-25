@@ -8,6 +8,9 @@ object VmSpecValidator {
     fun validate(vm: VmConfig): List<ValidationIssue> {
         val issues = mutableListOf<ValidationIssue>()
         if (vm.name.isBlank()) issues += ValidationIssue("name", "Le nom de la VM est vide.", true)
+        if (vm.name.length > 80 || vm.name.any { it.isISOControl() }) {
+            issues += ValidationIssue("name", "Le nom doit contenir au plus 80 caractères imprimables.", true)
+        }
         if (vm.ramMb < 256) issues += ValidationIssue("ramMb", "RAM minimale de 256 MiB.", true)
         if (vm.vCpu < 1) issues += ValidationIssue("vCpu", "Au moins 1 vCPU est requis.", true)
         if (vm.vCpu > 256) issues += ValidationIssue("vCpu", "Le nombre de vCPU dépasse 256.", true)
@@ -64,7 +67,7 @@ object VmSpecValidator {
             issues += ValidationIssue("network", message, true)
         }
 
-        if (vm.arch == GuestArch.X86_64 && vm.backend != BackendKind.QEMU_TCG && vm.backend != BackendKind.KVM)
+        if (vm.arch == GuestArch.X86_64 && vm.backend != BackendKind.QEMU_TCG)
             issues += ValidationIssue("backend", "Le guest x86_64 exige actuellement QEMU TCG.", false)
         if (vm.arch == GuestArch.X86_32 && vm.backend != BackendKind.QEMU_TCG)
             issues += ValidationIssue("backend", "Le guest x86 32-bit exige actuellement QEMU TCG.", false)
