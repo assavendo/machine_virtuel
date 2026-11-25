@@ -34,10 +34,18 @@ object DeviceProfileDatabase {
                 val vendorMatch = wildcard(profile.vendor, manufacturer)
                 val modelMatch = wildcard(profile.modelPattern, model)
                 val socMatch = wildcard(profile.socPattern, soc)
+                val modelSpecificity = if (modelMatch && profile.modelPattern != "*") {
+                    profile.modelPattern.replace("*", "").length
+                } else 0
+                val socSpecificity = if (socMatch && profile.socPattern != "*") {
+                    profile.socPattern.replace("*", "").length
+                } else 0
                 val score =
                     (if (vendorMatch && profile.vendor != "*") 10 else 0) +
                     (if (modelMatch && profile.modelPattern != "*") 30 else 0) +
-                    (if (socMatch && profile.socPattern != "*") 20 else 0)
+                    (if (socMatch && profile.socPattern != "*") 20 else 0) +
+                    modelSpecificity +
+                    socSpecificity
                 profile to score
             }
             .filter { it.second > 0 }
