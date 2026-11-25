@@ -61,6 +61,44 @@ class VmStoreTransactionTest {
     }
 
     @Test
+    fun perVmLocksSerializeOneVmWithoutBlockingAnother() {
+        val preferences = inMemoryPreferences()
+        val serviceStore = VmStore(preferences)
+        val managerStore = VmStore(preferences)
+        val firstEntered = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val otherVmCompleted = CountDownLatch(1)
+        val sameVmCompleted = CountDownLatch(1)
+
+        val first = thread(name = "vm-lock-a1") {
+            serviceStore.withVmLock("vm-a") {
+                firstEntered.countDown()
+                check(releaseFirst.await(5, TimeUnit.SECONDS))
+            }
+        }
+        assertTrue(firstEntered.await(5, TimeUnit.SECONDS))
+
+        val otherVm = thread(name = "vm-lock-b") {
+            managerStore.withVmLock("vm-b") { otherVmCompleted.countDown() }
+        }
+        assertTrue(otherVmCompleted.await(1, TimeUnit.SECONDS))
+
+        val sameVm = thread(name = "vm-lock-a2") {
+            managerStore.withVmLock("vm-a") { sameVmCompleted.countDown() }
+        }
+        assertFalse(sameVmCompleted.await(100, TimeUnit.MILLISECONDS))
+
+        releaseFirst.countDown()
+        first.join(5_000)
+        otherVm.join(5_000)
+        sameVm.join(5_000)
+        assertFalse(first.isAlive)
+        assertFalse(otherVm.isAlive)
+        assertFalse(sameVm.isAlive)
+        assertTrue(sameVmCompleted.count == 0L)
+    }
+
+    @Test
     fun concurrentSameNameInsertionsCannotPublishDuplicates() {
         val preferences = inMemoryPreferences()
         val storeA = VmStore(preferences)
