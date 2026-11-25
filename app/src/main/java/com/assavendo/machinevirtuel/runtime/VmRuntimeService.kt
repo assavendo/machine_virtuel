@@ -323,6 +323,11 @@ class VmRuntimeService : Service() {
         var cachedVcpuThreadIds: List<Long> = emptyList()
         var cachedTranslationAggregate = TranslationCacheManager(this).aggregate(id)
         val vcpuSampler = VmCpuThreadSampler()
+        val audioMonitor = if (vm.audioEnabled) {
+            AudioLogMonitor(FilePaths.vmLogFile(id))
+        } else {
+            null
+        }
 
         while (processes[id] === handle && handle.process.isAlive) {
             runCatching {
@@ -342,6 +347,7 @@ class VmRuntimeService : Service() {
                 }
 
                 val vCpuUtilization = vcpuSampler.sample(cachedVcpuThreadIds)
+                val audioUnderruns = audioMonitor?.sample()
                 VmMetricsRegistry.record(
                     id,
                     sample,
@@ -349,6 +355,8 @@ class VmRuntimeService : Service() {
                     vCpuUtilization = vCpuUtilization,
                     cacheHitRate = cachedTranslationAggregate.cacheHitRate,
                     translationMs = cachedTranslationAggregate.averageTranslationMs,
+                    audioUnderruns = audioUnderruns,
+                    audioLatencyConfiguredMs = vm.audioBufferMs.toDouble().takeIf { vm.audioEnabled },
                 )
                 val host = cachedHost ?: error("Host capability cache unavailable.")
                 val topology = cachedTopology ?: error("CPU topology cache unavailable.")
