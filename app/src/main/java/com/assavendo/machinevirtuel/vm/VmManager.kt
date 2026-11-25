@@ -126,6 +126,30 @@ class VmManager(private val context: Context) {
 
     fun setIso(id: String, path: String): VmConfig? = store.update(id) { it.isoPath = path }
 
+    fun updateAudio(
+        id: String,
+        enabled: Boolean,
+        muted: Boolean,
+        frequencyHz: Int,
+        channels: Int,
+        bufferMs: Int,
+    ): VmConfig? {
+        val vm = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
+        require(vm.state == VmState.OFF || vm.state == VmState.ERROR) {
+            "La configuration audio doit être modifiée lorsque la VM est arrêtée."
+        }
+        require(frequencyHz in 8_000..192_000)
+        require(channels in 1..8)
+        require(bufferMs in 2..500)
+        return store.update(id) {
+            it.audioEnabled = enabled
+            it.audioMuted = muted
+            it.audioFrequencyHz = frequencyHz
+            it.audioChannels = channels
+            it.audioBufferMs = bufferMs
+        }
+    }
+
     fun attachUsb(id: String, config: UsbPassthroughConfig): VmConfig? =
         store.update(id) {
             require(it.usbPassthrough.none { existing ->
