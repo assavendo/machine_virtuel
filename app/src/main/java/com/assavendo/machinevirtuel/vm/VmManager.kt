@@ -138,6 +138,7 @@ class VmManager(private val context: Context) {
         val source = store.list().firstOrNull { it.id == id } ?: error("VM introuvable.")
         val host = capabilities()
         require(source.state == VmState.OFF) { "Le clonage exige une VM arrêtée." }
+        val sourceLastStartedAt = source.lastStartedAt
         val clone = source.copy(
             id = UUID.randomUUID().toString(),
             name = newName.ifBlank { source.name + " Clone" },
@@ -153,7 +154,9 @@ class VmManager(private val context: Context) {
             "Répertoire source de VM invalide."
         }
 
-        val targetDir = File(context.filesDir, "vms/" + clone.id).apply { mkdirs() }
+        val targetDir = File(context.filesDir, "vms/" + clone.id).apply {
+            check(mkdirs() || isDirectory) { "Impossible de créer le répertoire temporaire du clone." }
+        }
         val copied = mutableMapOf<String, String>()
 
         fun copyManagedArtifact(path: String, targetName: String): String {
@@ -173,19 +176,27 @@ class VmManager(private val context: Context) {
             return target.absolutePath
         }
 
-        val targetDisk = File(targetDir, "disk." + DiskManager.extension(source.diskFormat))
-        sourceDisk.copyTo(targetDisk, overwrite = false)
-        clone.diskPath = targetDisk.absolutePath
-        clone.firmwarePath = copyManagedArtifact(source.firmwarePath, "nvram.fd")
-        clone.kernelPath = copyManagedArtifact(source.kernelPath, "kernel.Image")
-        clone.initrdPath = copyManagedArtifact(source.initrdPath, "initrd")
-        clone.dtbPath = copyManagedArtifact(source.dtbPath, "guest.dtb")
         try {
+            val targetDisk = File(targetDir, "disk." + DiskManager.extension(source.diskFormat))
+            sourceDisk.copyTo(targetDisk, overwrite = false)
+            clone.diskPath = targetDisk.absolutePath
+            clone.firmwarePath = copyManagedArtifact(source.firmwarePath, "nvram.fd")
+            clone.kernelPath = copyManagedArtifact(source.kernelPath, "kernel.Image")
+            clone.initrdPath = copyManagedArtifact(source.initrdPath, "initrd")
+            clone.dtbPath = copyManagedArtifact(source.dtbPath, "guest.dtb")
             clone.androidSystemPath = copyManagedArtifact(source.androidSystemPath, "android-system.img")
             clone.androidVendorPath = copyManagedArtifact(source.androidVendorPath, "android-vendor.img")
             clone.androidUserdataPath = copyManagedArtifact(source.androidUserdataPath, "android-userdata.img")
             clone.tpmStatePath = copyManagedArtifact(source.tpmStatePath, "tpm-state")
             store.insertUnique(clone) { latest ->
+                val currentSource = latest.firstOrNull { it.id == id }
+                    ?: error("La VM source a été supprimée pendant le clonage.")
+                require(
+                    currentSource.state == VmState.OFF &&
+                        currentSource.lastStartedAt == sourceLastStartedAt
+                ) {
+                    "La VM source a changé d'état pendant le clonage ; le clone a été annulé."
+                }
                 val admission = ResourceAdmissionController.check(clone, latest, host)
                 require(admission.allowed) {
                     "Clonage refusé par le contrôle de ressources : " + admission.reason
