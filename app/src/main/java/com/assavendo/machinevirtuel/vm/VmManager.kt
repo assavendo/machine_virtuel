@@ -111,7 +111,12 @@ class VmManager(private val context: Context) {
         var persisted = false
         try {
             DiskManager.ensureVmStorage(context.filesDir, config, runtime)
-            store.save(current.toMutableList().apply { add(config) })
+            store.insertUnique(config) { latest ->
+                val latestAdmission = ResourceAdmissionController.check(config, latest, capabilities())
+                check(latestAdmission.allowed) {
+                    "Création refusée après revalidation des ressources : " + latestAdmission.reason
+                }
+            }
             persisted = true
             if (config.autoSnapshotOnInstall) {
                 runCatching {
@@ -173,12 +178,22 @@ class VmManager(private val context: Context) {
         clone.kernelPath = copyManagedArtifact(source.kernelPath, "kernel.Image")
         clone.initrdPath = copyManagedArtifact(source.initrdPath, "initrd")
         clone.dtbPath = copyManagedArtifact(source.dtbPath, "guest.dtb")
-        clone.androidSystemPath = copyManagedArtifact(source.androidSystemPath, "android-system.img")
-        clone.androidVendorPath = copyManagedArtifact(source.androidVendorPath, "android-vendor.img")
-        clone.androidUserdataPath = copyManagedArtifact(source.androidUserdataPath, "android-userdata.img")
-        clone.tpmStatePath = copyManagedArtifact(source.tpmStatePath, "tpm-state")
-        store.save(store.list().toMutableList().apply { add(clone) })
-        return clone
+        try {
+            clone.androidSystemPath = copyManagedArtifact(source.androidSystemPath, "android-system.img")
+            clone.androidVendorPath = copyManagedArtifact(source.androidVendorPath, "android-vendor.img")
+            clone.androidUserdataPath = copyManagedArtifact(source.androidUserdataPath, "android-userdata.img")
+            clone.tpmStatePath = copyManagedArtifact(source.tpmStatePath, "tpm-state")
+            store.insertUnique(clone) { latest ->
+                val admission = ResourceAdmissionController.check(clone, latest, capabilities())
+                require(admission.allowed) {
+                    "Clonage refusé par le contrôle de ressources : " + admission.reason
+                }
+            }
+            return clone
+        } catch (failure: Throwable) {
+            targetDir.deleteRecursively()
+            throw failure
+        }
     }
 
     fun setIso(id: String, path: String): VmConfig? = store.update(id) { it.isoPath = path }
@@ -232,31 +247,36 @@ class VmManager(private val context: Context) {
     fun stop(id: String) = store.update(id) { it.state = VmState.OFF }
 
     fun delete(id: String) {
-        val vm = store.list().firstOrNull { it.id == id } ?: return
-        require(vm.state == VmState.OFF || vm.state == VmState.ERROR) {
-            "Arrêtez la VM avant de la supprimer."
-        }
-        val managedDir = File(context.filesDir, "vms/" + id).canonicalFile
-        val allowedRoot = File(context.filesDir, "vms").canonicalFile
-        require(managedDir.toPath().startsWith(allowedRoot.toPath()) && managedDir != allowedRoot) {
-            "Répertoire de VM non sûr."
-        }
-        val disk = vm.diskPath.takeIf { it.isNotBlank() }?.let(::File)?.canonicalFile
-        val firmware = vm.firmwarePath.takeIf { it.isNotBlank() }?.let(::File)?.canonicalFile
-        val tpm = vm.tpmStatePath.takeIf { it.isNotBlank() }?.let(::File)?.canonicalFile
-        fun deleteManaged(file: File?) {
-            if (file != null && file.toPath().startsWith(managedDir.toPath())) {
-                file.deleteRecursively()
+        val removed = store.mutate { items ->
+            val vm = items.firstOrNull { it.id == id } ?: return@mutate null
+            // ERROR can still represent a live process whose termination was not confirmed.
+            // Only OFF is safe for destructive removal; RECOVERY/ERROR must be reconciled first.
+            require(vm.state == VmState.OFF) {
+                "La VM doit être arrêtée proprement et confirmée OFF avant sa suppression."
             }
-        }
-        deleteManaged(disk)
-        deleteManaged(firmware)
-        deleteManaged(tpm)
-        managedDir.deleteRecursively()
-        File(context.filesDir, "snapshots/" + id).deleteRecursively()
-        File(context.filesDir, "logs/" + id).deleteRecursively()
-        cache.clear(id)
-        store.save(store.list().filterNot { it.id == id })
+            val managedDir = File(context.filesDir, "vms/" + id).canonicalFile
+            val allowedRoot = File(context.filesDir, "vms").canonicalFile
+            require(managedDir.toPath().startsWith(allowedRoot.toPath()) && managedDir != allowedRoot) {
+                "Répertoire de VM non sûr."
+            }
+            val disk = vm.diskPath.takeIf { it.isNotBlank() }?.let(::File)?.canonicalFile
+            val firmware = vm.firmwarePath.takeIf { it.isNotBlank() }?.let(::File)?.canonicalFile
+            val tpm = vm.tpmStatePath.takeIf { it.isNotBlank() }?.let(::File)?.canonicalFile
+            fun deleteManaged(file: File?) {
+                if (file != null && file.toPath().startsWith(managedDir.toPath())) {
+                    file.deleteRecursively()
+                }
+            }
+            deleteManaged(disk)
+            deleteManaged(firmware)
+            deleteManaged(tpm)
+            managedDir.deleteRecursively()
+            File(context.filesDir, "snapshots/" + id).deleteRecursively()
+            File(context.filesDir, "logs/" + id).deleteRecursively()
+            items.removeAll { it.id == id }
+            vm
+        } ?: return
+        cache.clear(removed.id)
     }
 
     fun selectBackend(id: String): OrchestrationDecision {
