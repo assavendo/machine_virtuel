@@ -1,6 +1,7 @@
 package com.assavendo.machinevirtuel.runtime
 
 import android.app.PendingIntent
+import android.os.Build
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -69,7 +70,12 @@ object UsbPassthroughManager {
             }
         }
 
-        context.registerReceiver(receiver, IntentFilter(action), Context.RECEIVER_NOT_EXPORTED)
+        if (Build.VERSION.SDK_INT >= 33) {
+            context.registerReceiver(receiver, IntentFilter(action), Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            context.registerReceiver(receiver, IntentFilter(action))
+        }
         val pendingIntent = PendingIntent.getBroadcast(
             context,
             action.hashCode(),
@@ -84,6 +90,9 @@ object UsbPassthroughManager {
             onResult(false)
         }
     }
+
+    fun findDevice(context: Context, deviceName: String): UsbDevice? =
+        context.getSystemService(UsbManager::class.java)?.deviceList?.get(deviceName)
 
     fun resolveAll(
         context: Context,
