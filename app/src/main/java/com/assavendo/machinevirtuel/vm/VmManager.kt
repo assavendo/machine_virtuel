@@ -6,6 +6,7 @@ import com.assavendo.machinevirtuel.host.HostCapabilityScanner
 import com.assavendo.machinevirtuel.performance.HostMetricsCollector
 import com.assavendo.machinevirtuel.performance.PerformanceAdvisor
 import com.assavendo.machinevirtuel.performance.PerformanceOptimizer
+import com.assavendo.machinevirtuel.performance.ResourceAdmissionController
 import com.assavendo.machinevirtuel.runtime.DiagnosticExporter
 import com.assavendo.machinevirtuel.runtime.DiskManager
 import com.assavendo.machinevirtuel.runtime.ImageVerifier
@@ -36,7 +37,7 @@ class VmManager(private val context: Context) {
         val caps = capabilities()
         val seed = VmConfig(name = name, guestOs = "Linux ARM64", arch = GuestArch.ARM64)
         val decision = orchestrator.choose(seed, caps)
-        val budget = com.assavendo.machinevirtuel.performance.ResourceAdmissionController
+        val budget = ResourceAdmissionController
             .check(seed.copy(ramMb = 2048), store.list(), caps)
         val selectedRam = budget.recommendedRamMb
         require(selectedRam >= 512) {
@@ -145,7 +146,6 @@ class VmManager(private val context: Context) {
                 file.deleteRecursively()
             }
         }
-        // Do not delete user-selected files outside PhoenixVM's private VM directory.
         deleteManaged(disk)
         deleteManaged(firmware)
         deleteManaged(tpm)
