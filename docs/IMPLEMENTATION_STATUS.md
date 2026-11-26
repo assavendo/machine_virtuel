@@ -1,6 +1,11 @@
 # PhoenixVM — implementation status against the source cahier
 
 ## Dernière avancée section 9 — codec TCG IR v2 et stockage L2 natif
+## Vérification des données d'unwind et du contexte TB
+
+L'inspection de `tcg_gen_code()` confirme que `INDEX_op_insn_start` fournit les métadonnées requises pour reconstruire `gen_insn_data` et `gen_insn_end_off`, puis le bloc d'unwind de `encode_search()`. Le pont QEMU devra préserver et compter ces opérations, vérifier leur cohérence avec `tb->icount` et laisser QEMU recalculer les offsets hôte. Le contexte de compatibilité devra aussi couvrir `guest_mo`, MTTCG, icount/replay, single-step et plugins ; `TCGOp.nargs` ne sera pas sérialisé comme taille logique, car QEMU peut réutiliser des capacités d'opérations supérieures à leur nombre d'arguments courant.
+
+
 
 Le composant `native/phoenixvm-core/src/tcg_ir_cache.rs` contient maintenant un format IR binaire versionné v2 : il sérialise les noms d'opcode et les deux paramètres bruts TCG `param1`/`param2`, des opérandes symboliques, des temporaires/labels bornés et un contexte de compatibilité incluant build QEMU, code invité, CPU/MMU, ABI hôte et CPU features. Les enregistrements sont plafonnés à 2 Mio, protégés par SHA-256 et refusés en cas de corruption ou de structure incohérente.
 
