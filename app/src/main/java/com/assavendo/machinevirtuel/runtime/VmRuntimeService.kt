@@ -439,11 +439,14 @@ class VmRuntimeService : Service() {
     }
 
     private fun monitorVm(id: String, handle: Handle, vm: VmConfig) {
-        val backendPid = runCatching { handle.process.pid() }.getOrNull()
-        val collector = HostMetricsCollector(
-            this,
-            handle.qmp?.let(::findQemuPid) ?: backendPid,
-        )
+        // Target the actual QEMU/crosvm process, not a possible su/launcher wrapper PID.
+        // The same PID is used for both metrics and CPU scheduling to keep them aligned.
+        val backendProcessId = when {
+            handle.qmp != null -> findQemuPid(handle.qmp)
+            handle.controlSocket != null -> findCrosvmPid(handle.controlSocket)
+            else -> null
+        } ?: runCatching { handle.process.pid() }.getOrNull()
+        val collector = HostMetricsCollector(this, backendProcessId)
         val coordinator = AdaptiveResourceCoordinator()
         var lastBalloonRequestMs = 0L
         var lastPolicyMessage = ""
@@ -506,7 +509,7 @@ class VmRuntimeService : Service() {
                 val threadDecision = GlobalVmScheduler()
                     .schedule(cachedVms, topology, host.availableMemoryMb)
                     .firstOrNull { it.vmId == id }
-                val processId = backendPid
+                val processId = backendProcessId
                 if (threadDecision != null && processId != null &&
                     (cachedVcpuThreadIds.isNotEmpty() || cachedIoThreadIds.isNotEmpty() ||
                         handle.controlSocket != null)
@@ -606,6 +609,21 @@ class VmRuntimeService : Service() {
             val cmdline = runCatching { File(entry, "cmdline").readBytes().toString(Charsets.UTF_8) }
                 .getOrNull() ?: continue
             if (cmdline.contains("qemu-system") && cmdline.contains(qmp.absolutePath)) {
+                return entry.name.toLongOrNull()
+            }
+        }
+        return null
+    }
+
+    private fun findCrosvmPid(controlSocket: File): Long? {
+        val socketPath = controlSocket.absolutePath
+        val entries = File("/proc").listFiles() ?: return null
+        for (entry in entries) {
+            if (!entry.name.all { it.isDigit() }) continue
+            val cmdline = runCatching {
+                File(entry, "cmdline").readBytes().toString(Charsets.UTF_8)
+            }.getOrNull() ?: continue
+            if (cmdline.contains("crosvm") && cmdline.contains(socketPath)) {
                 return entry.name.toLongOrNull()
             }
         }
