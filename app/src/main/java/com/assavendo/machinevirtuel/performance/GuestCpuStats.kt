@@ -49,8 +49,10 @@ object GuestCpuStatsParser {
                 ?: entry.optJSONObject("data")
                 ?: entry.optJSONObject("linux")
                 ?: entry
-            val cpu = requiredLong(stats, "cpu")?.toInt() ?: return null
-            if (cpu !in 0..4095 || !seen.add(cpu)) return null
+            val cpuValue = requiredLong(stats, "cpu") ?: return null
+            if (cpuValue !in 0L..4095L) return null
+            val cpu = cpuValue.toInt()
+            if (!seen.add(cpu)) return null
             val user = requiredLong(stats, "user") ?: return null
             val nice = requiredLong(stats, "nice") ?: return null
             val system = requiredLong(stats, "system") ?: return null
@@ -66,11 +68,19 @@ object GuestCpuStatsParser {
                 softIrqMs = optionalLong(stats, "softirq") ?: return null,
                 stealMs = optionalLong(stats, "steal") ?: return null,
             )
-            if (counters.totalMs < 0L) return null
+            if (!hasSafeTotal(counters)) return null
             result += counters
         }
         return result.takeIf { it.isNotEmpty() }
     }
+
+    private fun hasSafeTotal(counters: GuestCpuCounters): Boolean = runCatching {
+        var total = 0L
+        listOf(
+            counters.userMs, counters.niceMs, counters.systemMs, counters.idleMs,
+            counters.ioWaitMs, counters.irqMs, counters.softIrqMs, counters.stealMs,
+        ).forEach { total = Math.addExact(total, it) }
+    }.isSuccess
 
     private fun requiredLong(json: JSONObject, field: String): Long? {
         if (!json.has(field) || json.isNull(field)) return null
@@ -118,11 +128,11 @@ class GuestCpuStatsTracker {
             GuestCpuCounters(now.cpu, user, nice, system, idle, ioWait, irq, softIrq, steal)
         }
         if (deltas.isEmpty()) return null
-        val total = deltas.sumOf { it.totalMs }
+        val total = safeSum(deltas.map { it.totalMs }) ?: return null
         if (total <= 0L) return null
-        val busy = deltas.sumOf { it.busyMs }
-        val ioWait = deltas.sumOf { it.ioWaitMs }
-        val interrupts = deltas.sumOf { it.irqMs + it.softIrqMs }
+        val busy = safeSum(deltas.map { it.busyMs }) ?: return null
+        val ioWait = safeSum(deltas.map { it.ioWaitMs }) ?: return null
+        val interrupts = safeSum(deltas.map { it.irqMs + it.softIrqMs }) ?: return null
         return GuestCpuMetrics(
             cpuBusyPercent = (busy.toDouble() / total.toDouble() * 100.0).coerceIn(0.0, 100.0),
             ioWaitPercent = (ioWait.toDouble() / total.toDouble() * 100.0).coerceIn(0.0, 100.0),
@@ -138,6 +148,10 @@ class GuestCpuStatsTracker {
         previous = emptyMap()
         previousTimestampMs = null
     }
+
+    private fun safeSum(values: List<Long>): Long? = runCatching {
+        values.fold(0L) { total, value -> Math.addExact(total, value) }
+    }.getOrNull()
 
     private fun delta(current: Long, previous: Long): Long? =
         (current - previous).takeIf { it >= 0L }
