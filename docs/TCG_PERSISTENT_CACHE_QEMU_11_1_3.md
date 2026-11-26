@@ -92,6 +92,38 @@ La CI native sur le commit `7a77b698e23bdc68af13aa8314e6c74f1f0c1cc2` a réussi 
 
 **Limite déterminante :** ce codec et ce magasin constituent une référence native PhoenixVM, pas un patch du cœur QEMU. Aucun pont C ne convertit/reconstruit encore les `TCGOp`, temporaires, globals, labels, helpers, états d'unwind ou terminaisons TB dans le `TCGContext` courant. Le code QEMU ne les appelle pas ; aucun binaire QEMU 11.1.3 modifié n'est construit et aucun hit L2 de TCG après redémarrage n'est démontré. Le magasin L2 natif n'est pas encore raccordé au gestionnaire Kotlin existant. La lecture du magasin reste une API de worker et n'est pas une lecture sur le chemin vCPU.
 
+## Audit supplémentaire des symboles TCG, helpers et données d’unwind (tag v11.1.3)
+
+### Contrat des opérations
+
+`include/tcg/tcg-opc.h` est la liste canonique des opérations génériques : chaque `DEF(name, oargs, iargs, cargs, flags)` décrit le nombre d'outputs, d'inputs, de constantes et les flags. Le contrat exposé par `TCGOpDef` dans `include/tcg/tcg.h` ajoute `nb_args`. L'adaptateur doit retrouver une opération par son nom stable dans `tcg_op_defs[]`, puis vérifier que le nombre et la classe de tous ses arguments correspondent exactement à cette définition. Un nom d'opcode inconnu, non présent ou spécial non pris en charge doit être un cache miss ; le codec Rust ne suffit pas à autoriser l'émission d'un opcode arbitraire.
+
+La version 2 du format conserve les deux octets bruts `param1` et `param2` de `TCGOp`, sans supposer une signification commune : selon l'opcode ils décrivent notamment le type, la taille vectorielle ou l'arité d'un appel (`TCGOP_CALLI`/`TCGOP_CALLO`). La reconstruction doit appliquer l'interprétation de QEMU pour l'opcode résolu et vérifier les valeurs autorisées.
+
+### Données de restauration d'état invité
+
+QEMU conserve les opérations `INDEX_op_insn_start` pendant l'optimisation précisément parce qu'elles alimentent l'unwind. Dans `tcg_gen_code()`, elles remplissent `TCGContext.gen_insn_data` et `gen_insn_end_off` au fur et à mesure de la nouvelle génération du code hôte ; `translate-all.c` encode ensuite ces données avec `encode_search()`, et `cpu_restore_state_from_tb()` les utilise via `restore_state_to_opc()` en cas d'exception/fault.
+
+Conséquence : le cache doit conserver chaque opération `insn_start` et ses constantes, dans l'ordre exact, et contrôler que leur nombre correspond à `tb->icount`. Il ne doit jamais restaurer les offsets hôte de l'ancien processus ; ceux-ci sont recalculés par `tcg_gen_code()`. Le bloc Rust contient `instruction_count`, mais l'adaptateur QEMU devra encore vérifier la cohérence du nombre de marqueurs `insn_start` et rejeter tout bloc incomplet.
+
+### Temporaires et globals
+
+Les arguments TCG qui désignent un temporaire sont des pointeurs `TCGTemp *` encodés par `temp_arg()`/relus par `arg_temp()`. Ces valeurs ne peuvent pas être conservées. Après `tcg_func_start()`, le reconstructeur doit créer de nouveaux temporaires dans le contexte courant via le chemin interne `tcg_temp_new_internal(type, kind)` et construire une table de correspondance `id IR -> TCGTemp * courant`. Les groupes multi-emplacements (notamment I128) doivent être alloués comme des groupes cohérents ; les temporaires constants doivent être normalisés en immédiats ou recréés avec `tcg_constant_internal()`.
+
+Les globals/fixed temps existent déjà dans `tcg_ctx->temps[0..nb_globals)` après l'initialisation du contexte. Ils ne doivent pas être alloués à nouveau. Le nom seul n'est pas une validation suffisante : l'adaptateur doit comparer l'index logique et la signature attendue (type/base_type, kind, registre fixé ou base/offset mémoire, flags indirects) à la disposition courante. Le digest de contexte doit inclure le layout complet des globals propres à la cible.
+
+### Helpers
+
+`TCGHelperInfo` expose un nom symbolique, la fonction courante, les flags, `typemask`, `nr_in`, `nr_out` et le layout d'appel. Pour la cible x86, `target/i386/tcg/translate.c` inclut `helper-info.c.inc` avec `HELPER_H "helper.h"`; le traducteur ARM inclut le même générateur avec `tcg/helper-defs.h`. Les macros du fichier génèrent les objets `helper_info_<nom>` avec `.func` et `.name`.
+
+**Limite vérifiée :** la source amont consultée n'expose pas de registre générique nom -> `TCGHelperInfo *`. De plus, les helpers internes de TCG définis manuellement dans `tcg/tcg.c` (par exemple les `info_helper_*_mmu`) ne déclarent pas forcément de nom. Le patch QEMU doit donc fournir un registre explicite propre au binaire/à la cible, ou une table générée à partir des définitions helpers. À la relecture, le nom doit être résolu dans le processus courant et le reconstructeur doit comparer `nr_in`, `nr_out`, `typemask`, flags et le layout d'arguments avant de régénérer l'appel avec les pointeurs courants. Un helper absent, interne non enregistré ou dont la signature diverge impose un cache miss sûr ; le pointeur `func` et le pointeur `TCGHelperInfo *` de l'ancien processus ne sont jamais importés.
+
+### Opérations à reconstruire spécialement
+
+Les appels (`call`), labels/branches (`set_label`, `br`, `brcond`), sorties/chaînage (`exit_tb`, `goto_tb`, `goto_ptr`), marqueurs de plugins et accès mémoire `qemu_ld/qemu_st` ne doivent pas être restaurés par une simple copie générique. `exit_tb` doit être régénéré avec le `TranslationBlock *` nouvellement alloué ; les labels et leurs listes d'usages doivent être créés dans le contexte courant ; les chemins `qemu_ld/st` doivent régénérer leurs données de slow-path et labels de finalisation. Pour le premier prototype, le mode plugin, les marqueurs non compris, les opérations spéciales non prises en charge, icount/replay et les modes d'exécution dont le contexte ne peut pas être validé doivent forcer un cache miss.
+
+Même après import d'IR, QEMU doit continuer à appliquer normalement `tcg_optimize()`, reachability/liveness, allocation de registres, génération code hôte, unwind, finalisation ldst/pool, insertion/lien TB et invalidation page. Le cache évite le décodage invité uniquement pour les formes entièrement prises en charge ; il ne restaure pas le code machine hôte ni les structures internes d'un ancien TB.
+
 ## Architecture requise pour une vraie persistance L2
 
 ### 1. Format de cache versionné et non exécutable
