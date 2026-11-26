@@ -1,6 +1,6 @@
 #include "phoenixvm_tcg_cache.h"
 
-static int check_tcg_cache_c_abi(PvTcgL2Handle *handle,
+int check_tcg_cache_c_abi(PvTcgL2Handle *handle,
                                  const PvTcgCompatibility *compatibility)
 {
     uint8_t *record = NULL;
