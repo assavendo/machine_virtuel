@@ -11,6 +11,7 @@ data class VmMetricsSample(
     val guestCpuCoreCount: Int? = null,
     val cpuHostPercent: Double = 0.0,
     val vCpuUtilization: Double? = null,
+    val vCpuCountRuntime: Int? = null,
     val ramGuestMb: Long? = null,
     val ramHostMb: Long = 0,
     val gpuPercent: Double? = null,
