@@ -62,4 +62,19 @@ class VmCpuThreadSchedulerTest {
             ),
         )
     }
+
+    @Test
+    fun allBackendThreadsStayInsideAssignedCpuSetWhenQmpExposesNoThreadIds() {
+        val plan = VmCpuThreadScheduler.plan(
+            processThreadIds = listOf(700L, 701L, 702L),
+            vcpuThreadIds = emptyList(),
+            ioThreadIds = emptyList(),
+            decision = decision(),
+        )
+
+        assertEquals(3, plan.size)
+        assertEquals(setOf(4, 6), plan.flatMap { it.cpuIds }.toSet())
+        assertTrue(plan.all { it.priority == null })
+    }
+
 }
