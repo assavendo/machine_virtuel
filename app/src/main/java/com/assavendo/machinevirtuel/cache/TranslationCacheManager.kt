@@ -68,9 +68,10 @@ data class TranslationAggregate(
     val totalTranslationMs: Double,
 ) {
     val cacheHitRate: Double?
-        get() = if (cacheHits + cacheMisses > 0L) {
-            cacheHits.toDouble() / (cacheHits + cacheMisses).toDouble()
-        } else null
+        get() {
+            val total = cacheHits.toDouble() + cacheMisses.toDouble()
+            return if (total > 0.0) cacheHits.toDouble() / total else null
+        }
 
     val averageTranslationMs: Double?
         get() = if (executions > 0L) totalTranslationMs / executions.toDouble() else null
@@ -459,8 +460,10 @@ class TranslationCacheManager private constructor(
             "Translation profile fingerprint does not match the cache key."
         }
         require(profile.cacheHits >= 0 && profile.cacheMisses >= 0)
-        require(profile.cacheHits + profile.cacheMisses == profile.executionCount) {
-            "Translation cache hit/miss counts must equal execution count."
+        require(profile.cacheHits <= Long.MAX_VALUE - profile.cacheMisses &&
+            profile.cacheHits + profile.cacheMisses == profile.executionCount
+        ) {
+            "Translation cache hit/miss counts must equal execution count without overflow."
         }
         require(profile.totalTranslationMs.isFinite() && profile.totalTranslationMs >= 0.0)
         val json = JSONObject()
@@ -582,15 +585,33 @@ class TranslationCacheManager private constructor(
             .filter { it.isFile && it.name.endsWith(".meta") && it.length() in 1..METADATA_ENVELOPE_MAX_BYTES }
             .forEach { file ->
                 runCatching {
-                    val json = JSONObject(file.readText(Charsets.UTF_8))
-                    if (json.optInt("format_version", -1) != FORMAT_VERSION ||
-                        json.optString("scope") != "VM"
+                    val envelope = JSONObject(file.readText(Charsets.UTF_8))
+                    if (envelope.optInt("format_version", -1) != FORMAT_VERSION ||
+                        envelope.optString("scope") != "VM"
                     ) return@runCatching
-                    executions = safeAdd(executions, json.optLong("execution_count", 0L).coerceAtLeast(0L))
-                    hits = safeAdd(hits, json.optLong("cache_hits", 0L).coerceAtLeast(0L))
-                    misses = safeAdd(misses, json.optLong("cache_misses", 0L).coerceAtLeast(0L))
-                    val value = json.optDouble("total_translation_ms", 0.0)
-                    if (value.isFinite() && value >= 0.0) translationMs += value
+
+                    // putProfile() stores its counters in the envelope's metadata JSON string.
+                    // Reading them from the envelope root silently returned all-zero aggregates.
+                    val profile = JSONObject(envelope.getString("metadata"))
+                    if (profile.optString("compatibility_fingerprint") !=
+                        envelope.optString("key_fingerprint")
+                    ) return@runCatching
+
+                    val profileExecutions = profile.optLong("execution_count", -1L)
+                    val profileHits = profile.optLong("cache_hits", -1L)
+                    val profileMisses = profile.optLong("cache_misses", -1L)
+                    if (profileExecutions < 0L || profileHits < 0L || profileMisses < 0L ||
+                        profileHits > Long.MAX_VALUE - profileMisses ||
+                        profileHits + profileMisses != profileExecutions
+                    ) return@runCatching
+
+                    val value = profile.optDouble("total_translation_ms", Double.NaN)
+                    if (!value.isFinite() || value < 0.0) return@runCatching
+
+                    executions = safeAdd(executions, profileExecutions)
+                    hits = safeAdd(hits, profileHits)
+                    misses = safeAdd(misses, profileMisses)
+                    translationMs = (translationMs + value).takeIf { it.isFinite() } ?: Double.MAX_VALUE
                 }
             }
         return TranslationAggregate(executions, hits, misses, translationMs)
