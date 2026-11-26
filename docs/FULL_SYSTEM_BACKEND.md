@@ -22,7 +22,7 @@ PhoenixVM is a real system VM platform. The guest owns CPU state, RAM, firmware,
 The command path selects a real qemu-system-x86_64 or qemu-system-i386 runtime and uses q35 + TCG/MTTCG. No user-mode emulation or application compatibility layer is substituted.
 
 See docs/X86_FULL_SYSTEM_RUNTIME.md and scripts/build-qemu-android-x86-runtime.sh for the reproducible runtime provisioning path.
-For a reproducible Android ARM64 QEMU source build (kept separate from the pinned default runtime), see docs/ARM64_QEMU_RUNTIME_BUILD.md and scripts/build-qemu-android-arm64-runtime.sh.
+For a checksum-verified Android ARM64 QEMU source-build recipe (kept separate from the pinned default runtime and not yet bit-for-bit reproducible), see docs/ARM64_QEMU_RUNTIME_BUILD.md and scripts/build-qemu-android-arm64-runtime.sh.
 
 ### Hardware hypervisor path
 The orchestrator scores KVM, Gunyah, GenieZone, Halla and AVF based on host capability. AVF is explicitly capability-gated; a detected API surface does not mean a third-party app has permission to create an arbitrary production pVM.
