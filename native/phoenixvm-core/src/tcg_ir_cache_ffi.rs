@@ -250,7 +250,11 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_invalidate(
         let key = unsafe { copy_compatibility(compatibility) }.map_err(|_| ())?;
         handle.store.invalidate(&handle.vm_id, &key).map_err(|_| ())
     }));
-    if matches!(result, Ok(Ok(()))) { 0 } else { -1 }
+    if matches!(result, Ok(Ok(()))) {
+        0
+    } else {
+        -1
+    }
 }
 
 /// Invalidate all entries belonging to the handle's VM.
@@ -263,5 +267,9 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_invalidate_vm(handle: *mut PvTcgL2Hand
         let handle = unsafe { &*handle };
         handle.store.invalidate_vm(&handle.vm_id).map_err(|_| ())
     }));
-    if matches!(result, Ok(Ok(()))) { 0 } else { -1 }
+    if matches!(result, Ok(Ok(()))) {
+        0
+    } else {
+        -1
+    }
 }
