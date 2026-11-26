@@ -8,6 +8,7 @@ data class VmMetricsSample(
     val guestCpuInterruptPercent: Double? = null,
     val guestCpuTimeDeltaMs: Long? = null,
     val guestCpuIntervalMs: Long? = null,
+    val guestCpuCoreCount: Int? = null,
     val cpuHostPercent: Double = 0.0,
     val vCpuUtilization: Double? = null,
     val ramGuestMb: Long? = null,
