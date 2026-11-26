@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 typedef struct PvTcgL2Handle PvTcgL2Handle;
+typedef struct PvTcgIrBlockHandle PvTcgIrBlockHandle;
 
 typedef struct PvTcgCompatibility {
     const char *qemu_build_id;
@@ -66,6 +67,59 @@ void phoenixvm_tcg_l2_free_buffer(uint8_t *record, size_t record_len);
 int32_t phoenixvm_tcg_l2_invalidate(PvTcgL2Handle *handle,
                                    const PvTcgCompatibility *compatibility);
 int32_t phoenixvm_tcg_l2_invalidate_vm(PvTcgL2Handle *handle);
+
+/*
+ * Structured PVTCGIR v3 builder and reader. No QEMU process pointers are
+ * accepted by this API. Operand tags: 0=Temp, 1=Global, 2=Immediate, 3=Label.
+ * Type tags: I32=0, I64=1, I128=2, V64=3, V128=4, V256=5, Ptr=6.
+ * Temp-kind tags: TB=0, EBB=1.
+ */
+PvTcgIrBlockHandle *phoenixvm_tcg_ir_block_create(
+    const PvTcgCompatibility *compatibility,
+    uint32_t guest_size,
+    uint16_t instruction_count);
+void phoenixvm_tcg_ir_block_free(PvTcgIrBlockHandle *block);
+int32_t phoenixvm_tcg_ir_block_add_temp(PvTcgIrBlockHandle *block,
+                                        uint16_t id, uint16_t base_id,
+                                        uint8_t subindex, uint8_t base_type,
+                                        uint8_t value_type, uint8_t kind);
+int32_t phoenixvm_tcg_ir_block_add_label(PvTcgIrBlockHandle *block,
+                                         uint16_t id, uint32_t operation_index);
+int32_t phoenixvm_tcg_ir_block_add_operation(PvTcgIrBlockHandle *block,
+                                             const char *opcode,
+                                             uint8_t param1, uint8_t param2);
+int32_t phoenixvm_tcg_ir_block_add_operand(PvTcgIrBlockHandle *block,
+                                           uint32_t operation_index,
+                                           uint8_t tag, int64_t value);
+int32_t phoenixvm_tcg_l2_store_block(PvTcgL2Handle *handle,
+                                     const PvTcgIrBlockHandle *block);
+int32_t phoenixvm_tcg_l2_load_block(PvTcgL2Handle *handle,
+                                    const PvTcgCompatibility *compatibility,
+                                    PvTcgIrBlockHandle **out_block);
+int32_t phoenixvm_tcg_ir_block_get_summary(const PvTcgIrBlockHandle *block,
+                                           uint32_t *guest_size,
+                                           uint16_t *instruction_count,
+                                           size_t *temp_count,
+                                           size_t *label_count,
+                                           size_t *operation_count);
+int32_t phoenixvm_tcg_ir_block_get_temp(const PvTcgIrBlockHandle *block,
+                                        size_t index, uint16_t *id,
+                                        uint16_t *base_id, uint8_t *subindex,
+                                        uint8_t *base_type, uint8_t *value_type,
+                                        uint8_t *kind);
+int32_t phoenixvm_tcg_ir_block_get_label(const PvTcgIrBlockHandle *block,
+                                         size_t index, uint16_t *id,
+                                         uint32_t *operation_index);
+int32_t phoenixvm_tcg_ir_block_get_operation(const PvTcgIrBlockHandle *block,
+                                             size_t index,
+                                             const uint8_t **opcode,
+                                             size_t *opcode_len,
+                                             uint8_t *param1, uint8_t *param2,
+                                             size_t *operand_count);
+int32_t phoenixvm_tcg_ir_block_get_operand(const PvTcgIrBlockHandle *block,
+                                           size_t operation_index,
+                                           size_t operand_index,
+                                           uint8_t *tag, int64_t *value);
 
 #ifdef __cplusplus
 }
