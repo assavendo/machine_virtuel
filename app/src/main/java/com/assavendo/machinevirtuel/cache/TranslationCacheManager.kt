@@ -844,7 +844,7 @@ class TranslationCacheManager private constructor(
             FileOutputStream(temporary).use { output ->
                 output.write(bytes)
                 output.flush()
-                    output.fd.sync()
+                output.fd.sync()
             }
             check(temporary.renameTo(file)) { "Could not atomically persist translation-cache data." }
             invalidateStorageStats()
