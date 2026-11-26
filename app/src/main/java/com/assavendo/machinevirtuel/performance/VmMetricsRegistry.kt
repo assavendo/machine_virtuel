@@ -14,13 +14,17 @@ object VmMetricsRegistry {
         translationMs: Double? = null,
         audioUnderruns: Long? = null,
         audioLatencyConfiguredMs: Double? = null,
+        guestCpuMetrics: GuestCpuMetrics? = null,
     ) {
         val history = histories.getOrPut(vmId) { MetricsHistory() }
         history.add(
             VmMetricsSample(
                 timestampMs = host.timestampMs,
                 fps = fps,
-                cpuGuestPercent = null,
+                cpuGuestPercent = guestCpuMetrics?.cpuBusyPercent,
+                guestCpuIoWaitPercent = guestCpuMetrics?.ioWaitPercent,
+                guestCpuInterruptPercent = guestCpuMetrics?.interruptPercent,
+                guestCpuTimeDeltaMs = guestCpuMetrics?.guestCpuTimeDeltaMs,
                 cpuHostPercent = host.processCpuPercent,
                 vCpuUtilization = vCpuUtilization,
                 ramGuestMb = null,
