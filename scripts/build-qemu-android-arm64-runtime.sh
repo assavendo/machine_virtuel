@@ -25,12 +25,18 @@ RUNTIME_PACK="$PREFIX/runtime-pack"
 mkdir -p "$ROOT"
 cd "$ROOT"
 
-for tool in curl sha256sum tar ninja pkg-config getconf; do
+for tool in curl sha256sum tar ninja pkg-config getconf python3 cc c++; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "Required build tool not found: $tool" >&2
     exit 1
   }
 done
+
+python3 - <<'PY'
+import sys
+if sys.version_info < (3, 9):
+    raise SystemExit("QEMU ARM64 build requires Python 3.9 or newer.")
+PY
 
 pkg-config --exists glib-2.0 pixman-1 || {
   echo "Install GLib and Pixman development packages for the Android/Termux build environment." >&2
@@ -75,7 +81,11 @@ cd "$SRC/build"
   --disable-spice \
   --disable-libnfs
 
-JOBS="${NINJA_JOBS:-$(getconf _NPROCESSORS_ONLN)}"
+AVAILABLE_CPUS="$(getconf _NPROCESSORS_ONLN)"
+[[ "$AVAILABLE_CPUS" =~ ^[1-9][0-9]*$ ]] || AVAILABLE_CPUS=1
+DEFAULT_JOBS=4
+(( AVAILABLE_CPUS < DEFAULT_JOBS )) && DEFAULT_JOBS="$AVAILABLE_CPUS"
+JOBS="${NINJA_JOBS:-$DEFAULT_JOBS}"
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || {
   echo "NINJA_JOBS must be a positive integer." >&2
   exit 1
