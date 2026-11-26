@@ -1,6 +1,6 @@
 pub mod backend;
-pub mod translation;
 pub mod tcg_ir_cache;
+pub mod translation;
 
 use backend::{select_backend, Backend, HostFeatures};
 use jni::objects::{JClass, JIntArray};
