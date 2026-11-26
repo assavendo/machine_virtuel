@@ -417,6 +417,13 @@ class MainActivity : Activity() {
         val androidAdb = checkBox("Activer ADB réseau (Android invité uniquement)", base.androidAdbEnabled)
         addLabel("Port hôte ADB")
         val adbPort = edit(base.androidAdbHostPort.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
+        val guestAgent = checkBox(
+            "Activer QEMU Guest Agent (Linux invité uniquement)",
+            base.guestAgentEnabled,
+        )
+        content.addView(subtitle(
+            "Permet de relever CPU, attente I/O et interruptions depuis Linux. Le paquet qemu-guest-agent doit être installé et démarré dans l'invité (par exemple : sudo apt install qemu-guest-agent && sudo systemctl enable --now qemu-guest-agent)."
+        ))
 
         section("C — Ressources de la machine")
         addLabel("RAM (MiB)")
@@ -508,6 +515,9 @@ class MainActivity : Activity() {
             androidAdb.isEnabled = isAndroid
             if (!isAndroid) androidAdb.isChecked = false
             adbPort.isEnabled = isAndroid && androidAdb.isChecked
+            val isLinux = GuestOsChoice.entries[osSpinner.selectedItemPosition] == GuestOsChoice.LINUX
+            guestAgent.isEnabled = isLinux
+            if (!isLinux) guestAgent.isChecked = false
         }
         osSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
@@ -554,6 +564,7 @@ class MainActivity : Activity() {
                 autoSnapshotOnInstall = autoSnapshot.isChecked,
                 androidAdbEnabled = selectedOs == GuestOsChoice.ANDROID && androidAdb.isChecked,
                 androidAdbHostPort = adbPort.text.toString().toIntOrNull() ?: -1,
+                guestAgentEnabled = selectedOs == GuestOsChoice.LINUX && guestAgent.isChecked,
                 androidSystemPath = if (selectedOs == GuestOsChoice.ANDROID) base.androidSystemPath else "",
                 androidVendorPath = if (selectedOs == GuestOsChoice.ANDROID) base.androidVendorPath else "",
                 androidUserdataPath = if (selectedOs == GuestOsChoice.ANDROID) base.androidUserdataPath else "",
