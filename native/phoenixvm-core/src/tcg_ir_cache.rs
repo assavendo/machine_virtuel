@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 const MAGIC: &[u8; 8] = b"PVTCGIR\0";
-const FORMAT_VERSION: u16 = 1;
+const FORMAT_VERSION: u16 = 2;
 const HEADER_BYTES: usize = 14;
 const DIGEST_BYTES: usize = 32;
 const MAX_CACHE_BYTES: usize = 2 * 1024 * 1024;
@@ -193,8 +193,9 @@ pub enum TcgOperand {
 pub struct TcgIrOperation {
     /// Stable opcode spelling, not the build-local numeric TCGOpcode value.
     pub opcode: String,
-    pub value_type: TcgValueType,
-    pub flags: u16,
+    /// Raw TCGOp fields; meanings are opcode-specific (type, call arity, vector size, etc.).
+    pub param1: u8,
+    pub param2: u8,
     pub operands: Vec<TcgOperand>,
 }
 
@@ -351,8 +352,8 @@ impl TcgIrBlock {
         writer.u32(self.operations.len() as u32);
         for operation in &self.operations {
             writer.string(&operation.opcode)?;
-            writer.u8(operation.value_type as u8);
-            writer.u16(operation.flags);
+            writer.u8(operation.param1);
+            writer.u8(operation.param2);
             writer.u8(operation.operands.len() as u8);
             for operand in &operation.operands {
                 match operand {
@@ -524,8 +525,8 @@ impl TcgIrBlock {
         let mut operations = Vec::with_capacity(operation_count);
         for _ in 0..operation_count {
             let opcode = reader.string(64)?;
-            let value_type = TcgValueType::decode(reader.u8()?)?;
-            let flags = reader.u16()?;
+            let param1 = reader.u8()?;
+            let param2 = reader.u8()?;
             let operand_count = usize::from(reader.u8()?);
             if operand_count > MAX_OPERANDS {
                 return Err(TcgIrCacheError::Corrupt);
@@ -544,8 +545,8 @@ impl TcgIrBlock {
             }
             operations.push(TcgIrOperation {
                 opcode,
-                value_type,
-                flags,
+                param1,
+                param2,
                 operands,
             });
         }
@@ -1148,14 +1149,14 @@ mod tests {
             operations: vec![
                 TcgIrOperation {
                     opcode: "movi".into(),
-                    value_type: TcgValueType::I64,
-                    flags: 0,
+                    param1: TcgValueType::I64 as u8,
+                    param2: 0,
                     operands: vec![TcgOperand::Temp(0), TcgOperand::Immediate(7)],
                 },
                 TcgIrOperation {
                     opcode: "add".into(),
-                    value_type: TcgValueType::I64,
-                    flags: 0,
+                    param1: TcgValueType::I64 as u8,
+                    param2: 0,
                     operands: vec![
                         TcgOperand::Temp(1),
                         TcgOperand::Temp(0),
@@ -1164,8 +1165,8 @@ mod tests {
                 },
                 TcgIrOperation {
                     opcode: "br".into(),
-                    value_type: TcgValueType::I32,
-                    flags: 0,
+                    param1: TcgValueType::I32 as u8,
+                    param2: 0,
                     operands: vec![TcgOperand::Label(0)],
                 },
             ],
@@ -1262,6 +1263,18 @@ mod tests {
     }
 
     #[test]
+    fn raw_operation_parameters_round_trip_without_reinterpretation() {
+        let mut block = sample_block();
+        block.operations[1].param1 = 0xa5;
+        block.operations[1].param2 = 0xff;
+
+        let decoded = TcgIrBlock::decode(&block.encode().unwrap()).unwrap();
+        assert_eq!(decoded.operations[1].param1, 0xa5);
+        assert_eq!(decoded.operations[1].param2, 0xff);
+        assert_eq!(decoded, block);
+    }
+
+    #[test]
     fn encoding_is_deterministic() {
         let block = sample_block();
         assert_eq!(block.encode().unwrap(), block.encode().unwrap());
@@ -1350,8 +1363,8 @@ mod tests {
         let mut block = sample_block();
         block.operations.push(TcgIrOperation {
             opcode: "call".into(),
-            value_type: TcgValueType::I64,
-            flags: 0,
+            param1: TcgValueType::I64 as u8,
+            param2: 0,
             operands: vec![
                 TcgOperand::Temp(1),
                 TcgOperand::Helper("helper_cpuid".into()),
@@ -1360,6 +1373,9 @@ mod tests {
 
         let decoded = TcgIrBlock::decode(&block.encode().unwrap()).unwrap();
         assert_eq!(decoded, block);
+        let call = decoded.operations.last().unwrap();
+        assert_eq!(call.param1, 1); // TCGOP_CALLI: one input argument
+        assert_eq!(call.param2, 0); // TCGOP_CALLO: no output arguments
         assert!(decoded.operations.iter().any(|operation| {
             operation
                 .operands
