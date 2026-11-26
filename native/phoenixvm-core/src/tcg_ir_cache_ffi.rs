@@ -346,9 +346,7 @@ mod tests {
 
         // SAFETY: C strings remain alive through open; the returned handle is
         // used only by this test and closed exactly once.
-        let handle = unsafe {
-            phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024)
-        };
+        let handle = unsafe { phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024) };
         assert!(!handle.is_null());
 
         let block = block();
@@ -364,9 +362,7 @@ mod tests {
         let mut record_len = 0;
         // SAFETY: key points to static data, and out parameters are valid.
         assert_eq!(
-            unsafe {
-                phoenixvm_tcg_l2_load(handle, &key, &mut record, &mut record_len)
-            },
+            unsafe { phoenixvm_tcg_l2_load(handle, &key, &mut record, &mut record_len) },
             1
         );
         assert!(!record.is_null());
@@ -384,17 +380,12 @@ mod tests {
         record_len = 0;
         // SAFETY: changed_hash remains alive through the lookup.
         assert_eq!(
-            unsafe {
-                phoenixvm_tcg_l2_load(handle, &changed, &mut record, &mut record_len)
-            },
+            unsafe { phoenixvm_tcg_l2_load(handle, &changed, &mut record, &mut record_len) },
             0
         );
 
         // SAFETY: the key and handle remain valid.
-        assert_eq!(
-            unsafe { phoenixvm_tcg_l2_invalidate(handle, &key) },
-            0
-        );
+        assert_eq!(unsafe { phoenixvm_tcg_l2_invalidate(handle, &key) }, 0);
         // SAFETY: close the only handle created by this test.
         unsafe { phoenixvm_tcg_l2_close(handle) };
         fs::remove_dir_all(root).unwrap();
