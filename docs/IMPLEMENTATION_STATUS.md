@@ -15,7 +15,7 @@ Le composant `native/phoenixvm-core/src/tcg_ir_cache.rs` contient maintenant un 
 
 Le magasin `TcgIrL2Store` ajoute une séparation par VM, des clés de fichier dérivées de l'empreinte complète, lecture/écriture atomiques via worker, invalidation ciblée/VM et éviction LRU sous quotas d'entrées et d'octets. La CI native du commit `7a77b698e23bdc68af13aa8314e6c74f1f0c1cc2` passe `cargo fmt --check` et `cargo test` : 20 tests, 0 échec. Les workflows Android/JVM et APK de ce commit doivent encore être contrôlés séparément.
 
-**Périmètre réel :** la brique native v2 n'est pas raccordée au cœur C de QEMU, au chemin `setjmp_gen_code()/tcg_gen_code()`, au gestionnaire Kotlin ni au runtime packagé. Aucun `TCGContext` n'est reconstruit, aucun TB QEMU n'est restauré, et aucun test froid/chaud inter-processus ni gain de traduction n'est établi. Le verrou du magasin est par instance, pas inter-processus ; le raccord devra garantir un coordinateur unique ou ajouter un verrou partagé. La section 9 reste **PARTIELLE**.
+**Périmètre réel :** la brique native v2 n'est pas raccordée au cœur C de QEMU, au chemin `setjmp_gen_code()/tcg_gen_code()`, au gestionnaire Kotlin ni au runtime packagé. Aucun `TCGContext` n'est reconstruit, aucun TB QEMU n'est restauré, et aucun test froid/chaud inter-processus ni gain de traduction n'est établi. Le magasin L2 natif possède maintenant un verrou noyau `flock` partagé entre les processus Linux/Android et des tests vérifiant la sérialisation et le rejet des liens symboliques. Cette protection couvre le magasin Rust, pas encore les opérations d'un hypothétique adaptateur QEMU C qui n'est pas raccordé. La section 9 reste **PARTIELLE**.
 
 ## Dernière avancée section 9 — audit du hook TCG exact de QEMU 11.1.3
 
