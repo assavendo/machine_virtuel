@@ -89,7 +89,7 @@ class GlobalVmSchedulerTest {
     }
 
     @Test
-    fun keepsOneVcpuPerActiveVmAndMapsPriorityToSafeNiceValues() {
+    fun keepsOneVcpuPerActiveVmAndMapsPriorityToUnprivilegedNiceValues() {
         val vms = (0..2).map { index ->
             VmConfig(
                 name = "vm-$index",
@@ -114,8 +114,26 @@ class GlobalVmSchedulerTest {
         assertTrue(decisions.all { it.recommendedVcpus >= 1 })
         assertTrue(decisions.flatMap { it.assignedCpuIds }.all { it == 3 || it == 7 })
         assertEquals(10, GlobalVmScheduler.threadPriorityFor(0))
-        assertEquals(-4, GlobalVmScheduler.threadPriorityFor(100))
+        assertEquals(0, GlobalVmScheduler.threadPriorityFor(100))
         assertTrue(GlobalVmScheduler.threadPriorityFor(80) < GlobalVmScheduler.threadPriorityFor(20))
+        assertTrue(decisions.all { it.threadPriority in 0..10 })
+    }
+
+
+    @Test
+    fun unknownCpuMaskProducesNoRecommendationAndPreservesRuntimeFallback() {
+        val vm = VmConfig(name = "unknown-cpu-mask", vCpu = 4, state = VmState.STARTING)
+        val result = GlobalVmScheduler().schedule(
+            listOf(vm),
+            CpuTopology(
+                cores = emptyList(),
+                performanceCores = emptyList(),
+                efficiencyCores = emptyList(),
+                allowedCpuIds = emptyList(),
+            ),
+            4096,
+        )
+        assertTrue(result.isEmpty())
     }
 
 }
