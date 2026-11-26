@@ -986,9 +986,22 @@ mod tests {
         assert_eq!(unsafe { phoenixvm_tcg_l2_store_block(handle, builder) }, 0);
         unsafe { phoenixvm_tcg_ir_block_free(builder) };
 
+        // Close the writer, open a fresh handle, then hydrate L1 from the
+        // persistent L2 before the simulated vCPU path begins.
+        unsafe { phoenixvm_tcg_l2_close(handle) };
+        let handle = unsafe {
+            phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024)
+        };
+        assert!(!handle.is_null());
+        assert_eq!(unsafe { phoenixvm_tcg_l2_preload(handle, 8, 1024 * 1024) }, 0);
+
+        // Make the backing directory unavailable after preload. A valid L1
+        // lookup must still succeed, proving that the lookup path is memory-only.
+        let offline_root = root.with_extension("offline");
+        std::fs::rename(&root, &offline_root).unwrap();
         let mut decoded = ptr::null_mut();
         assert_eq!(
-            unsafe { phoenixvm_tcg_l2_load_block(handle, &key, &mut decoded) },
+            unsafe { phoenixvm_tcg_l1_lookup(handle, &key, &mut decoded) },
             1
         );
         assert!(!decoded.is_null());
@@ -1064,7 +1077,7 @@ mod tests {
 
         unsafe { phoenixvm_tcg_ir_block_free(decoded) };
         unsafe { phoenixvm_tcg_l2_close(handle) };
-        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(offline_root).unwrap();
     }
 
     #[test]
