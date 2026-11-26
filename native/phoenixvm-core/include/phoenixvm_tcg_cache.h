@@ -114,6 +114,15 @@ int32_t phoenixvm_tcg_l2_store_block(PvTcgL2Handle *handle,
 int32_t phoenixvm_tcg_l2_load_block(PvTcgL2Handle *handle,
                                     const PvTcgCompatibility *compatibility,
                                     PvTcgIrBlockHandle **out_block);
+/*
+ * A successful block-store call only enqueues disk persistence. The queue is
+ * bounded and nonblocking; return 1 means it was full (L1 retained, L2 skipped).
+ * Flush is a blocking worker/shutdown operation, never call it from a vCPU.
+ */
+int32_t phoenixvm_tcg_l2_flush(PvTcgL2Handle *handle);
+int32_t phoenixvm_tcg_l2_worker_stats(const PvTcgL2Handle *handle,
+                                      uint64_t *errors,
+                                      uint64_t *queue_drops);
 int32_t phoenixvm_tcg_ir_block_get_summary(const PvTcgIrBlockHandle *block,
                                            uint32_t *guest_size,
                                            uint16_t *instruction_count,
