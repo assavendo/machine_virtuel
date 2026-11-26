@@ -451,7 +451,7 @@ class VmRuntimeService : Service() {
                 controlPath = handle.controlSocket.absolutePath,
             )
             else -> null
-        } ?: runCatching { handle.process.pid() }.getOrNull()
+        }
         val collector = HostMetricsCollector(this, backendProcessId)
         val coordinator = AdaptiveResourceCoordinator()
         var lastBalloonRequestMs = 0L
