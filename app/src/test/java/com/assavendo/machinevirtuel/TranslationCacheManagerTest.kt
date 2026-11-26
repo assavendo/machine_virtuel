@@ -146,4 +146,39 @@ class TranslationCacheManagerTest {
             manager.putProfile(key, profile.copy(cacheHits = 10, cacheMisses = 4))
         }
     }
+
+    @Test
+    fun aggregateReadsPersistedProfilePayloadAndCountersAfterManagerRecreation() = withCache { context ->
+        val writer = TranslationCacheManager(context)
+        val key = writer.testKey()
+        val profile = TranslationProfile(
+            state = "HOT",
+            hotBlocks = 8,
+            coldBlocks = 2,
+            executionCount = 10,
+            cacheHits = 7,
+            cacheMisses = 3,
+            totalTranslationMs = 42.5,
+            lastSeenMs = 1_900_000_000_000L,
+            compatibilityFingerprint = writer.fingerprint(
+                key.vmId,
+                key.guestFingerprint,
+                key.translatorVersion,
+                key.hostArch,
+                key.hostFeatures,
+                key.level.toString(),
+            ),
+        )
+
+        writer.putProfile(key, profile)
+
+        // Aggregate through a fresh manager, matching a later runtime/process session.
+        val aggregate = TranslationCacheManager(context).aggregate("vm-alpha")
+        assertEquals(10L, aggregate.executions)
+        assertEquals(7L, aggregate.cacheHits)
+        assertEquals(3L, aggregate.cacheMisses)
+        assertEquals(0.7, aggregate.cacheHitRate!!, absoluteTolerance = 1e-12)
+        assertEquals(4.25, aggregate.averageTranslationMs!!, absoluteTolerance = 1e-12)
+    }
+
 }
