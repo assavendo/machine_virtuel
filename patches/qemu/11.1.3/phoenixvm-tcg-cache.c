@@ -21,6 +21,7 @@
 #include "accel/tcg/phoenixvm-tcg-cache-ffi.h"
 #include "accel/tcg/cpu-mmu-index.h"
 #include "exec/translation-block.h"
+#include "exec/target_page.h"
 #include "system/physmem.h"
 #include "tcg/tcg.h"
 #include "tcg/tcg-op-common.h"
