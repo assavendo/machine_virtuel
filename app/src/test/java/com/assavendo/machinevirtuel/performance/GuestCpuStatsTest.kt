@@ -87,6 +87,20 @@ class GuestCpuStatsTest {
                 )
             )
         )
+        assertNull(
+            GuestCpuStatsParser.parse(
+                JSONObject(
+                    """{"return":[{"type":"linux","u":{"cpu":4294967296,"user":1,"nice":0,"system":0,"idle":1}}]}"""
+                )
+            )
+        )
+        assertNull(
+            GuestCpuStatsParser.parse(
+                JSONObject(
+                    """{"return":[{"type":"linux","u":{"cpu":0,"user":9223372036854775807,"nice":1,"system":0,"idle":1}}]}"""
+                )
+            )
+        )
     }
 
     @Test
