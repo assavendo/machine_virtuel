@@ -30,6 +30,9 @@ class GlobalVmScheduler {
         if (active.isEmpty()) return emptyList()
 
         val cpuIds = topology.allowedCpuIds.distinct()
+        // No trustworthy CPU mask means no scheduler recommendation. The runtime must
+        // keep its validated backend fallback instead of silently forcing one vCPU.
+        if (cpuIds.isEmpty()) return emptyList()
         val cpuBudget = cpuIds.size
         val ramBudget = max(1L, availableMemoryMb)
         val targetRamPerVm = max(512L, ramBudget / active.size)
@@ -116,7 +119,10 @@ class GlobalVmScheduler {
         /** Higher VM priority maps to a more favourable thread nice value. */
         fun threadPriorityFor(vmPriority: Int): Int {
             val bounded = vmPriority.coerceIn(0, 100)
-            return (10.0 - (bounded / 100.0) * 14.0).roundToInt().coerceIn(-4, 10)
+            // Stay at or below Android's ordinary foreground priority: unprivileged
+            // applications may lower a thread's priority, but generally cannot raise it
+            // above the inherited nice level without CAP_SYS_NICE.
+            return (10.0 - (bounded / 100.0) * 10.0).roundToInt().coerceIn(0, 10)
         }
     }
 }
