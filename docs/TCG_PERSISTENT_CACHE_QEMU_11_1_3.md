@@ -76,6 +76,22 @@ La sérialisation doit inclure les compteurs et métadonnées de traduction néc
 
 Cette inspection **ne constitue pas une implémentation du sérialiseur**. Elle précise le contrat nécessaire pour qu’un patch réel soit sûr et évite explicitement trois fausses solutions : sérialiser les structures C brutes, restaurer du code machine hôte depuis un autre processus, ou réutiliser les pointeurs de helpers/TB de l’ancien processus.
 
+## Brique native v2 implémentée — codec IR et magasin L2, sans raccord TCG
+
+Un premier composant natif indépendant de QEMU est maintenant codé dans `native/phoenixvm-core/src/tcg_ir_cache.rs` :
+
+- Format binaire déterministe `PVTCGIR`, version 2, avec longueur bornée à 2 Mio, SHA-256 du contenu et rejet des versions, longueurs, références et enregistrements invalides.
+- Identité de compatibilité qui transporte le build QEMU exact, architecture et modèle CPU invités, build invité, architecture/ABI/endianness hôte, taille de page, liste canonique des CPU features, PC/base CS, flags TB/cflags, MMU index, pages physiques, empreinte des octets de code et digest du contexte spécifique TB.
+- Opérations représentées par nom d'opcode stable, deux octets bruts `param1`/`param2` conservés sans réinterprétation, et opérandes symboliques (temporaires, globals nommés, immédiats, labels et helpers nommés). Aucun variant ne stocke de pointeur de processus.
+- Enregistrement des temporaires borné et vérification des groupes multi-emplacements ; index de labels et références d'opérandes validés avant acceptation.
+- `TcgIrBlock::write_atomic/read_file` fournit l'écriture temporaire, `sync_all`, renommage atomique, synchronisation du répertoire parent et lecture plafonnée.
+- `TcgIrL2Store` isole les entrées par VM sous un répertoire dérivé d'un SHA-256 de l'identifiant VM, et par identité de compatibilité pour le nom de fichier. Il vérifie le contexte complet à la relecture, transforme la corruption/version inconnue en cache miss sûr, propose invalidation ciblée/VM, quotas d'entrées et d'octets et éviction LRU par date d'accès. Les lectures/écritures disque sont réservées à un worker, jamais au thread vCPU.
+- La synchronisation interne `Mutex` est locale à une instance du magasin ; le contrat d'intégration doit encore garantir un propriétaire/coordonnateur unique par VM ou fournir un verrou inter-processus avant de permettre plusieurs processus sur le même répertoire.
+
+La CI native sur le commit `7a77b698e23bdc68af13aa8314e6c74f1f0c1cc2` a réussi : `cargo fmt --check` et `cargo test`, avec **20 tests réussis, 0 échec**. Les tests couvrent l'aller-retour du format, les champs param1/param2, helpers symboliques, empreintes et incompatibilités, corruption/troncature, groupes de temporaires, persistance atomique, isolation VM, invalidation sélective et quotas LRU.
+
+**Limite déterminante :** ce codec et ce magasin constituent une référence native PhoenixVM, pas un patch du cœur QEMU. Aucun pont C ne convertit/reconstruit encore les `TCGOp`, temporaires, globals, labels, helpers, états d'unwind ou terminaisons TB dans le `TCGContext` courant. Le code QEMU ne les appelle pas ; aucun binaire QEMU 11.1.3 modifié n'est construit et aucun hit L2 de TCG après redémarrage n'est démontré. Le magasin L2 natif n'est pas encore raccordé au gestionnaire Kotlin existant. La lecture du magasin reste une API de worker et n'est pas une lecture sur le chemin vCPU.
+
 ## Architecture requise pour une vraie persistance L2
 
 ### 1. Format de cache versionné et non exécutable
