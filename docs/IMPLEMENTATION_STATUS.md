@@ -1,5 +1,13 @@
 # PhoenixVM — implementation status against the source cahier
 
+## Dernière avancée section 9 — codec TCG IR v2 et stockage L2 natif
+
+Le composant `native/phoenixvm-core/src/tcg_ir_cache.rs` contient maintenant un format IR binaire versionné v2 : il sérialise les noms d'opcode et les deux paramètres bruts TCG `param1`/`param2`, des opérandes symboliques, des temporaires/labels bornés et un contexte de compatibilité incluant build QEMU, code invité, CPU/MMU, ABI hôte et CPU features. Les enregistrements sont plafonnés à 2 Mio, protégés par SHA-256 et refusés en cas de corruption ou de structure incohérente.
+
+Le magasin `TcgIrL2Store` ajoute une séparation par VM, des clés de fichier dérivées de l'empreinte complète, lecture/écriture atomiques via worker, invalidation ciblée/VM et éviction LRU sous quotas d'entrées et d'octets. La CI native du commit `7a77b698e23bdc68af13aa8314e6c74f1f0c1cc2` passe `cargo fmt --check` et `cargo test` : 20 tests, 0 échec. Les workflows Android/JVM et APK de ce commit doivent encore être contrôlés séparément.
+
+**Périmètre réel :** la brique native v2 n'est pas raccordée au cœur C de QEMU, au chemin `setjmp_gen_code()/tcg_gen_code()`, au gestionnaire Kotlin ni au runtime packagé. Aucun `TCGContext` n'est reconstruit, aucun TB QEMU n'est restauré, et aucun test froid/chaud inter-processus ni gain de traduction n'est établi. Le verrou du magasin est par instance, pas inter-processus ; le raccord devra garantir un coordinateur unique ou ajouter un verrou partagé. La section 9 reste **PARTIELLE**.
+
 ## Dernière avancée section 9 — audit du hook TCG exact de QEMU 11.1.3
 
 L'audit du tag amont `v11.1.3` a maintenant suivi le chemin de création du TB dans les sources : `tb_gen_code()` initialise le contexte et les pages, `setjmp_gen_code()` réinitialise le contexte avec `tcg_func_start()`, appelle `translate_code()`, puis passe les opérations à `tcg_gen_code()` avant l'enregistrement/publication habituels du TB. Les fichiers exacts examinés et les points de code sont consignés dans `docs/TCG_PERSISTENT_CACHE_QEMU_11_1_3.md`.
