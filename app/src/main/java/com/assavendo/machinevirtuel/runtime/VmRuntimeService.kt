@@ -264,7 +264,9 @@ class VmRuntimeService : Service() {
                         usbPassthrough = usbAttachments,
                     )
                     val controlSocket = spec.controlSocket
+                    val guestAgentSocket = spec.guestAgentSocket
                     controlSocket?.delete()
+                    guestAgentSocket?.delete()
                     val process = startBackend(
                         spec,
                         dir,
