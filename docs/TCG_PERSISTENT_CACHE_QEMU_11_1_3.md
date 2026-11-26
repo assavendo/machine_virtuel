@@ -100,6 +100,12 @@ La CI native sur le commit `7a77b698e23bdc68af13aa8314e6c74f1f0c1cc2` a réussi 
 
 La version 2 du format conserve les deux octets bruts `param1` et `param2` de `TCGOp`, sans supposer une signification commune : selon l'opcode ils décrivent notamment le type, la taille vectorielle ou l'arité d'un appel (`TCGOP_CALLI`/`TCGOP_CALLO`). La reconstruction doit appliquer l'interprétation de QEMU pour l'opcode résolu et vérifier les valeurs autorisées.
 
+### Schéma typé des arguments d'opération
+
+`TCGOpDef` fournit les nombres d'outputs, d'inputs et de constantes, mais ne décrit pas à lui seul le type sémantique de chaque constante. Certaines constantes sont des immédiats, d'autres des références de labels ou des valeurs qui contiennent des adresses propres au processus (par exemple l'ancienne valeur TB d'un `exit_tb`). Les opérations spéciales ont aussi des formes variables (`call`) ou des données de contexte particulières (`qemu_ld/qemu_st`, `goto_tb`, plugins).
+
+Le patch doit donc inclure une table blanche d'encodage/décodage par opcode qui classe chaque argument logique en temporaire, global, immédiat, label ou helper symbolique, puis valide sa cardinalité et son type contre `TCGOpDef`. La table doit traiter spécifiquement `call`, `br`, `brcond`, `set_label`, `goto_tb`, `exit_tb`, `goto_ptr`, `insn_start`, `qemu_ld/qemu_st` et les opérations plugin. Pour le premier prototype, tout opcode sans encodeur/décodeur explicitement testé sera écarté du cache ; le traducteur amont reste le fallback systématique.
+
 ### Données de restauration d'état invité
 
 QEMU conserve les opérations `INDEX_op_insn_start` pendant l'optimisation précisément parce qu'elles alimentent l'unwind. Dans `tcg_gen_code()`, elles remplissent `TCGContext.gen_insn_data` et `gen_insn_end_off` au fur et à mesure de la nouvelle génération du code hôte ; `translate-all.c` encode ensuite ces données avec `encode_search()`, et `cpu_restore_state_from_tb()` les utilise via `restore_state_to_opc()` en cas d'exception/fault.
