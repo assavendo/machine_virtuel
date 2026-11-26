@@ -29,6 +29,7 @@ data class GuestCpuMetrics(
     /** Sum of busy CPU milliseconds across all guest CPUs for this sampling interval. */
     val guestCpuTimeDeltaMs: Long,
     val intervalMs: Long,
+    val coreCount: Int,
 )
 
 object GuestCpuStatsParser {
@@ -128,6 +129,7 @@ class GuestCpuStatsTracker {
             interruptPercent = (interrupts.toDouble() / total.toDouble() * 100.0).coerceIn(0.0, 100.0),
             guestCpuTimeDeltaMs = busy,
             intervalMs = timestampMs - previousTime,
+            coreCount = deltas.size,
         )
     }
 
