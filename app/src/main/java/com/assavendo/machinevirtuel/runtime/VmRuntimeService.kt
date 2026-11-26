@@ -470,6 +470,8 @@ class VmRuntimeService : Service() {
         var lastThreadPolicyKey = ""
         var lastThreadPolicyAppliedMs = 0L
         var cachedTranslationAggregate = TranslationCacheManager.get(this).aggregate(id)
+        var cachedQemuTcgStats: QemuTcgStats? = null
+        var lastTcgStatsSampleMs = 0L
         val vcpuSampler = VmCpuThreadSampler()
         val guestCpuTracker = GuestCpuStatsTracker()
         var cachedGuestCpuMetrics: com.assavendo.machinevirtuel.performance.GuestCpuMetrics? = null
