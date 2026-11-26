@@ -1259,7 +1259,9 @@ impl TcgIrL2Store {
         let directory = self.vm_directory(vm_id);
         match fs::symlink_metadata(&directory) {
             Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
-                return Err(TcgIrCacheError::Invalid("VM cache path must be a real directory"));
+                return Err(TcgIrCacheError::Invalid(
+                    "VM cache path must be a real directory",
+                ));
             }
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
