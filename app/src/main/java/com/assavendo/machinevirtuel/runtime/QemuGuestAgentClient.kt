@@ -43,9 +43,7 @@ object QemuGuestAgentClient {
                     .put("execute", "guest-sync-delimited")
                     .put("arguments", JSONObject().put("id", id))
             )
-            val syncLine = readLineAfterSentinel(input) ?: return null
-            val syncResponse = runCatching { JSONObject(syncLine) }.getOrNull() ?: return null
-            if (syncResponse.optLong("return", Long.MIN_VALUE) != id) return null
+            if (!awaitSyncId(input, id)) return null
 
             writeCommand(output, JSONObject().put("execute", "guest-get-cpustats"))
             val responseLine = readLine(input) ?: return null
@@ -62,6 +60,21 @@ object QemuGuestAgentClient {
     private fun writeCommand(output: java.io.OutputStream, command: JSONObject) {
         output.write((command.toString() + "\r\n").toByteArray(StandardCharsets.UTF_8))
         output.flush()
+    }
+
+    /**
+     * The protocol requires ignoring stale whole or partial responses until the
+     * unique sync ID is received. Bound the number of stale lines to avoid unbounded
+     * waiting on a malformed or unrelated peer.
+     */
+    private fun awaitSyncId(input: InputStream, id: Long): Boolean {
+        var line = readLineAfterSentinel(input) ?: return false
+        repeat(16) {
+            val response = runCatching { JSONObject(line) }.getOrNull()
+            if (response?.optLong("return", Long.MIN_VALUE) == id) return true
+            line = readLine(input) ?: return false
+        }
+        return false
     }
 
     private fun readLineAfterSentinel(input: InputStream): String? {
