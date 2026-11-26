@@ -72,11 +72,7 @@ impl ResidentL1 {
         self.insert_arc(Arc::new(block), access_clock)
     }
 
-    fn insert_arc(
-        &mut self,
-        block: Arc<TcgIrBlock>,
-        access_clock: &AtomicU64,
-    ) -> Result<(), ()> {
+    fn insert_arc(&mut self, block: Arc<TcgIrBlock>, access_clock: &AtomicU64) -> Result<(), ()> {
         let encoded_len = block.encode().map_err(|_| ())?.len() as u64;
         if encoded_len > self.max_bytes {
             return Ok(());
@@ -356,7 +352,10 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_invalidate(
     let result = catch_unwind(AssertUnwindSafe(|| {
         let handle = unsafe { &*handle };
         let key = unsafe { copy_compatibility(compatibility) }.map_err(|_| ())?;
-        handle.store.invalidate(&handle.vm_id, &key).map_err(|_| ())?;
+        handle
+            .store
+            .invalidate(&handle.vm_id, &key)
+            .map_err(|_| ())?;
         handle.resident.write().map_err(|_| ())?.remove(&key)
     }));
     if matches!(result, Ok(Ok(()))) {
@@ -443,11 +442,7 @@ pub unsafe extern "C" fn phoenixvm_tcg_l1_lookup(
     }));
     match result {
         Ok(Ok(Some(block))) => {
-            unsafe {
-                *out_block = Box::into_raw(Box::new(PvTcgIrBlockHandle {
-                    block,
-                }))
-            };
+            unsafe { *out_block = Box::into_raw(Box::new(PvTcgIrBlockHandle { block })) };
             1
         }
         Ok(Ok(None)) => 0,
@@ -551,13 +546,13 @@ pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_temp(
         return -1;
     }
     block.temporaries.push(crate::tcg_ir_cache::TcgTempRecord {
-            id,
-            base_id,
-            subindex,
-            base_type,
-            value_type,
-            kind,
-        });
+        id,
+        base_id,
+        subindex,
+        base_type,
+        value_type,
+        kind,
+    });
     0
 }
 
@@ -579,9 +574,9 @@ pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_label(
         return -1;
     }
     block.labels.push(crate::tcg_ir_cache::TcgLabelRecord {
-            id,
-            operation_index,
-        });
+        id,
+        operation_index,
+    });
     0
 }
 
@@ -609,11 +604,11 @@ pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_operation(
     }
     let index = block.operations.len();
     block.operations.push(crate::tcg_ir_cache::TcgIrOperation {
-            opcode,
-            param1,
-            param2,
-            operands: Vec::new(),
-        });
+        opcode,
+        param1,
+        param2,
+        operands: Vec::new(),
+    });
     i32::try_from(index).unwrap_or(-1)
 }
 
@@ -1003,11 +998,12 @@ mod tests {
         // Close the writer, open a fresh handle, then hydrate L1 from the
         // persistent L2 before the simulated vCPU path begins.
         unsafe { phoenixvm_tcg_l2_close(handle) };
-        let handle = unsafe {
-            phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024)
-        };
+        let handle = unsafe { phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024) };
         assert!(!handle.is_null());
-        assert_eq!(unsafe { phoenixvm_tcg_l2_preload(handle, 8, 1024 * 1024) }, 0);
+        assert_eq!(
+            unsafe { phoenixvm_tcg_l2_preload(handle, 8, 1024 * 1024) },
+            0
+        );
 
         // Make the backing directory unavailable after preload. A valid L1
         // lookup must still succeed, proving that the lookup path is memory-only.
