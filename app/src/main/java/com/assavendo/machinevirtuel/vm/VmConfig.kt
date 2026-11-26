@@ -51,6 +51,8 @@ data class VmConfig(
     var androidUserdataPath: String = "",
     var androidAdbEnabled: Boolean = false,
     var androidAdbHostPort: Int = 5555,
+    /** Optional Linux QEMU Guest Agent channel for truthful guest CPU/I/O-wait/IRQ telemetry. */
+    var guestAgentEnabled: Boolean = false,
     var firmwarePath: String = "",
     var firmwareKind: String = "UEFI",
     var secureBoot: Boolean = false,
