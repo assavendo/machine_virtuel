@@ -570,12 +570,21 @@ static TCGTemp *pv_restore_value(PvTcgCacheApi *api,
         if (value < 0 || (uint64_t)value >= temp_count) {
             return NULL;
         }
-        return temps[value];
+        temp = temps[value];
+        if (temp == NULL || temp->base_type != type ||
+            temp->type != type || temp->temp_subindex != 0) {
+            return NULL;
+        }
+        return temp;
     case PV_OPERAND_GLOBAL:
         if (value < 0 || value >= tcg_ctx->nb_globals) {
             return NULL;
         }
-        return &tcg_ctx->temps[value];
+        temp = &tcg_ctx->temps[value];
+        if (temp->base_type != type || temp->type != type) {
+            return NULL;
+        }
+        return temp;
     case PV_OPERAND_IMMEDIATE:
         if (output || (type != TCG_TYPE_I32 && type != TCG_TYPE_I64)) {
             return NULL;
