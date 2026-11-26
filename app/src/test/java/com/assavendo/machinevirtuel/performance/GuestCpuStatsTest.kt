@@ -100,6 +100,7 @@ class GuestCpuStatsTest {
 
         assertEquals(60L, metrics.guestCpuTimeDeltaMs)
         assertEquals(1_000L, metrics.intervalMs)
+        assertEquals(1, metrics.coreCount)
         assertEquals(60.0 / 115.0 * 100.0, metrics.cpuBusyPercent, 0.0001)
         assertEquals(10.0 / 115.0 * 100.0, metrics.ioWaitPercent, 0.0001)
         assertEquals(5.0 / 115.0 * 100.0, metrics.interruptPercent, 0.0001)
