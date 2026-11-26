@@ -68,19 +68,12 @@ impl ResidentL1 {
         }
     }
 
-    fn insert(
-        &mut self,
-        block: TcgIrBlock,
-        access_clock: &AtomicU64,
-    ) -> Result<(), ()> {
+    fn insert(&mut self, block: TcgIrBlock, access_clock: &AtomicU64) -> Result<(), ()> {
         let encoded_len = block.encode().map_err(|_| ())?.len() as u64;
         if encoded_len > self.max_bytes {
             return Ok(());
         }
-        let key = block
-            .compatibility
-            .fingerprint()
-            .map_err(|_| ())?;
+        let key = block.compatibility.fingerprint().map_err(|_| ())?;
         if let Some(old) = self.entries.remove(&key) {
             self.bytes = self.bytes.saturating_sub(old.bytes);
         }
@@ -99,7 +92,9 @@ impl ResidentL1 {
                 self.bytes = self.bytes.saturating_sub(oldest.bytes);
             }
         }
-        let last_access = access_clock.fetch_add(1, Ordering::Relaxed).saturating_add(1);
+        let last_access = access_clock
+            .fetch_add(1, Ordering::Relaxed)
+            .saturating_add(1);
         self.entries.insert(
             key,
             ResidentEntry {
@@ -122,7 +117,9 @@ impl ResidentL1 {
             return Ok(None);
         };
         entry.last_access.store(
-            access_clock.fetch_add(1, Ordering::Relaxed).saturating_add(1),
+            access_clock
+                .fetch_add(1, Ordering::Relaxed)
+                .saturating_add(1),
             Ordering::Relaxed,
         );
         Ok(Some(Arc::clone(&entry.block)))
@@ -352,11 +349,7 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_invalidate(
         let handle = unsafe { &*handle };
         let key = unsafe { copy_compatibility(compatibility) }.map_err(|_| ())?;
         handle.store.invalidate(&handle.vm_id, &key).map_err(|_| ())?;
-        handle
-            .resident
-            .write()
-            .map_err(|_| ())?
-            .remove(&key)
+        handle.resident.write().map_err(|_| ())?.remove(&key)
     }));
     if matches!(result, Ok(Ok(()))) {
         0
@@ -413,7 +406,11 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_preload(
         *current = resident;
         Ok::<_, ()>(())
     }));
-    if matches!(result, Ok(Ok(()))) { 0 } else { -1 }
+    if matches!(result, Ok(Ok(()))) {
+        0
+    } else {
+        -1
+    }
 }
 
 /// Nonblocking, memory-only lookup for the QEMU vCPU translation path.
@@ -438,9 +435,11 @@ pub unsafe extern "C" fn phoenixvm_tcg_l1_lookup(
     }));
     match result {
         Ok(Ok(Some(block))) => {
-            unsafe { *out_block = Box::into_raw(Box::new(PvTcgIrBlockHandle {
-                block: (*block).clone(),
-            })) };
+            unsafe {
+                *out_block = Box::into_raw(Box::new(PvTcgIrBlockHandle {
+                    block: (*block).clone(),
+                }))
+            };
             1
         }
         Ok(Ok(None)) => 0,
