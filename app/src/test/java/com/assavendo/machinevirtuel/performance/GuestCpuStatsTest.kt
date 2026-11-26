@@ -57,7 +57,11 @@ class GuestCpuStatsTest {
                     "user": 10,
                     "nice": 0,
                     "system": 5,
-                    "idle": 90
+                    "idle": 90,
+                    "iowait": 2,
+                    "irq": 3,
+                    "softirq": 4,
+                    "steal": 5
                   }
                 }
               ]
@@ -65,9 +69,11 @@ class GuestCpuStatsTest {
             """.trimIndent()
         )
         val stats = requireNotNull(GuestCpuStatsParser.parse(response)).single()
-        assertEquals(0L, stats.ioWaitMs)
-        assertEquals(0L, stats.irqMs)
-        assertEquals(105L, stats.totalMs)
+        assertEquals(2L, stats.ioWaitMs)
+        assertEquals(3L, stats.irqMs)
+        assertEquals(4L, stats.softIrqMs)
+        assertEquals(5L, stats.stealMs)
+        assertEquals(119L, stats.totalMs)
     }
 
     @Test
@@ -129,4 +135,28 @@ class GuestCpuStatsTest {
         tracker.reset()
         assertNull(tracker.update(reset, 3_000L))
     }
+
+    @Test
+    fun missingOptionalLinuxCpuCountersRemainUnavailableInsteadOfZero() {
+        val response = JSONObject(
+            """
+            {
+              "return": [
+                {
+                  "type": "linux",
+                  "u": {
+                    "cpu": 0,
+                    "user": 10,
+                    "nice": 0,
+                    "system": 5,
+                    "idle": 90
+                  }
+                }
+              ]
+            }
+            """.trimIndent()
+        )
+        assertNull(GuestCpuStatsParser.parse(response))
+    }
+
 }
