@@ -2,7 +2,6 @@ package com.assavendo.machinevirtuel.cache
 
 import android.content.Context
 import android.content.SharedPreferences
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
@@ -177,10 +176,11 @@ class TranslationCacheManager private constructor(
             ?.putInt("cleanupIntervalWrites", newPolicy.cleanupIntervalWrites)
             ?.putBoolean("globalLevel3Enabled", newPolicy.globalLevel3Enabled)
             ?.apply()
-        trim(memoryL0, newPolicy.l0MaxEntries)
-        trim(processL1, newPolicy.l1MaxEntries)
+        trimMetadata(memoryL0, newPolicy.l0MaxEntries, newPolicy.l0MaxBytes)
+        trimMetadata(processL1, newPolicy.l1MaxEntries, newPolicy.l1MaxBytes)
         trimArtifacts(memoryArtifactsL0, newPolicy.l0MaxEntries, newPolicy.l0MaxBytes)
         trimArtifacts(processArtifactsL1, newPolicy.l1MaxEntries, newPolicy.l1MaxBytes)
+        refreshLocalOwners()
         cleanup(newPolicy.maxPersistentBytes)
     }
 
@@ -241,13 +241,13 @@ class TranslationCacheManager private constructor(
         }
         val localId = keyId(key)
         val vmEnvelope = buildMetadataEnvelope(key, localId, "VM", metadata)
-        cacheMetadataInMemory(localId, key.vmId, vmEnvelope)
         writeAtomically(vmFile(key, localId), vmEnvelope)
 
         if (allowGlobalLevel3 && key.level == 3) {
             val globalId = globalKeyId(key)
             writeAtomically(globalFile(globalId), buildMetadataEnvelope(key, globalId, "GLOBAL", metadata))
         }
+        cacheMetadataInMemory(localId, key.vmId, vmEnvelope)
         afterPersistentWrite()
     }
 
@@ -264,13 +264,13 @@ class TranslationCacheManager private constructor(
         }
         val localId = keyId(key)
         val vmBytes = encodeArtifact(key, localId, "VM", artifact)
-        cacheArtifactInMemory(localId, key.vmId, artifact)
         writeAtomically(vmArtifactFile(key, localId), vmBytes)
 
         if (allowGlobalLevel3 && key.level == 3) {
             val globalId = globalKeyId(key)
             writeAtomically(globalArtifactFile(globalId), encodeArtifact(key, globalId, "GLOBAL", artifact))
         }
+        cacheArtifactInMemory(localId, key.vmId, artifact)
         afterPersistentWrite()
     }
 
@@ -338,7 +338,7 @@ class TranslationCacheManager private constructor(
         processL1[localId]?.let {
             if (isValidMetadataEnvelope(it, key, localId, "VM")) {
                 memoryL0[localId] = it
-                trim(memoryL0, policy.l0MaxEntries)
+                trimMetadata(memoryL0, policy.l0MaxEntries, policy.l0MaxBytes)
                 hitCount.incrementAndGet()
                 l1HitCount.incrementAndGet()
                 return extractMetadata(it)
@@ -732,8 +732,9 @@ class TranslationCacheManager private constructor(
         localOwnerHashes[id] = fingerprint(vmId)
         memoryL0[id] = envelope
         processL1[id] = envelope
-        trim(memoryL0, policy.l0MaxEntries)
-        trim(processL1, policy.l1MaxEntries)
+        trimMetadata(memoryL0, policy.l0MaxEntries, policy.l0MaxBytes)
+        trimMetadata(processL1, policy.l1MaxEntries, policy.l1MaxBytes)
+        refreshLocalOwners()
     }
 
     private fun cacheArtifactInMemory(id: String, vmId: String, payload: ByteArray) {
@@ -750,15 +751,28 @@ class TranslationCacheManager private constructor(
         } else {
             processArtifactsL1.remove(id)
         }
+        refreshLocalOwners()
     }
 
-    private fun <K, V> trim(map: LinkedHashMap<K, V>, limit: Int) {
-        while (map.size > limit) {
+    private fun trimMetadata(
+        map: LinkedHashMap<String, String>,
+        maxEntries: Int,
+        maxBytes: Long,
+    ) {
+        fun byteCount(): Long = map.values.sumOf { it.toByteArray(Charsets.UTF_8).size.toLong() }
+        while (map.size > maxEntries || byteCount() > maxBytes) {
             val iterator = map.entries.iterator()
             if (!iterator.hasNext()) break
             iterator.next()
             iterator.remove()
         }
+    }
+
+    /** Keep the invalidation index bounded by entries actually resident in memory. */
+    private fun refreshLocalOwners() {
+        val resident = memoryL0.keys + processL1.keys +
+            memoryArtifactsL0.keys + processArtifactsL1.keys
+        localOwnerHashes.keys.retainAll(resident.toSet())
     }
 
     private fun trimArtifacts(map: LinkedHashMap<String, ByteArray>, maxEntries: Int, maxBytes: Long) {
