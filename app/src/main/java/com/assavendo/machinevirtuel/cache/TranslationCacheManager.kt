@@ -874,7 +874,10 @@ class TranslationCacheManager private constructor(
 
     private fun afterPersistentWrite() {
         writesSinceCleanup++
-        if (writesSinceCleanup >= policy.cleanupIntervalWrites || stats().bytes > policy.maxPersistentBytes) {
+        // Avoid a full recursive disk walk on every cache insert. The configured
+        // interval bounds temporary quota overshoot; configure() still prunes
+        // synchronously when the user lowers the persistent quota.
+        if (writesSinceCleanup >= policy.cleanupIntervalWrites) {
             writesSinceCleanup = 0
             cleanup(policy.maxPersistentBytes)
         }
