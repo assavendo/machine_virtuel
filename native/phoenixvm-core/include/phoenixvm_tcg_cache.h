@@ -78,13 +78,24 @@ int32_t phoenixvm_tcg_l2_preload(PvTcgL2Handle *handle,
                                  uint64_t max_bytes);
 
 /*
- * vCPU-path API: memory-only lookup after preload. This never accesses disk.
- * Returns 1 on hit, 0 on miss, -1 on invalid input/lock error.
- * On hit, the caller owns the block and must free it.
+ * vCPU-path API: exact, memory-only lookup after preload. It never accesses
+ * disk and uses a nonblocking read lock. Returns 1 on hit, 0 on miss, -1 on
+ * contention/invalid input. On hit, caller owns the block and must free it.
  */
+
 int32_t phoenixvm_tcg_l1_lookup(PvTcgL2Handle *handle,
                                 const PvTcgCompatibility *compatibility,
                                 PvTcgIrBlockHandle **out_block);
+
+/*
+ * Candidate lookup for translation before the code digest is known. All
+ * compatibility fields except guest_code_sha256 must match exactly.
+ * A returned block is NOT safe to import until QEMU revalidates its stored
+ * code digest against fresh guest bytes and checks its page identity.
+ */
+int32_t phoenixvm_tcg_l1_lookup_probe(PvTcgL2Handle *handle,
+                                      const PvTcgCompatibility *probe,
+                                      PvTcgIrBlockHandle **out_block);
 
 /*
  * Structured PVTCGIR v3 builder and reader. No QEMU process pointers are
@@ -115,14 +126,25 @@ int32_t phoenixvm_tcg_l2_load_block(PvTcgL2Handle *handle,
                                     const PvTcgCompatibility *compatibility,
                                     PvTcgIrBlockHandle **out_block);
 /*
- * A successful block-store call only enqueues disk persistence. The queue is
- * bounded and nonblocking; return 1 means it was full (L1 retained, L2 skipped).
- * Flush is a blocking worker/shutdown operation, never call it from a vCPU.
+ * A block-store call only enqueues work in a bounded nonblocking queue:
+ * 0 = accepted, 1 = queue full (block not cached), -1 = invalid/disconnected.
+ * The worker validates and persists to L2, then publishes the block in L1.
+ * Flush is a blocking worker/shutdown barrier, never call it from a vCPU;
+ * it returns -1 if any persistence-worker error has been recorded.
  */
 int32_t phoenixvm_tcg_l2_flush(PvTcgL2Handle *handle);
 int32_t phoenixvm_tcg_l2_worker_stats(const PvTcgL2Handle *handle,
                                       uint64_t *errors,
                                       uint64_t *queue_drops);
+/*
+ * Return the persisted code digest and physical pages for mandatory validation
+ * after a candidate lookup. physical_pages points to room for exactly 2 uint64s.
+ */
+int32_t phoenixvm_tcg_ir_block_get_validation(const PvTcgIrBlockHandle *block,
+                                              uint32_t *guest_size,
+                                              uint8_t guest_code_sha256[32],
+                                              uint64_t physical_pages[2],
+                                              size_t *physical_pages_len);
 int32_t phoenixvm_tcg_ir_block_get_summary(const PvTcgIrBlockHandle *block,
                                            uint32_t *guest_size,
                                            uint16_t *instruction_count,
