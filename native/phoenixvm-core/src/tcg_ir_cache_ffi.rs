@@ -366,14 +366,17 @@ pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_temp(
     if block.block.temporaries.len() >= MAX_FFI_TEMPS {
         return -1;
     }
-    block.block.temporaries.push(crate::tcg_ir_cache::TcgTempRecord {
-        id,
-        base_id,
-        subindex,
-        base_type,
-        value_type,
-        kind,
-    });
+    block
+        .block
+        .temporaries
+        .push(crate::tcg_ir_cache::TcgTempRecord {
+            id,
+            base_id,
+            subindex,
+            base_type,
+            value_type,
+            kind,
+        });
     0
 }
 
@@ -391,10 +394,13 @@ pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_label(
     if block.block.labels.len() >= MAX_FFI_LABELS {
         return -1;
     }
-    block.block.labels.push(crate::tcg_ir_cache::TcgLabelRecord {
-        id,
-        operation_index,
-    });
+    block
+        .block
+        .labels
+        .push(crate::tcg_ir_cache::TcgLabelRecord {
+            id,
+            operation_index,
+        });
     0
 }
 
@@ -418,12 +424,15 @@ pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_operation(
         return -1;
     }
     let index = block.block.operations.len();
-    block.block.operations.push(crate::tcg_ir_cache::TcgIrOperation {
-        opcode,
-        param1,
-        param2,
-        operands: Vec::new(),
-    });
+    block
+        .block
+        .operations
+        .push(crate::tcg_ir_cache::TcgIrOperation {
+            opcode,
+            param1,
+            param2,
+            operands: Vec::new(),
+        });
     i32::try_from(index).unwrap_or(-1)
 }
 
@@ -478,7 +487,10 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_store_block(
     let result = catch_unwind(AssertUnwindSafe(|| {
         let handle = unsafe { &*handle };
         let block = unsafe { &*block };
-        handle.store.store(&handle.vm_id, &block.block).map_err(|_| ())
+        handle
+            .store
+            .store(&handle.vm_id, &block.block)
+            .map_err(|_| ())
     }));
     if matches!(result, Ok(Ok(()))) {
         0
@@ -501,10 +513,7 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_load_block(
     let result = catch_unwind(AssertUnwindSafe(|| {
         let handle = unsafe { &*handle };
         let key = unsafe { copy_compatibility(compatibility) }.map_err(|_| ())?;
-        handle
-            .store
-            .load(&handle.vm_id, &key)
-            .map_err(|_| ())
+        handle.store.load(&handle.vm_id, &key).map_err(|_| ())
     }));
     match result {
         Ok(Ok(Some(block))) => {
@@ -748,9 +757,7 @@ mod tests {
         let key = compatibility();
 
         // SAFETY: input C strings and compatibility descriptors remain alive.
-        let handle = unsafe {
-            phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024)
-        };
+        let handle = unsafe { phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024) };
         assert!(!handle.is_null());
 
         // SAFETY: key is valid for this call; builder owns its copied metadata.
@@ -762,15 +769,12 @@ mod tests {
         );
 
         let insn = CString::new("insn_start").unwrap();
-        let insn_index = unsafe {
-            phoenixvm_tcg_ir_block_add_operation(builder, insn.as_ptr(), 0, 0)
-        };
+        let insn_index =
+            unsafe { phoenixvm_tcg_ir_block_add_operation(builder, insn.as_ptr(), 0, 0) };
         assert_eq!(insn_index, 0);
         for value in [0x1000, 0, 0] {
             assert_eq!(
-                unsafe {
-                    phoenixvm_tcg_ir_block_add_operand(builder, insn_index as u32, 2, value)
-                },
+                unsafe { phoenixvm_tcg_ir_block_add_operand(builder, insn_index as u32, 2, value) },
                 0
             );
         }
