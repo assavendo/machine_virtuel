@@ -328,4 +328,4 @@ class TranslationCacheManagerTest {
             root.deleteRecursively()
         }
     }
-\n}
+}
