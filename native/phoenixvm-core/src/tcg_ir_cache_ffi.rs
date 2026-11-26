@@ -274,6 +274,405 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_invalidate_vm(handle: *mut PvTcgL2Hand
     }
 }
 
+/// Opaque, decoded or incrementally constructed TCG IR block.
+pub struct PvTcgIrBlockHandle {
+    block: TcgIrBlock,
+}
+
+const MAX_FFI_TEMPS: usize = 512;
+const MAX_FFI_LABELS: usize = 512;
+const MAX_FFI_OPERATIONS: usize = 16_384;
+const MAX_FFI_OPERANDS: usize = 32;
+
+/// Construct an empty block with a complete compatibility identity.
+/// Operand tags for add_operand: 0=Temp, 1=Global, 2=Immediate, 3=Label.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_ir_block_create(
+    compatibility: *const PvTcgCompatibility,
+    guest_size: u32,
+    instruction_count: u16,
+) -> *mut PvTcgIrBlockHandle {
+    if compatibility.is_null() || guest_size == 0 || instruction_count == 0 {
+        return ptr::null_mut();
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let compatibility = unsafe { copy_compatibility(compatibility) }.map_err(|_| ())?;
+        Ok::<_, ()>(Box::into_raw(Box::new(PvTcgIrBlockHandle {
+            block: TcgIrBlock {
+                compatibility,
+                guest_size,
+                instruction_count,
+                temporaries: Vec::new(),
+                labels: Vec::new(),
+                operations: Vec::new(),
+            },
+        })))
+    }));
+    match result {
+        Ok(Ok(block)) => block,
+        _ => ptr::null_mut(),
+    }
+}
+
+/// Release a builder or decoded block handle.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_ir_block_free(block: *mut PvTcgIrBlockHandle) {
+    if !block.is_null() {
+        drop(unsafe { Box::from_raw(block) });
+    }
+}
+
+/// Append one symbolic temporary. Type tags: I32=0, I64=1, I128=2,
+/// V64=3, V128=4, V256=5, Ptr=6. Kind tags: TB=0, EBB=1.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_temp(
+    block: *mut PvTcgIrBlockHandle,
+    id: u16,
+    base_id: u16,
+    subindex: u8,
+    base_type: u8,
+    value_type: u8,
+    kind: u8,
+) -> i32 {
+    if block.is_null() {
+        return -1;
+    }
+    let base_type = match base_type {
+        0 => crate::tcg_ir_cache::TcgValueType::I32,
+        1 => crate::tcg_ir_cache::TcgValueType::I64,
+        2 => crate::tcg_ir_cache::TcgValueType::I128,
+        3 => crate::tcg_ir_cache::TcgValueType::V64,
+        4 => crate::tcg_ir_cache::TcgValueType::V128,
+        5 => crate::tcg_ir_cache::TcgValueType::V256,
+        6 => crate::tcg_ir_cache::TcgValueType::Ptr,
+        _ => return -1,
+    };
+    let value_type = match value_type {
+        0 => crate::tcg_ir_cache::TcgValueType::I32,
+        1 => crate::tcg_ir_cache::TcgValueType::I64,
+        2 => crate::tcg_ir_cache::TcgValueType::I128,
+        3 => crate::tcg_ir_cache::TcgValueType::V64,
+        4 => crate::tcg_ir_cache::TcgValueType::V128,
+        5 => crate::tcg_ir_cache::TcgValueType::V256,
+        6 => crate::tcg_ir_cache::TcgValueType::Ptr,
+        _ => return -1,
+    };
+    let kind = match kind {
+        0 => crate::tcg_ir_cache::TcgTempKind::Tb,
+        1 => crate::tcg_ir_cache::TcgTempKind::Ebb,
+        _ => return -1,
+    };
+    let block = unsafe { &mut *block };
+    if block.block.temporaries.len() >= MAX_FFI_TEMPS {
+        return -1;
+    }
+    block.block.temporaries.push(crate::tcg_ir_cache::TcgTempRecord {
+        id,
+        base_id,
+        subindex,
+        base_type,
+        value_type,
+        kind,
+    });
+    0
+}
+
+/// Append a label definition's metadata. It must correspond to a set_label op.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_label(
+    block: *mut PvTcgIrBlockHandle,
+    id: u16,
+    operation_index: u32,
+) -> i32 {
+    if block.is_null() {
+        return -1;
+    }
+    let block = unsafe { &mut *block };
+    if block.block.labels.len() >= MAX_FFI_LABELS {
+        return -1;
+    }
+    block.block.labels.push(crate::tcg_ir_cache::TcgLabelRecord {
+        id,
+        operation_index,
+    });
+    0
+}
+
+/// Append an opcode by stable name and return its operation index, or -1.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_operation(
+    block: *mut PvTcgIrBlockHandle,
+    opcode: *const c_char,
+    param1: u8,
+    param2: u8,
+) -> i32 {
+    if block.is_null() || opcode.is_null() {
+        return -1;
+    }
+    let opcode = match unsafe { copy_c_string(opcode) } {
+        Ok(value) if value.len() <= 64 => value,
+        _ => return -1,
+    };
+    let block = unsafe { &mut *block };
+    if block.block.operations.len() >= MAX_FFI_OPERATIONS {
+        return -1;
+    }
+    let index = block.block.operations.len();
+    block.block.operations.push(crate::tcg_ir_cache::TcgIrOperation {
+        opcode,
+        param1,
+        param2,
+        operands: Vec::new(),
+    });
+    i32::try_from(index).unwrap_or(-1)
+}
+
+/// Append one symbolic operand. Tags: 0=Temp, 1=Global, 2=Immediate, 3=Label.
+/// Helper operands are deliberately not exposed by this v3 C ABI.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_operand(
+    block: *mut PvTcgIrBlockHandle,
+    operation_index: u32,
+    tag: u8,
+    value: i64,
+) -> i32 {
+    if block.is_null() {
+        return -1;
+    }
+    let operand = match tag {
+        0 => match u16::try_from(value) {
+            Ok(id) => crate::tcg_ir_cache::TcgOperand::Temp(id),
+            Err(_) => return -1,
+        },
+        1 => match u16::try_from(value) {
+            Ok(id) => crate::tcg_ir_cache::TcgOperand::Global(id),
+            Err(_) => return -1,
+        },
+        2 => crate::tcg_ir_cache::TcgOperand::Immediate(value),
+        3 => match u16::try_from(value) {
+            Ok(id) => crate::tcg_ir_cache::TcgOperand::Label(id),
+            Err(_) => return -1,
+        },
+        _ => return -1,
+    };
+    let block = unsafe { &mut *block };
+    let Some(operation) = block.block.operations.get_mut(operation_index as usize) else {
+        return -1;
+    };
+    if operation.operands.len() >= MAX_FFI_OPERANDS {
+        return -1;
+    }
+    operation.operands.push(operand);
+    0
+}
+
+/// Validate and persist a constructed block in the handle's VM namespace.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_l2_store_block(
+    handle: *mut PvTcgL2Handle,
+    block: *const PvTcgIrBlockHandle,
+) -> i32 {
+    if handle.is_null() || block.is_null() {
+        return -1;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = unsafe { &*handle };
+        let block = unsafe { &*block };
+        handle.store.store(&handle.vm_id, &block.block).map_err(|_| ())
+    }));
+    if matches!(result, Ok(Ok(()))) {
+        0
+    } else {
+        -1
+    }
+}
+
+/// Load a fully validated block. Returns 1 on hit, 0 on miss, -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_l2_load_block(
+    handle: *mut PvTcgL2Handle,
+    compatibility: *const PvTcgCompatibility,
+    out_block: *mut *mut PvTcgIrBlockHandle,
+) -> i32 {
+    if handle.is_null() || compatibility.is_null() || out_block.is_null() {
+        return -1;
+    }
+    unsafe { *out_block = ptr::null_mut() };
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = unsafe { &*handle };
+        let key = unsafe { copy_compatibility(compatibility) }.map_err(|_| ())?;
+        handle
+            .store
+            .load(&handle.vm_id, &key)
+            .map_err(|_| ())
+    }));
+    match result {
+        Ok(Ok(Some(block))) => {
+            unsafe { *out_block = Box::into_raw(Box::new(PvTcgIrBlockHandle { block })) };
+            1
+        }
+        Ok(Ok(None)) => 0,
+        _ => -1,
+    }
+}
+
+/// Read block counts and guest metadata from a decoded block.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_ir_block_get_summary(
+    block: *const PvTcgIrBlockHandle,
+    guest_size: *mut u32,
+    instruction_count: *mut u16,
+    temp_count: *mut usize,
+    label_count: *mut usize,
+    operation_count: *mut usize,
+) -> i32 {
+    if block.is_null()
+        || guest_size.is_null()
+        || instruction_count.is_null()
+        || temp_count.is_null()
+        || label_count.is_null()
+        || operation_count.is_null()
+    {
+        return -1;
+    }
+    let block = unsafe { &*block };
+    unsafe {
+        *guest_size = block.block.guest_size;
+        *instruction_count = block.block.instruction_count;
+        *temp_count = block.block.temporaries.len();
+        *label_count = block.block.labels.len();
+        *operation_count = block.block.operations.len();
+    }
+    0
+}
+
+/// Get a temporary record by index.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_ir_block_get_temp(
+    block: *const PvTcgIrBlockHandle,
+    index: usize,
+    id: *mut u16,
+    base_id: *mut u16,
+    subindex: *mut u8,
+    base_type: *mut u8,
+    value_type: *mut u8,
+    kind: *mut u8,
+) -> i32 {
+    if block.is_null()
+        || id.is_null()
+        || base_id.is_null()
+        || subindex.is_null()
+        || base_type.is_null()
+        || value_type.is_null()
+        || kind.is_null()
+    {
+        return -1;
+    }
+    let block = unsafe { &*block };
+    let Some(temp) = block.block.temporaries.get(index) else {
+        return -1;
+    };
+    unsafe {
+        *id = temp.id;
+        *base_id = temp.base_id;
+        *subindex = temp.subindex;
+        *base_type = temp.base_type as u8;
+        *value_type = temp.value_type as u8;
+        *kind = temp.kind as u8;
+    }
+    0
+}
+
+/// Get a label record by index.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_ir_block_get_label(
+    block: *const PvTcgIrBlockHandle,
+    index: usize,
+    id: *mut u16,
+    operation_index: *mut u32,
+) -> i32 {
+    if block.is_null() || id.is_null() || operation_index.is_null() {
+        return -1;
+    }
+    let block = unsafe { &*block };
+    let Some(label) = block.block.labels.get(index) else {
+        return -1;
+    };
+    unsafe {
+        *id = label.id;
+        *operation_index = label.operation_index;
+    }
+    0
+}
+
+/// Get stable opcode bytes and operand count. The opcode pointer remains valid
+/// until the block handle is freed.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_ir_block_get_operation(
+    block: *const PvTcgIrBlockHandle,
+    index: usize,
+    opcode: *mut *const u8,
+    opcode_len: *mut usize,
+    param1: *mut u8,
+    param2: *mut u8,
+    operand_count: *mut usize,
+) -> i32 {
+    if block.is_null()
+        || opcode.is_null()
+        || opcode_len.is_null()
+        || param1.is_null()
+        || param2.is_null()
+        || operand_count.is_null()
+    {
+        return -1;
+    }
+    let block = unsafe { &*block };
+    let Some(operation) = block.block.operations.get(index) else {
+        return -1;
+    };
+    unsafe {
+        *opcode = operation.opcode.as_ptr();
+        *opcode_len = operation.opcode.len();
+        *param1 = operation.param1;
+        *param2 = operation.param2;
+        *operand_count = operation.operands.len();
+    }
+    0
+}
+
+/// Get a numeric operand. Tags: 0=Temp, 1=Global, 2=Immediate, 3=Label.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_ir_block_get_operand(
+    block: *const PvTcgIrBlockHandle,
+    operation_index: usize,
+    operand_index: usize,
+    tag: *mut u8,
+    value: *mut i64,
+) -> i32 {
+    if block.is_null() || tag.is_null() || value.is_null() {
+        return -1;
+    }
+    let block = unsafe { &*block };
+    let Some(operation) = block.block.operations.get(operation_index) else {
+        return -1;
+    };
+    let Some(operand) = operation.operands.get(operand_index) else {
+        return -1;
+    };
+    let (operand_tag, operand_value) = match operand {
+        crate::tcg_ir_cache::TcgOperand::Temp(id) => (0, i64::from(*id)),
+        crate::tcg_ir_cache::TcgOperand::Global(index) => (1, i64::from(*index)),
+        crate::tcg_ir_cache::TcgOperand::Immediate(value) => (2, *value),
+        crate::tcg_ir_cache::TcgOperand::Label(id) => (3, i64::from(*id)),
+        crate::tcg_ir_cache::TcgOperand::Helper(_) => return -1,
+    };
+    unsafe {
+        *tag = operand_tag;
+        *value = operand_value;
+    }
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
