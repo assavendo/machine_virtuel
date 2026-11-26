@@ -1,5 +1,6 @@
 pub mod backend;
 pub mod tcg_ir_cache;
+pub mod tcg_ir_cache_ffi;
 pub mod translation;
 
 use backend::{select_backend, Backend, HostFeatures};
