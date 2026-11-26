@@ -996,7 +996,9 @@ impl TcgIrL2Store {
         let metadata =
             fs::symlink_metadata(path).map_err(|error| TcgIrCacheError::Io(error.kind()))?;
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(TcgIrCacheError::Invalid("VM cache path must be a real directory"));
+            return Err(TcgIrCacheError::Invalid(
+                "VM cache path must be a real directory",
+            ));
         }
         Ok(())
     }
