@@ -93,8 +93,8 @@ impl ResidentL1 {
     }
 
     fn insert_arc(&mut self, block: Arc<TcgIrBlock>, access_clock: &AtomicU64) -> Result<(), ()> {
-        let encoded_len = block.encode().map_err(|_| ())?.len() as u64;
-        if encoded_len > self.max_bytes {
+        let resident_bytes = block.resident_size_bytes();
+        if resident_bytes > self.max_bytes {
             return Ok(());
         }
         let key = block.compatibility.fingerprint().map_err(|_| ())?;
@@ -123,11 +123,11 @@ impl ResidentL1 {
             key,
             ResidentEntry {
                 block,
-                bytes: encoded_len,
+                bytes: resident_bytes,
                 last_access: AtomicU64::new(last_access),
             },
         );
-        self.bytes = self.bytes.saturating_add(encoded_len);
+        self.bytes = self.bytes.saturating_add(resident_bytes);
         Ok(())
     }
 
@@ -138,6 +138,34 @@ impl ResidentL1 {
     ) -> Result<Option<Arc<TcgIrBlock>>, ()> {
         let key = compatibility.fingerprint().map_err(|_| ())?;
         let Some(entry) = self.entries.get(&key) else {
+            return Ok(None);
+        };
+        entry.last_access.store(
+            access_clock
+                .fetch_add(1, Ordering::Relaxed)
+                .saturating_add(1),
+            Ordering::Relaxed,
+        );
+        Ok(Some(Arc::clone(&entry.block)))
+    }
+
+    fn lookup_probe(
+        &self,
+        probe: &TcgIrCompatibility,
+        access_clock: &AtomicU64,
+    ) -> Result<Option<Arc<TcgIrBlock>>, ()> {
+        probe.fingerprint().map_err(|_| ())?;
+        let candidate = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| {
+                entry
+                    .block
+                    .compatibility
+                    .matches_translation_probe(probe)
+            })
+            .max_by_key(|(_, entry)| entry.last_access.load(Ordering::Relaxed));
+        let Some((_, entry)) = candidate else {
             return Ok(None);
         };
         entry.last_access.store(
@@ -507,6 +535,37 @@ pub unsafe extern "C" fn phoenixvm_tcg_l1_lookup(
         // concurrent preload/invalidation/store publication is a safe miss.
         let resident = handle.resident.try_read().map_err(|_| ())?;
         resident.lookup(&key, &handle.resident_clock)
+    }));
+    match result {
+        Ok(Ok(Some(block))) => {
+            unsafe { *out_block = Box::into_raw(Box::new(PvTcgIrBlockHandle { block })) };
+            1
+        }
+        Ok(Ok(None)) => 0,
+        _ => -1,
+    }
+}
+
+/// Candidate lookup by all translation context fields except guest-code hash.
+///
+/// A hit is only a candidate. QEMU must validate the returned block's stored
+/// code digest against freshly read guest code bytes before restoring its TCG ops.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_l1_lookup_probe(
+    handle: *mut PvTcgL2Handle,
+    probe: *const PvTcgCompatibility,
+    out_block: *mut *mut PvTcgIrBlockHandle,
+) -> i32 {
+    if handle.is_null() || probe.is_null() || out_block.is_null() {
+        return -1;
+    }
+    unsafe { *out_block = ptr::null_mut() };
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = unsafe { &*handle };
+        let key = unsafe { copy_compatibility(probe) }.map_err(|_| ())?;
+        // Do not wait on worker publication or preload in the vCPU path.
+        let resident = handle.resident.try_read().map_err(|_| ())?;
+        resident.lookup_probe(&key, &handle.resident_clock)
     }));
     match result {
         Ok(Ok(Some(block))) => {
@@ -1204,6 +1263,63 @@ mod tests {
         unsafe { phoenixvm_tcg_ir_block_free(decoded) };
         unsafe { phoenixvm_tcg_l2_close(handle) };
         std::fs::remove_dir_all(offline_root).unwrap();
+    }
+
+    #[test]
+    fn resident_probe_ignores_only_the_guest_code_digest() {
+        let block = block();
+        let key = block.compatibility.clone();
+        let mut probe = key.clone();
+        probe.guest_code_sha256 = [0; 32];
+
+        let clock = AtomicU64::new(0);
+        let mut resident = ResidentL1::new(8, 1024 * 1024);
+        resident.insert(block, &clock).unwrap();
+        assert!(resident.lookup_probe(&probe, &clock).unwrap().is_some());
+
+        let mut changed = probe.clone();
+        changed.tb_flags ^= 1;
+        assert!(resident.lookup_probe(&changed, &clock).unwrap().is_none());
+
+        let mut changed_page = probe.clone();
+        changed_page.physical_pages[0] ^= 0x1000;
+        assert!(resident
+            .lookup_probe(&changed_page, &clock)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn vcpu_lookup_fails_fast_during_worker_side_l1_write() {
+        let root = std::env::temp_dir().join(format!(
+            "phoenixvm-tcg-ffi-lock-{}-{}",
+            std::process::id(),
+            TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let root_c = CString::new(root.to_string_lossy().as_bytes()).unwrap();
+        let vm = CString::new("ffi-vm-lock").unwrap();
+        let key = compatibility();
+        let handle =
+            unsafe { phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024) };
+        assert!(!handle.is_null());
+
+        let handle_ref = unsafe { &*handle };
+        let write_guard = handle_ref.resident.write().unwrap();
+        let mut block = ptr::null_mut();
+        let started = std::time::Instant::now();
+        assert_eq!(
+            unsafe { phoenixvm_tcg_l1_lookup(handle, &key, &mut block) },
+            -1
+        );
+        assert!(started.elapsed() < Duration::from_millis(100));
+        drop(write_guard);
+
+        assert_eq!(
+            unsafe { phoenixvm_tcg_l1_lookup(handle, &key, &mut block) },
+            0
+        );
+        unsafe { phoenixvm_tcg_l2_close(handle) };
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
