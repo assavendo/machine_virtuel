@@ -26,10 +26,12 @@ class VmMetricsRegistryTest {
                     systemCpuIoWaitPercent = 7.5,
                     sampleIntervalMs = 1000,
                 ),
+                effectiveVcpus = 2,
             )
 
             val sample = VmMetricsRegistry.last("vm-cpu-telemetry").single()
             assertEquals(37.5, sample.cpuHostPercent)
+            assertEquals(2, sample.vCpuCountRuntime)
             assertEquals(12_000L, sample.processIoReadBytesPerSec)
             assertEquals(34_000L, sample.processIoWriteBytesPerSec)
             assertEquals(7.5, sample.systemCpuIoWaitPercent)
