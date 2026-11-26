@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::ptr;
 use std::slice;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, RwLock};
 
 const MAX_FFI_STRING_BYTES: usize = 4096;
@@ -39,10 +40,29 @@ pub struct PvTcgCompatibility {
 
 /// Opaque handle owned by the caller between open() and close().
 pub struct PvTcgL2Handle {
-    store: TcgIrL2Store,
+    store: Arc<TcgIrL2Store>,
     vm_id: String,
     resident: RwLock<ResidentL1>,
     resident_clock: AtomicU64,
+    worker_tx: Option<SyncSender<PersistCommand>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+    worker_errors: Arc<AtomicU64>,
+    queue_drops: AtomicU64,
+}
+
+enum PersistCommand {
+    Store(Arc<TcgIrBlock>),
+    Flush(SyncSender<()>),
+}
+
+impl Drop for PvTcgL2Handle {
+    fn drop(&mut self) {
+        // Drop the sender first: the worker drains queued writes and then exits.
+        self.worker_tx.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
 }
 
 struct ResidentEntry {
@@ -233,14 +253,40 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_open(
     let result = catch_unwind(AssertUnwindSafe(|| {
         let root = unsafe { copy_c_string(root) }.map_err(|_| ())?;
         let vm_id = unsafe { copy_c_string(vm_id) }.map_err(|_| ())?;
-        let store =
-            TcgIrL2Store::new(PathBuf::from(root), max_entries, max_bytes).map_err(|_| ())?;
+        let store = Arc::new(
+            TcgIrL2Store::new(PathBuf::from(root), max_entries, max_bytes).map_err(|_| ())?,
+        );
+        let worker_store = Arc::clone(&store);
+        let worker_vm_id = vm_id.clone();
+        let worker_errors = Arc::new(AtomicU64::new(0));
+        let worker_errors_thread = Arc::clone(&worker_errors);
+        let (worker_tx, worker_rx) = mpsc::sync_channel::<PersistCommand>(128);
+        let worker = std::thread::Builder::new()
+            .name("phoenixvm-tcg-l2".into())
+            .spawn(move || {
+                while let Ok(command) = worker_rx.recv() {
+                    match command {
+                        PersistCommand::Store(block) => {
+                            if worker_store.store(&worker_vm_id, &block).is_err() {
+                                worker_errors_thread.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        PersistCommand::Flush(ack) => {
+                            let _ = ack.send(());
+                        }
+                    }
+                }
+            })
+            .map_err(|_| ())?;
         Ok::<_, ()>(Box::into_raw(Box::new(PvTcgL2Handle {
             store,
             vm_id,
-            // Bound process-resident TCG IR independently of the persistent L2 quota.
             resident: RwLock::new(ResidentL1::new(256, 32 * 1024 * 1024)),
             resident_clock: AtomicU64::new(0),
+            worker_tx: Some(worker_tx),
+            worker: Some(worker),
+            worker_errors,
+            queue_drops: AtomicU64::new(0),
         })))
     }));
     match result {
@@ -654,7 +700,48 @@ pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_operand(
     0
 }
 
-/// Validate and persist a constructed block in the handle's VM namespace.
+/// Wait for all queued L2 writes to finish. This can block and must run
+/// after vCPU translation has stopped, on a shutdown or cache-worker thread.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_l2_flush(handle: *mut PvTcgL2Handle) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = unsafe { &*handle };
+        let sender = handle.worker_tx.as_ref().ok_or(())?;
+        let (ack_tx, ack_rx) = mpsc::sync_channel(0);
+        sender.send(PersistCommand::Flush(ack_tx)).map_err(|_| ())?;
+        ack_rx.recv().map_err(|_| ())
+    }));
+    if matches!(result, Ok(Ok(()))) {
+        0
+    } else {
+        -1
+    }
+}
+
+/// Read process-local persistence worker diagnostics.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_l2_worker_stats(
+    handle: *const PvTcgL2Handle,
+    errors: *mut u64,
+    queue_drops: *mut u64,
+) -> i32 {
+    if handle.is_null() || errors.is_null() || queue_drops.is_null() {
+        return -1;
+    }
+    let handle = unsafe { &*handle };
+    unsafe {
+        *errors = handle.worker_errors.load(Ordering::Relaxed);
+        *queue_drops = handle.queue_drops.load(Ordering::Relaxed);
+    }
+    0
+}
+
+/// Validate a block, publish it to resident L1 and enqueue L2 persistence.
+/// Returns 0 when queued, 1 when the bounded queue is full (the L1 entry is
+/// retained but no persistent write was accepted), and -1 on invalid input.
 #[no_mangle]
 pub unsafe extern "C" fn phoenixvm_tcg_l2_store_block(
     handle: *mut PvTcgL2Handle,
@@ -666,20 +753,26 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_store_block(
     let result = catch_unwind(AssertUnwindSafe(|| {
         let handle = unsafe { &*handle };
         let block = unsafe { &*block };
-        handle
-            .store
-            .store(&handle.vm_id, block.block.as_ref())
-            .map_err(|_| ())?;
+        // Encode once here to validate the complete IR before publishing it.
+        block.block.encode().map_err(|_| ())?;
         handle
             .resident
             .write()
             .map_err(|_| ())?
-            .insert_arc(Arc::clone(&block.block), &handle.resident_clock)
+            .insert_arc(Arc::clone(&block.block), &handle.resident_clock)?;
+        let sender = handle.worker_tx.as_ref().ok_or(())?;
+        match sender.try_send(PersistCommand::Store(Arc::clone(&block.block))) {
+            Ok(()) => Ok::<_, ()>(0),
+            Err(TrySendError::Full(_)) => {
+                handle.queue_drops.fetch_add(1, Ordering::Relaxed);
+                Ok(1)
+            }
+            Err(TrySendError::Disconnected(_)) => Err(()),
+        }
     }));
-    if matches!(result, Ok(Ok(()))) {
-        0
-    } else {
-        -1
+    match result {
+        Ok(Ok(status)) => status,
+        _ => -1,
     }
 }
 
