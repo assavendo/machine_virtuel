@@ -78,4 +78,23 @@ class VmCpuThreadSchedulerTest {
         assertTrue(plan.all { it.priority == null })
     }
 
+
+    @Test
+    fun moreConfiguredVcpuThreadsThanSchedulerSlotsRemainCpuContained() {
+        val plan = VmCpuThreadScheduler.plan(
+            processThreadIds = listOf(700L, 701L, 702L, 703L, 704L),
+            vcpuThreadIds = listOf(701L, 702L, 703L, 704L),
+            ioThreadIds = emptyList(),
+            decision = decision(),
+        )
+
+        val vcpuPlacements = plan.filter { it.threadId in 701L..704L }
+        assertEquals(4, vcpuPlacements.size)
+        assertEquals(listOf(4), vcpuPlacements[0].cpuIds)
+        assertEquals(listOf(6), vcpuPlacements[1].cpuIds)
+        assertEquals(listOf(4), vcpuPlacements[2].cpuIds)
+        assertEquals(listOf(6), vcpuPlacements[3].cpuIds)
+        assertTrue(vcpuPlacements.all { it.priority == 2 })
+    }
+
 }
