@@ -494,9 +494,15 @@ class VmRuntimeService : Service() {
                 if (handle.qmp != null && now - lastTelemetryRefreshMs >= 5_000L) {
                     cachedVcpuThreadIds = QmpController.queryVcpuThreadIds(handle.qmp)
                     cachedIoThreadIds = QmpController.queryIoThreadIds(handle.qmp)
-                    cachedTranslationAggregate = TranslationCacheManager(this).aggregate(id)
+                    cachedTranslationAggregate = TranslationCacheManager.get(this).aggregate(id)
                     lastTelemetryRefreshMs = now
                 }
+                val qemuTcgStats = if (handle.backend == BackendKind.QEMU_TCG &&
+                    handle.qmp != null && now - lastTcgStatsSampleMs >= 5_000L
+                ) {
+                    lastTcgStatsSampleMs = now
+                    QmpController.queryTcgStats(handle.qmp).also { cachedQemuTcgStats = it }
+                } else cachedQemuTcgStats
 
                 val vCpuUtilization = vcpuSampler.sample(cachedVcpuThreadIds)
                 val audioUnderruns = audioMonitor?.sample()
@@ -525,6 +531,7 @@ class VmRuntimeService : Service() {
                     audioUnderruns = audioUnderruns,
                     audioLatencyConfiguredMs = vm.audioBufferMs.toDouble().takeIf { vm.audioEnabled },
                     guestCpuMetrics = cachedGuestCpuMetrics,
+                    qemuTcgStats = cachedQemuTcgStats,
                 )
                 val host = cachedHost ?: error("Host capability cache unavailable.")
                 val topology = cachedTopology ?: error("CPU topology cache unavailable.")
