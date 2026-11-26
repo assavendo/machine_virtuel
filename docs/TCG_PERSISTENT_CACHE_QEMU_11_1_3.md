@@ -43,6 +43,39 @@ Références à revalider lors de toute mise à niveau QEMU :
 - [TCG Plugins](https://qemu.readthedocs.io/en/stable-11.1/about/emulation.html)
 - Sources de la cible : `accel/tcg/translate-all.c`, `include/exec/translation-block.h`, `tcg/tcg.c` dans le tag amont `v11.1.3`.
 
+## Audit source détaillé du point d’intégration TCG (tag amont v11.1.3)
+
+L’inspection du code exact du tag `v11.1.3` confirme le chemin d’exécution suivant :
+
+1. `accel/tcg/translate-all.c:tb_gen_code()` alloue le `TranslationBlock`, établit son contexte (`pc`, `cs_base`, `flags`, `cflags`), résout la première page physique du code et prend les verrous de page nécessaires.
+2. `setjmp_gen_code()` appelle ensuite `tcg_func_start()`, installe le CPU courant dans le contexte TCG et appelle le traducteur de l’architecture via `translate_code()`.
+3. Le même chemin appelle finalement `tcg_gen_code()`, qui optimise les opérations TCG, réalise les passes de reachability/liveness, alloue les registres et émet le code hôte.
+4. Après génération, `tb_gen_code()` encode les informations de restauration d’état, initialise les sauts, insère le TB dans les structures de recherche et le publie via le mécanisme normal de liaison aux pages.
+
+Les emplacements ont été vérifiés dans les fichiers du tag QEMU 11.1.3 :
+- [`accel/tcg/translate-all.c`](https://github.com/qemu/qemu/blob/v11.1.3/accel/tcg/translate-all.c) — `setjmp_gen_code()` et `tb_gen_code()`.
+- [`tcg/tcg.c`](https://github.com/qemu/qemu/blob/v11.1.3/tcg/tcg.c) — `tcg_func_start()`, allocation des TCGOp, construction des appels helpers et `tcg_gen_code()`.
+- [`include/tcg/tcg.h`](https://github.com/qemu/qemu/blob/v11.1.3/include/tcg/tcg.h) — structures `TCGLabel`, `TCGTemp`, `TCGOp`, `TCGContext` et définitions d’opérations.
+- [`tcg/tcg-op.c`](https://github.com/qemu/qemu/blob/v11.1.3/tcg/tcg-op.c) — émission des terminators `exit_tb` et `goto_tb`.
+
+### Conséquences vérifiées pour le format persistant
+
+- `tcg_func_start()` réinitialise les pools temporaires, remet `nb_temps` à `nb_globals`, vide les tables de constantes et réinitialise les listes d’opérations et de labels. Une restauration doit donc reconstruire son état **après** cette remise à zéro et **avant** les passes de `tcg_gen_code()`.
+- `TCGOp` n’est pas un enregistrement sérialisable tel quel : il contient une entrée de liste intrusive, des champs de vie/registre propres aux passes et un tableau flexible d’arguments `TCGArg`. Il faut encoder les opérations et leurs références logiques, pas recopier les octets de la structure.
+- `TCGTemp` contient des valeurs et pointeurs d’exécution, notamment `mem_base`, `name` et `state_ptr`. Les pointeurs, l’état d’allocation et l’état des passes ne doivent jamais être importés d’un ancien processus. Les temporaires doivent être recréés et leurs identifiants remappés.
+- `tcg_gen_callN()` place explicitement l’adresse de la fonction helper et celle de son `TCGHelperInfo` dans les arguments de l’opération. Ces adresses ne sont pas persistantes. Le format doit référencer un helper par identifiant symbolique stable, le résoudre dans le processus courant, et rejeter tout helper non reconnu.
+- `tcg_gen_exit_tb()` encode une adresse liée au `TranslationBlock` courant dans l’opération `exit_tb`. Cette terminaison doit être régénérée à l’aide de l’API TCG pour le TB nouvellement alloué ; la valeur ou le pointeur du cache ne doit pas être réutilisé.
+- Les labels et leurs listes de branches/relocations référencent des objets TCG de l’exécution courante. Leur graphe doit être recréé avec une table de correspondance locale.
+- Les champs `tc.ptr`, les offsets de sauts, les liens directs, les pages verrouillées, les index de recherche et l’insertion dans les arbres/QHT appartiennent au cycle de vie normal du TB. Ils doivent être reconstruits par QEMU, jamais importés comme un `TranslationBlock` brut.
+
+### Contrat du premier patch TCG
+
+Le premier patch devra donc intercepter le chemin dans `setjmp_gen_code()`, à l’intérieur du cycle normal de création du TB. Après `tcg_func_start()`, il devra tenter de reconstruire un graphe TCG versionné ; en cas de miss, d’opcode ou de helper non pris en charge, d’incompatibilité ou de corruption, il devra exécuter le `translate_code()` amont sans changement. Dans les deux cas, l’émission du code hôte restera effectuée par le `tcg_gen_code()` normal, puis QEMU continuera son initialisation et sa publication habituelles du TB.
+
+La sérialisation doit inclure les compteurs et métadonnées de traduction nécessaires, dont `tb->size`, `tb->icount` et les informations d’instruction utilisées pour `restore_state_to_opc()`. Les terminaisons TB, les labels, les helpers et les temporaires seront reconstruits à partir d’identifiants de fil stables. Les fichiers L2 seront préchargés ou lus par un worker vers un index mémoire borné ; une lecture disque, un `fsync` ou un verrou long ne sera jamais effectué par le thread vCPU. Les écritures seront envoyées à un worker et ne devront jamais ralentir le chemin critique.
+
+Cette inspection **ne constitue pas une implémentation du sérialiseur**. Elle précise le contrat nécessaire pour qu’un patch réel soit sûr et évite explicitement trois fausses solutions : sérialiser les structures C brutes, restaurer du code machine hôte depuis un autre processus, ou réutiliser les pointeurs de helpers/TB de l’ancien processus.
+
 ## Architecture requise pour une vraie persistance L2
 
 ### 1. Format de cache versionné et non exécutable
