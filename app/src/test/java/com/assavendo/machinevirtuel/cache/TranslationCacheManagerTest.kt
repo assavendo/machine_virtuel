@@ -163,7 +163,7 @@ class TranslationCacheManagerTest {
             assertEquals("small manifest", cache.getManifest(metadataKey))
             assertEquals(1L, cache.stats().l2Hits)
             assertContentEquals(artifact, cache.getArtifact(artifactKey))
-            assertEquals(1L, cache.stats().l0Hits)
+            assertEquals(2L, cache.stats().l2Hits)
         } finally {
             root.deleteRecursively()
         }
