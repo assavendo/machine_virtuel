@@ -143,7 +143,7 @@ class HostMetricsCollector(
         val processWriteRate = if (processIo != null && lastProcessIo != null) {
             rate(processIo.writeBytes, lastProcessIo!!.writeBytes, elapsedForProcessIo)
         } else null
-        if (processIo != null) lastProcessIo = processIo
+        lastProcessIo = processIo
         lastProcessIoWallNs = nowNs
 
         val cpuMetrics = readSystemCpuMetrics()
