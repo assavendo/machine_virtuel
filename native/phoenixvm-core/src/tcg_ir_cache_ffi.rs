@@ -273,3 +273,130 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_invalidate_vm(handle: *mut PvTcgL2Hand
         -1
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tcg_ir_cache::{TcgIrOperation, TcgOperand};
+    use std::ffi::CString;
+
+    fn compatibility() -> PvTcgCompatibility {
+        static QEMU: &[u8] = b"qemu-11.1.3-phoenixvm-pcache-abi1\0";
+        static GUEST_ARCH: &[u8] = b"x86_64\0";
+        static CPU: &[u8] = b"qemu64\0";
+        static GUEST_BUILD: &[u8] = b"guest-test-build\0";
+        static HOST_ARCH: &[u8] = b"aarch64\0";
+        static HOST_ABI: &[u8] = b"android-bionic-api35\0";
+        static PAGE: [u64; 1] = [0x8000];
+        static CODE_HASH: [u8; 32] = [0x11; 32];
+        static CONTEXT_HASH: [u8; 32] = [0x22; 32];
+
+        PvTcgCompatibility {
+            qemu_build_id: QEMU.as_ptr().cast(),
+            guest_arch: GUEST_ARCH.as_ptr().cast(),
+            guest_cpu_model: CPU.as_ptr().cast(),
+            guest_build_id: GUEST_BUILD.as_ptr().cast(),
+            host_arch: HOST_ARCH.as_ptr().cast(),
+            host_abi: HOST_ABI.as_ptr().cast(),
+            host_endian: 0,
+            host_page_size: 4096,
+            host_cpu_features: ptr::null(),
+            host_cpu_features_len: 0,
+            guest_pc: 0x1000,
+            guest_cs_base: 0,
+            tb_flags: 0,
+            tb_cflags: 0,
+            mmu_index: 0,
+            physical_pages: PAGE.as_ptr(),
+            physical_pages_len: PAGE.len(),
+            guest_code_sha256: CODE_HASH.as_ptr(),
+            tb_context_sha256: CONTEXT_HASH.as_ptr(),
+        }
+    }
+
+    fn block() -> TcgIrBlock {
+        TcgIrBlock {
+            compatibility: unsafe { copy_compatibility(&compatibility()).unwrap() },
+            guest_size: 4,
+            instruction_count: 1,
+            temporaries: Vec::new(),
+            labels: Vec::new(),
+            operations: vec![TcgIrOperation {
+                opcode: "insn_start".into(),
+                param1: 0,
+                param2: 0,
+                operands: vec![
+                    TcgOperand::Immediate(0x1000),
+                    TcgOperand::Immediate(0),
+                    TcgOperand::Immediate(0),
+                ],
+            }],
+        }
+    }
+
+    #[test]
+    fn c_abi_round_trips_vm_scoped_v3_records_and_invalidation() {
+        let root = std::env::temp_dir().join(format!(
+            "phoenixvm-tcg-ffi-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let root_c = CString::new(root.to_string_lossy().as_bytes()).unwrap();
+        let vm = CString::new("ffi-vm-one").unwrap();
+
+        // SAFETY: C strings remain alive through open; the returned handle is
+        // used only by this test and closed exactly once.
+        let handle = unsafe {
+            phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024)
+        };
+        assert!(!handle.is_null());
+
+        let block = block();
+        let encoded = block.encode().unwrap();
+        // SAFETY: encoded remains alive for the duration of this call.
+        assert_eq!(
+            unsafe { phoenixvm_tcg_l2_store(handle, encoded.as_ptr(), encoded.len()) },
+            0
+        );
+
+        let key = compatibility();
+        let mut record = ptr::null_mut();
+        let mut record_len = 0;
+        // SAFETY: key points to static data, and out parameters are valid.
+        assert_eq!(
+            unsafe {
+                phoenixvm_tcg_l2_load(handle, &key, &mut record, &mut record_len)
+            },
+            1
+        );
+        assert!(!record.is_null());
+        // SAFETY: the load function returned this valid buffer and its length.
+        let loaded = unsafe { slice::from_raw_parts(record, record_len) };
+        assert_eq!(TcgIrBlock::decode(loaded).unwrap(), block);
+        // SAFETY: free the exact allocation returned by load, exactly once.
+        unsafe { phoenixvm_tcg_l2_free_buffer(record, record_len) };
+
+        let mut changed = compatibility();
+        let mut changed_hash = [0x11_u8; 32];
+        changed_hash[0] ^= 0x80;
+        changed.guest_code_sha256 = changed_hash.as_ptr();
+        record = ptr::null_mut();
+        record_len = 0;
+        // SAFETY: changed_hash remains alive through the lookup.
+        assert_eq!(
+            unsafe {
+                phoenixvm_tcg_l2_load(handle, &changed, &mut record, &mut record_len)
+            },
+            0
+        );
+
+        // SAFETY: the key and handle remain valid.
+        assert_eq!(
+            unsafe { phoenixvm_tcg_l2_invalidate(handle, &key) },
+            0
+        );
+        // SAFETY: close the only handle created by this test.
+        unsafe { phoenixvm_tcg_l2_close(handle) };
+        fs::remove_dir_all(root).unwrap();
+    }
+}
