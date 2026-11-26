@@ -115,6 +115,61 @@ class TranslationCacheManagerTest {
     }
 
     @Test
+    fun l0AndL1EntryBudgetsAreSharedBetweenMetadataAndArtifacts() {
+        val root = tempRoot()
+        try {
+            val cache = TranslationCacheManager.forTesting(
+                root,
+                policy(l0Entries = 1, l1Entries = 1),
+            )
+            val metadataKey = key(cache, "vm-shared-entry-budget", code = byteArrayOf(1))
+            val artifactKey = key(cache, "vm-shared-entry-budget", code = byteArrayOf(2))
+
+            cache.putManifest(metadataKey, "portable manifest")
+            cache.putArtifact(artifactKey, ByteArray(32) { it.toByte() }, relocationSafe = true)
+
+            // One resident entry per tier means the newer artifact evicts the manifest
+            // from both tiers; separate per-map limits would incorrectly retain both.
+            assertEquals("portable manifest", cache.getManifest(metadataKey))
+            assertEquals(1L, cache.stats().l2Hits)
+
+            assertContentEquals(
+                ByteArray(32) { it.toByte() },
+                cache.getArtifact(artifactKey),
+            )
+            assertEquals(2L, cache.stats().l2Hits)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun l0AndL1ByteBudgetsAreSharedBetweenMetadataAndArtifacts() {
+        val root = tempRoot()
+        try {
+            val cache = TranslationCacheManager.forTesting(
+                root,
+                policy(l0Entries = 8, l1Entries = 8, l0Bytes = 4096, l1Bytes = 4096),
+            )
+            val metadataKey = key(cache, "vm-shared-byte-budget", code = byteArrayOf(3))
+            val artifactKey = key(cache, "vm-shared-byte-budget", code = byteArrayOf(4))
+            val artifact = ByteArray(3800) { (it % 251).toByte() }
+
+            cache.putManifest(metadataKey, "small manifest")
+            cache.putArtifact(artifactKey, artifact, relocationSafe = true)
+
+            // Both entries fit individually, but their combined resident size exceeds
+            // the 4 KiB tier limit and the LRU manifest must be fetched from L2.
+            assertEquals("small manifest", cache.getManifest(metadataKey))
+            assertEquals(1L, cache.stats().l2Hits)
+            assertContentEquals(artifact, cache.getArtifact(artifactKey))
+            assertEquals(1L, cache.stats().l0Hits)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun globalL3SharesOnlyCompatibleArtifactsAcrossDifferentVmIds() {
         val root = tempRoot()
         try {
