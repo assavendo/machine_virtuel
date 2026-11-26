@@ -95,7 +95,7 @@ class TranslationCacheManagerTest {
             val second = key(cache, "vm-a", code = byteArrayOf(2))
             val payload = byteArrayOf(11, 12, 13)
 
-            cache.putArtifact(first, payload)
+            cache.putArtifact(first, payload, relocationSafe = true)
             val l0 = requireNotNull(cache.getArtifact(first))
             assertContentEquals(payload, l0)
             l0[0] = 99
@@ -205,6 +205,25 @@ class TranslationCacheManagerTest {
     }
 
     @Test
+    fun persistentArtifactWriteRequiresExplicitRelocationSafetyDeclaration() {
+        val root = tempRoot()
+        try {
+            val cache = TranslationCacheManager.forTesting(root)
+            val key = key(cache, "vm-unrelocatable")
+            assertFailsWith<IllegalArgumentException> {
+                cache.putArtifact(
+                    key,
+                    byteArrayOf(1, 2, 3),
+                    relocationSafe = false,
+                )
+            }
+            assertFalse(cache.has(key))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun corruptedArtifactIsRejectedByItsHeaderAndPayloadDigest() {
         val root = tempRoot()
         try {
@@ -276,7 +295,7 @@ class TranslationCacheManagerTest {
             val key = key(cache, "vm-large-artifact")
             val payload = ByteArray(16) { it.toByte() }
 
-            cache.putArtifact(key, payload)
+            cache.putArtifact(key, payload, relocationSafe = true)
             assertContentEquals(payload, cache.getArtifact(key))
             assertEquals(1L, cache.stats().l2Hits)
             assertEquals(0L, cache.stats().l0Hits)
