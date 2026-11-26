@@ -46,4 +46,24 @@ class MetricsHistoryTest {
         assertEquals(12.0, sample.cpuHostPercent)
         assertEquals(40.0, sample.temperatureC)
     }
+
+    @Test
+    fun unavailableBackendProcessCpuAndRssRemainUnknownInsteadOfZero() {
+        val history = MetricsHistory()
+        history.add(
+            VmMetricsSample(
+                timestampMs = System.currentTimeMillis(),
+                cpuHostPercent = null,
+                ramHostMb = null,
+            )
+        )
+
+        val sample = history.all().single()
+        val window = history.windows().first()
+        assertNull(sample.cpuHostPercent)
+        assertNull(sample.ramHostMb)
+        assertNull(window.cpuHostAvg)
+        assertNull(window.ramHostAvgMb)
+    }
+
 }

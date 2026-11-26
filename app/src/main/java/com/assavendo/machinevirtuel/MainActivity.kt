@@ -417,6 +417,13 @@ class MainActivity : Activity() {
         val androidAdb = checkBox("Activer ADB réseau (Android invité uniquement)", base.androidAdbEnabled)
         addLabel("Port hôte ADB")
         val adbPort = edit(base.androidAdbHostPort.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
+        val guestAgent = checkBox(
+            "Activer QEMU Guest Agent (Linux invité uniquement)",
+            base.guestAgentEnabled,
+        )
+        content.addView(subtitle(
+            "Permet de relever CPU, attente I/O et interruptions depuis Linux. Le paquet qemu-guest-agent doit être installé et démarré dans l'invité (par exemple : sudo apt install qemu-guest-agent && sudo systemctl enable --now qemu-guest-agent)."
+        ))
 
         section("C — Ressources de la machine")
         addLabel("RAM (MiB)")
@@ -508,6 +515,9 @@ class MainActivity : Activity() {
             androidAdb.isEnabled = isAndroid
             if (!isAndroid) androidAdb.isChecked = false
             adbPort.isEnabled = isAndroid && androidAdb.isChecked
+            val isLinux = GuestOsChoice.entries[osSpinner.selectedItemPosition] == GuestOsChoice.LINUX
+            guestAgent.isEnabled = isLinux
+            if (!isLinux) guestAgent.isChecked = false
         }
         osSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {
@@ -554,6 +564,7 @@ class MainActivity : Activity() {
                 autoSnapshotOnInstall = autoSnapshot.isChecked,
                 androidAdbEnabled = selectedOs == GuestOsChoice.ANDROID && androidAdb.isChecked,
                 androidAdbHostPort = adbPort.text.toString().toIntOrNull() ?: -1,
+                guestAgentEnabled = selectedOs == GuestOsChoice.LINUX && guestAgent.isChecked,
                 androidSystemPath = if (selectedOs == GuestOsChoice.ANDROID) base.androidSystemPath else "",
                 androidVendorPath = if (selectedOs == GuestOsChoice.ANDROID) base.androidVendorPath else "",
                 androidUserdataPath = if (selectedOs == GuestOsChoice.ANDROID) base.androidUserdataPath else "",
@@ -996,11 +1007,32 @@ class MainActivity : Activity() {
             append("VM : ").append(vm.name).append("\n")
             append("FPS : ").append(value(latest?.fps)).append("\n")
             append("CPU host : ").append(value(latest?.cpuHostPercent, " %")).append("\n")
-            append("CPU guest : ").append(value(latest?.cpuGuestPercent, " %")).append("\n")
-            append("vCPU host-thread : ").append(value(latest?.vCpuUtilization, " %")).append("\n")
+            append("CPU guest (moyenne des cœurs) : ")
+                .append(value(latest?.cpuGuestPercent, " %"))
+                .append(latest?.guestCpuCoreCount?.let { " — $it cœur(s)" } ?: "")
+                .append("\n")
+            append("Attente I/O guest : ").append(value(latest?.guestCpuIoWaitPercent, " %")).append("\n")
+            append("Interruptions guest : ").append(value(latest?.guestCpuInterruptPercent, " %")).append("\n")
+            append("Temps CPU guest (échantillon) : ")
+                .append(
+                    if (latest?.guestCpuTimeDeltaMs != null && latest.guestCpuIntervalMs != null) {
+                        latest.guestCpuTimeDeltaMs.toString() + " ms sur " + latest.guestCpuIntervalMs + " ms"
+                    } else "indisponible"
+                )
+                .append("\n")
+            append("Attente I/O hôte : ").append(value(latest?.systemCpuIoWaitPercent, " %")).append("\n")
+            append("vCPU demandés / runtime : ")
+                .append(vm.vCpu)
+                .append(" / ")
+                .append(latest?.vCpuCountRuntime?.toString() ?: "indisponible")
+                .append("\n")
+            append("Utilisation threads vCPU : ").append(value(latest?.vCpuUtilization, " %")).append("\n")
             append("Température : ").append(latest?.temperatureC?.let { "%.1f °C".format(it) } ?: "indisponible").append("\n")
-            append("I/O lecture : ").append(latest?.ioReadBytesPerSec?.let(::formatRate) ?: "indisponible").append("\n")
-            append("I/O écriture : ").append(latest?.ioWriteBytesPerSec?.let(::formatRate) ?: "indisponible").append("\n")
+            append("I/O disque système — lecture : ").append(latest?.ioReadBytesPerSec?.let(::formatRate) ?: "indisponible").append("\n")
+            append("I/O disque système — écriture : ").append(latest?.ioWriteBytesPerSec?.let(::formatRate) ?: "indisponible").append("\n")
+            append("I/O backend VM — lecture : ").append(latest?.processIoReadBytesPerSec?.let(::formatRate) ?: "indisponible").append("\n")
+            append("I/O backend VM — écriture : ").append(latest?.processIoWriteBytesPerSec?.let(::formatRate) ?: "indisponible").append("\n")
+            append("Intervalle de mesure : ").append(latest?.sampleIntervalMs?.let { "$it ms" } ?: "indisponible").append("\n")
             append("Réseau RX : ").append(latest?.networkRxBytesPerSec?.let(::formatRate) ?: "indisponible").append("\n")
             append("Réseau TX : ").append(latest?.networkTxBytesPerSec?.let(::formatRate) ?: "indisponible").append("\n")
             append("Cache traduction : ").append(latest?.cacheHitRate?.let { "%.1f".format(it * 100.0) + " %" } ?: "indisponible").append("\n")
@@ -1020,6 +1052,12 @@ class MainActivity : Activity() {
                 append("échantillons=").append(window.samples)
                 append(", FPS=").append(value(window.fpsAvg))
                 append(", CPU host=").append(value(window.cpuHostAvg, " %"))
+                append(", CPU guest=").append(value(window.cpuGuestAvg, " %"))
+                append(", attente I/O guest=").append(value(window.guestCpuIoWaitAvgPercent, " %"))
+                append(", IRQ guest=").append(value(window.guestCpuInterruptAvgPercent, " %"))
+                append(", attente I/O hôte=").append(value(window.systemCpuIoWaitPercentAvg, " %"))
+                append(", I/O backend lecture=").append(window.processIoReadBytesPerSecAvg?.let { formatRate(it.toLong()) } ?: "indisponible")
+                append(", I/O backend écriture=").append(window.processIoWriteBytesPerSecAvg?.let { formatRate(it.toLong()) } ?: "indisponible")
                 append(", vCPU=").append(value(window.vCpuUtilizationAvg, " %"))
                 append(", cache=").append(
                     window.cacheHitRateAvg?.let { "%.1f".format(it * 100.0) + " %" } ?: "indisponible"

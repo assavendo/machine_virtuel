@@ -1,0 +1,100 @@
+package com.assavendo.machinevirtuel.performance
+
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+class VmCpuThreadSchedulerTest {
+    private fun decision() = VmScheduleDecision(
+        vmId = "vm-cpu",
+        recommendedVcpus = 2,
+        cpuClass = PerformanceClass.PERFORMANCE,
+        priority = 90,
+        reason = "test",
+        assignedCpuIds = listOf(4, 6),
+        threadPriority = 2,
+    )
+
+    @Test
+    fun planPinsOnlyQmpIdentifiedVcpusAndLowersIoThreadPriority() {
+        val plan = VmCpuThreadScheduler.plan(
+            processThreadIds = listOf(100L, 101L, 102L, 103L),
+            vcpuThreadIds = listOf(101L, 999L),
+            ioThreadIds = listOf(102L, 103L, 101L),
+            decision = decision(),
+        )
+
+        assertEquals(
+            listOf(
+                CpuThreadPlacement(100L, listOf(4, 6), null),
+                CpuThreadPlacement(101L, listOf(4), 2),
+                CpuThreadPlacement(102L, listOf(4, 6), 5),
+                CpuThreadPlacement(103L, listOf(4, 6), 5),
+            ),
+            plan,
+        )
+    }
+
+    @Test
+    fun planDeduplicatesThreadsAndRejectsThreadsOutsideBackendProcess() {
+        val plan = VmCpuThreadScheduler.plan(
+            processThreadIds = listOf(100L, 100L, 101L),
+            vcpuThreadIds = listOf(101L, 101L, 500L),
+            ioThreadIds = listOf(101L, 500L, 500L),
+            decision = decision(),
+        )
+
+        assertEquals(2, plan.size)
+        assertEquals(1, plan.count { it.threadId == 100L })
+        assertEquals(1, plan.count { it.threadId == 101L })
+        assertEquals(listOf(4), plan.single { it.threadId == 101L }.cpuIds)
+    }
+
+    @Test
+    fun emptyCpuAssignmentDoesNotCreateAffinityOperations() {
+        val empty = decision().copy(assignedCpuIds = emptyList())
+        assertEquals(
+            emptyList(),
+            VmCpuThreadScheduler.plan(
+                processThreadIds = listOf(100L, 101L),
+                vcpuThreadIds = listOf(101L),
+                ioThreadIds = emptyList(),
+                decision = empty,
+            ),
+        )
+    }
+
+    @Test
+    fun allBackendThreadsStayInsideAssignedCpuSetWhenQmpExposesNoThreadIds() {
+        val plan = VmCpuThreadScheduler.plan(
+            processThreadIds = listOf(700L, 701L, 702L),
+            vcpuThreadIds = emptyList(),
+            ioThreadIds = emptyList(),
+            decision = decision(),
+        )
+
+        assertEquals(3, plan.size)
+        assertEquals(setOf(4, 6), plan.flatMap { it.cpuIds }.toSet())
+        assertTrue(plan.all { it.priority == null })
+    }
+
+
+    @Test
+    fun moreConfiguredVcpuThreadsThanSchedulerSlotsRemainCpuContained() {
+        val plan = VmCpuThreadScheduler.plan(
+            processThreadIds = listOf(700L, 701L, 702L, 703L, 704L),
+            vcpuThreadIds = listOf(701L, 702L, 703L, 704L),
+            ioThreadIds = emptyList(),
+            decision = decision(),
+        )
+
+        val vcpuPlacements = plan.filter { it.threadId in 701L..704L }
+        assertEquals(4, vcpuPlacements.size)
+        assertEquals(listOf(4), vcpuPlacements[0].cpuIds)
+        assertEquals(listOf(6), vcpuPlacements[1].cpuIds)
+        assertEquals(listOf(4), vcpuPlacements[2].cpuIds)
+        assertEquals(listOf(6), vcpuPlacements[3].cpuIds)
+        assertTrue(vcpuPlacements.all { it.priority == 2 })
+    }
+
+}

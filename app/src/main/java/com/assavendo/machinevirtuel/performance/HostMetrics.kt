@@ -12,9 +12,9 @@ import kotlin.math.max
 
 data class HostMetrics(
     val timestampMs: Long,
-    val processCpuPercent: Double,
+    val processCpuPercent: Double?,
     val systemCpuPercent: Double,
-    val processRssMb: Long,
+    val processRssMb: Long?,
     val availableMemoryMb: Long,
     val totalMemoryMb: Long = 0,
     val thermalStatus: Int,
@@ -26,36 +26,87 @@ data class HostMetrics(
     val ioWriteBytesPerSec: Long = 0,
     val networkRxBytesPerSec: Long = 0,
     val networkTxBytesPerSec: Long = 0,
+    /** Backend-process block I/O; null means /proc did not expose trustworthy counters. */
+    val processIoReadBytesPerSec: Long? = null,
+    val processIoWriteBytesPerSec: Long? = null,
+    /** System CPU iowait time as a percent of elapsed CPU ticks. */
+    val systemCpuIoWaitPercent: Double? = null,
+    /** Actual elapsed interval represented by the current sample. */
+    val sampleIntervalMs: Long? = null,
 )
+
+internal data class SystemCpuTimes(
+    val totalTicks: Long,
+    val idleTicks: Long,
+    val ioWaitTicks: Long,
+)
+
+internal data class ProcessIoCounters(
+    val readBytes: Long,
+    val writeBytes: Long,
+)
+
+/** Pure parsers are shared with JVM tests so /proc edge cases stay deterministic. */
+internal object ProcMetricsParser {
+    fun systemCpuTimes(line: String): SystemCpuTimes? {
+        if (!line.startsWith("cpu ")) return null
+        val values = line.trim().split(Regex("\\s+")).drop(1).map { it.toLongOrNull() ?: return null }
+        if (values.size < 5) return null
+        // Linux guest/guest_nice ticks are already included in user/nice; exclude them
+        // to avoid double counting. The first eight fields represent total scheduler time.
+        val total = values.take(8).sum()
+        val idle = values[3]
+        val ioWait = values[4]
+        if (total <= 0L || idle < 0L || ioWait < 0L) return null
+        return SystemCpuTimes(total, idle, ioWait)
+    }
+
+    fun processIo(content: String): ProcessIoCounters? {
+        var readBytes: Long? = null
+        var writeBytes: Long? = null
+        content.lineSequence().forEach { line ->
+            val key = line.substringBefore(':', "").trim()
+            val value = line.substringAfter(':', "").trim().toLongOrNull() ?: return@forEach
+            when (key) {
+                "read_bytes" -> readBytes = value
+                "write_bytes" -> writeBytes = value
+            }
+        }
+        val read = readBytes ?: return null
+        val written = writeBytes ?: return null
+        if (read < 0L || written < 0L) return null
+        return ProcessIoCounters(read, written)
+    }
+}
 
 class HostMetricsCollector(
     private val context: Context,
     private val targetPid: Long? = android.os.Process.myPid().toLong(),
 ) {
-    private data class CpuTimes(val total: Long, val idle: Long)
-
     private val clockTicksPerSecond = runCatching {
         Os.sysconf(OsConstants._SC_CLK_TCK).takeIf { it > 0L } ?: 100L
     }.getOrDefault(100L)
     private var lastProcessCpuNs: Long? = null
     private var lastWallNs = 0L
-    private var lastSystemCpu: CpuTimes? = null
+    private var lastSystemCpu: SystemCpuTimes? = null
     private var lastIo = readIoBytes()
     private var lastNetwork = readNetworkBytes()
-    private var lastIoWallNs = 0L
+    private var lastSystemIoWallNs = 0L
+    private var lastProcessIo = readProcessIoBytes()
+    private var lastProcessIoWallNs = SystemClock.elapsedRealtimeNanos()
 
     fun sample(): HostMetrics {
         val nowNs = SystemClock.elapsedRealtimeNanos()
+        val sampleDeltaNs = if (lastWallNs > 0L) nowNs - lastWallNs else 0L
         val processCpuNs = readProcessCpuTimeNs()
-        val wallDelta = nowNs - lastWallNs
         val previousProcessCpu = lastProcessCpuNs
         val cpuCount = max(1, Runtime.getRuntime().availableProcessors())
         val processPercent = if (processCpuNs != null && previousProcessCpu != null &&
-            wallDelta > 0L && processCpuNs >= previousProcessCpu
+            sampleDeltaNs > 0L && processCpuNs >= previousProcessCpu
         ) {
-            ((processCpuNs - previousProcessCpu).toDouble() / wallDelta.toDouble() /
+            ((processCpuNs - previousProcessCpu).toDouble() / sampleDeltaNs.toDouble() /
                 cpuCount.toDouble()) * 100.0
-        } else 0.0
+        } else null
         if (processCpuNs != null) lastProcessCpuNs = processCpuNs
         lastWallNs = nowNs
 
@@ -73,29 +124,34 @@ class HostMetricsCollector(
 
         val io = readIoBytes()
         val net = readNetworkBytes()
-        val elapsedForRates = if (lastIoWallNs > 0L) {
-            (nowNs - lastIoWallNs) / 1_000_000_000.0
+        val elapsedForSystemRates = if (lastSystemIoWallNs > 0L) {
+            (nowNs - lastSystemIoWallNs) / 1_000_000_000.0
         } else 0.0
-        val ioReadRate = if (elapsedForRates > 0.0) {
-            ((io.first - lastIo.first) / elapsedForRates).coerceAtLeast(0.0).toLong()
-        } else 0L
-        val ioWriteRate = if (elapsedForRates > 0.0) {
-            ((io.second - lastIo.second) / elapsedForRates).coerceAtLeast(0.0).toLong()
-        } else 0L
-        val rxRate = if (elapsedForRates > 0.0) {
-            ((net.first - lastNetwork.first) / elapsedForRates).coerceAtLeast(0.0).toLong()
-        } else 0L
-        val txRate = if (elapsedForRates > 0.0) {
-            ((net.second - lastNetwork.second) / elapsedForRates).coerceAtLeast(0.0).toLong()
-        } else 0L
+        val ioReadRate = rate(io.first, lastIo.first, elapsedForSystemRates)
+        val ioWriteRate = rate(io.second, lastIo.second, elapsedForSystemRates)
+        val rxRate = rate(net.first, lastNetwork.first, elapsedForSystemRates)
+        val txRate = rate(net.second, lastNetwork.second, elapsedForSystemRates)
         lastIo = io
         lastNetwork = net
-        lastIoWallNs = nowNs
+        lastSystemIoWallNs = nowNs
+
+        val processIo = readProcessIoBytes()
+        val elapsedForProcessIo = (nowNs - lastProcessIoWallNs) / 1_000_000_000.0
+        val processReadRate = if (processIo != null && lastProcessIo != null) {
+            rate(processIo.readBytes, lastProcessIo!!.readBytes, elapsedForProcessIo)
+        } else null
+        val processWriteRate = if (processIo != null && lastProcessIo != null) {
+            rate(processIo.writeBytes, lastProcessIo!!.writeBytes, elapsedForProcessIo)
+        } else null
+        lastProcessIo = processIo
+        lastProcessIoWallNs = nowNs
+
+        val cpuMetrics = readSystemCpuMetrics()
 
         return HostMetrics(
             timestampMs = System.currentTimeMillis(),
-            processCpuPercent = processPercent.coerceIn(0.0, 100.0),
-            systemCpuPercent = readSystemCpuPercent(),
+            processCpuPercent = processPercent?.coerceIn(0.0, 100.0),
+            systemCpuPercent = cpuMetrics.first,
             processRssMb = readProcessRssMb(),
             availableMemoryMb = memory.availMem / (1024L * 1024L),
             totalMemoryMb = memory.totalMem / (1024L * 1024L),
@@ -108,12 +164,21 @@ class HostMetricsCollector(
             ioWriteBytesPerSec = ioWriteRate,
             networkRxBytesPerSec = rxRate,
             networkTxBytesPerSec = txRate,
+            processIoReadBytesPerSec = processReadRate,
+            processIoWriteBytesPerSec = processWriteRate,
+            systemCpuIoWaitPercent = cpuMetrics.second,
+            sampleIntervalMs = sampleDeltaNs.takeIf { it > 0L }?.div(1_000_000L),
         )
+    }
+
+    private fun rate(current: Long, previous: Long, seconds: Double): Long {
+        if (seconds <= 0.0 || current < previous) return 0L
+        return ((current - previous) / seconds).coerceAtLeast(0.0).toLong()
     }
 
     private fun readProcessCpuTimeNs(): Long? {
         val pid = targetPid ?: return null
-        val file = File("/proc/" + pid + "/stat")
+        val file = File("/proc/$pid/stat")
         if (!file.isFile) return null
         val line = runCatching { file.readText() }.getOrNull() ?: return null
         val endOfCommand = line.lastIndexOf(')')
@@ -126,37 +191,45 @@ class HostMetricsCollector(
         return totalTicks * 1_000_000_000L / clockTicksPerSecond
     }
 
-    private fun readProcessRssMb(): Long {
-        val pid = targetPid ?: return 0L
-        val status = File("/proc/" + pid + "/status")
-        if (!status.isFile) return 0L
+    private fun readProcessRssMb(): Long? {
+        val pid = targetPid ?: return null
+        val status = File("/proc/$pid/status")
+        if (!status.isFile) return null
         val line = runCatching {
             status.useLines { lines -> lines.firstOrNull { it.startsWith("VmRSS:") } }
-        }.getOrNull() ?: return 0L
-        val kb = line.trim().split(Regex("\\s+")).getOrNull(1)?.toLongOrNull() ?: return 0L
+        }.getOrNull() ?: return null
+        val kb = line.trim().split(Regex("\\s+")).getOrNull(1)?.toLongOrNull() ?: return null
         return kb / 1024L
     }
 
-    private fun readSystemCpuPercent(): Double {
-        val current = readSystemCpuTimes() ?: return 0.0
-        val previous = lastSystemCpu
-        lastSystemCpu = current
-        if (previous == null) return 0.0
-        val totalDelta = current.total - previous.total
-        val idleDelta = current.idle - previous.idle
-        if (totalDelta <= 0L || idleDelta < 0L) return 0.0
-        return ((totalDelta - idleDelta).coerceAtLeast(0L).toDouble() /
-            totalDelta.toDouble() * 100.0).coerceIn(0.0, 100.0)
+    private fun readProcessIoBytes(): ProcessIoCounters? {
+        val pid = targetPid ?: return null
+        val file = File("/proc/$pid/io")
+        if (!file.isFile) return null
+        val content = runCatching { file.readText() }.getOrNull() ?: return null
+        return ProcMetricsParser.processIo(content)
     }
 
-    private fun readSystemCpuTimes(): CpuTimes? {
+    private fun readSystemCpuMetrics(): Pair<Double, Double?> {
+        val current = readSystemCpuTimes() ?: return 0.0 to null
+        val previous = lastSystemCpu
+        lastSystemCpu = current
+        if (previous == null) return 0.0 to null
+        val totalDelta = current.totalTicks - previous.totalTicks
+        val idleDelta = current.idleTicks - previous.idleTicks
+        val ioWaitDelta = current.ioWaitTicks - previous.ioWaitTicks
+        if (totalDelta <= 0L || idleDelta < 0L || ioWaitDelta < 0L) return 0.0 to null
+        val busyTicks = (totalDelta - idleDelta - ioWaitDelta).coerceAtLeast(0L)
+        val busyPercent = busyTicks.toDouble() / totalDelta.toDouble() * 100.0
+        val ioWaitPercent = ioWaitDelta.toDouble() / totalDelta.toDouble() * 100.0
+        return busyPercent.coerceIn(0.0, 100.0) to ioWaitPercent.coerceIn(0.0, 100.0)
+    }
+
+    private fun readSystemCpuTimes(): SystemCpuTimes? {
         val line = runCatching {
             File("/proc/stat").useLines { lines -> lines.firstOrNull { it.startsWith("cpu ") } }
         }.getOrNull() ?: return null
-        val values = line.trim().split(Regex("\\s+")).drop(1).mapNotNull { it.toLongOrNull() }
-        if (values.size < 4) return null
-        val idle = values[3] + (values.getOrNull(4) ?: 0L)
-        return CpuTimes(values.sum(), idle)
+        return ProcMetricsParser.systemCpuTimes(line)
     }
 
     private fun readCpuFrequency(): Long? {

@@ -372,4 +372,61 @@ class QemuCommandBuilderTest {
 
     private fun List<String>.windowedContains(value: String): Boolean = any { it == value }
 
+
+    @Test
+    fun linuxGuestAgentAddsVirtioSerialChannelOnlyWhenRequested() {
+        val f = runtime()
+        try {
+            val vm = VmConfig(
+                name = "linux-guest-agent",
+                diskPath = f.disk.absolutePath,
+                firmwarePath = f.nvram.absolutePath,
+                audioEnabled = false,
+                guestOs = "Linux ARM64",
+                guestAgentEnabled = true,
+            )
+            val socket = File(f.root, "vm/guest-agent.sock")
+            val command = QemuCommandBuilder.build(
+                f.paths,
+                vm,
+                File(f.root, "qmp.sock"),
+                File(f.root, "serial.log"),
+                File(f.root, "qemu.log"),
+                guestAgentSocket = socket,
+            )
+
+            assertTrue(command.contains("socket,id=qga0,path=${socket.absolutePath},server=on,wait=off"))
+            assertTrue(command.contains("virtio-serial-pci,id=virtio-serial0"))
+            assertTrue(command.contains("virtserialport,chardev=qga0,name=org.qemu.guest_agent.0"))
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun guestAgentSettingRequiresAnExplicitSafeSocketPath() {
+        val f = runtime()
+        try {
+            val vm = VmConfig(
+                name = "linux-no-socket",
+                diskPath = f.disk.absolutePath,
+                firmwarePath = f.nvram.absolutePath,
+                guestOs = "Linux ARM64",
+                guestAgentEnabled = true,
+                audioEnabled = false,
+            )
+            assertFailsWith<IllegalArgumentException> {
+                QemuCommandBuilder.build(
+                    f.paths,
+                    vm,
+                    File(f.root, "qmp.sock"),
+                    File(f.root, "serial.log"),
+                    File(f.root, "qemu.log"),
+                )
+            }
+        } finally {
+            f.root.deleteRecursively()
+        }
+    }
+
 }

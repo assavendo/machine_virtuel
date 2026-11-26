@@ -18,6 +18,7 @@ class VmCreationPolicyTest {
         assertEquals(VmCreationWizardStep.GUEST_OS_AND_MEDIA, VmCreationWizardStep.forValidationField("isoPath"))
         assertEquals(VmCreationWizardStep.GUEST_OS_AND_MEDIA, VmCreationWizardStep.forValidationField("androidArtifacts"))
         assertEquals(VmCreationWizardStep.GUEST_OS_AND_MEDIA, VmCreationWizardStep.forValidationField("androidAdbHostPort"))
+        assertEquals(VmCreationWizardStep.GUEST_OS_AND_MEDIA, VmCreationWizardStep.forValidationField("guestAgentEnabled"))
         assertEquals(VmCreationWizardStep.RESOURCES, VmCreationWizardStep.forValidationField("ramMb"))
         assertEquals(VmCreationWizardStep.GRAPHICS, VmCreationWizardStep.forValidationField("gpuBackend"))
         assertEquals(VmCreationWizardStep.NETWORK, VmCreationWizardStep.forValidationField("tapName"))

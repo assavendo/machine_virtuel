@@ -19,7 +19,7 @@ interface VmEngineApi {
     fun clone(id: String, newName: String): VmConfig
     fun export(id: String, output: File): File
     fun importPackage(packageFile: File): VmConfig
-    fun metrics(id: String): Map<String, Number>
+    fun metrics(id: String): Map<String, Number?>
     fun capabilities(): HostCapabilities
     fun selectBackend(id: String): OrchestrationDecision
     fun optimize(id: String): PerformanceAdvice

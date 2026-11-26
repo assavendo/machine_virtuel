@@ -70,6 +70,37 @@ object NativeEngine {
         val nativeAvailable: Boolean,
     )
 
+    data class ThreadAffinityDecision(
+        val applied: Boolean,
+        val errorCode: Int? = null,
+        val reason: String,
+    )
+
+    /**
+     * Applies Linux per-thread CPU affinity through the JNI core. Failure is deliberately
+     * non-fatal: the runtime keeps the OS scheduler's default affinity.
+     */
+    fun setThreadAffinity(threadId: Long, cpuIds: List<Int>): ThreadAffinityDecision {
+        if (!loaded) return ThreadAffinityDecision(false, reason = "Native core unavailable")
+        if (threadId !in 1..Int.MAX_VALUE.toLong()) {
+            return ThreadAffinityDecision(false, errorCode = 22, reason = "Invalid thread ID")
+        }
+        val normalized = cpuIds.distinct().sorted()
+        if (normalized.isEmpty() || normalized.any { it !in 0..4095 }) {
+            return ThreadAffinityDecision(false, errorCode = 22, reason = "Invalid CPU set")
+        }
+        val status = runCatching {
+            nativeSetThreadAffinity(threadId, normalized.toIntArray())
+        }.getOrElse {
+            return ThreadAffinityDecision(false, reason = "JNI affinity call failed: " + (it.message ?: "unknown"))
+        }
+        return if (status == 0) {
+            ThreadAffinityDecision(true, reason = "Applied")
+        } else {
+            ThreadAffinityDecision(false, errorCode = -status, reason = "sched_setaffinity failed")
+        }
+    }
+
     fun translationDecision(executions: Long): NativeTranslationDecision {
         val safeExecutions = executions.coerceAtLeast(0L)
         val fallback = when {
@@ -106,4 +137,7 @@ object NativeEngine {
 
     @JvmStatic
     private external fun nativeTranslationTier(executions: Long): String
+
+    @JvmStatic
+    private external fun nativeSetThreadAffinity(threadId: Long, cpuIds: IntArray): Int
 }

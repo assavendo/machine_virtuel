@@ -15,12 +15,14 @@ import com.assavendo.machinevirtuel.hypervisor.QemuBackend
 import com.assavendo.machinevirtuel.cache.TranslationCacheManager
 import com.assavendo.machinevirtuel.performance.AdaptiveResourceCoordinator
 import com.assavendo.machinevirtuel.performance.VmCpuThreadSampler
+import com.assavendo.machinevirtuel.performance.VmCpuThreadScheduler
 import com.assavendo.machinevirtuel.performance.HostMetricsCollector
 import com.assavendo.machinevirtuel.performance.ResourceAdmissionController
 import com.assavendo.machinevirtuel.performance.DeviceTopology
 import com.assavendo.machinevirtuel.performance.GlobalVmScheduler
 import com.assavendo.machinevirtuel.performance.PerformanceOptimizer
 import com.assavendo.machinevirtuel.performance.VmMetricsRegistry
+import com.assavendo.machinevirtuel.performance.GuestCpuStatsTracker
 import com.assavendo.machinevirtuel.vm.*
 import java.io.File
 import java.io.FileOutputStream
@@ -262,7 +264,9 @@ class VmRuntimeService : Service() {
                         usbPassthrough = usbAttachments,
                     )
                     val controlSocket = spec.controlSocket
+                    val guestAgentSocket = spec.guestAgentSocket
                     controlSocket?.delete()
+                    guestAgentSocket?.delete()
                     val process = startBackend(
                         spec,
                         dir,
@@ -276,6 +280,7 @@ class VmRuntimeService : Service() {
                         backend = backend.kind,
                         qmp = spec.qmpSocket,
                         controlSocket = controlSocket,
+                        guestAgentSocket = guestAgentSocket,
                         tapOwned = tapOwned,
                         virtioFs = fsHandle,
                         tpm = tpmHandle,
@@ -315,6 +320,7 @@ class VmRuntimeService : Service() {
                     if (launchedHandle != null) throw t
                     VirtioFsManager.stop(fsHandle)
                     TpmManager.stop(tpmHandle)
+                    FilePaths.guestAgent(id).delete()
                     lastError = t
                     appendLog(log, "BACKEND " + backend.kind.label + " FAILED: " + (t.message ?: "unknown") + "\n")
                 }
@@ -331,7 +337,6 @@ class VmRuntimeService : Service() {
                     check(persistVmUpdate(store, id) {
                         it.backend = active.backend
                         it.state = VmState.RUNNING
-                        it.vCpu = vm.vCpu
                         it.monitoringIntervalMs = vm.monitoringIntervalMs
                         it.lastStartedAt = vm.lastStartedAt
                     } != null) {
@@ -438,7 +443,20 @@ class VmRuntimeService : Service() {
     }
 
     private fun monitorVm(id: String, handle: Handle, vm: VmConfig) {
-        val collector = HostMetricsCollector(this, handle.qmp?.let(::findQemuPid))
+        // Target the actual QEMU/crosvm process, not a possible su/launcher wrapper PID.
+        // The same PID is used for both metrics and CPU scheduling to keep them aligned.
+        val backendProcessId = when {
+            handle.qmp != null -> BackendProcessLocator.find(
+                executableNeedle = "qemu-system",
+                controlPath = handle.qmp.absolutePath,
+            )
+            handle.controlSocket != null -> BackendProcessLocator.find(
+                executableNeedle = "crosvm",
+                controlPath = handle.controlSocket.absolutePath,
+            )
+            else -> null
+        }
+        val collector = HostMetricsCollector(this, backendProcessId)
         val coordinator = AdaptiveResourceCoordinator()
         var lastBalloonRequestMs = 0L
         var lastPolicyMessage = ""
@@ -448,8 +466,14 @@ class VmRuntimeService : Service() {
         var cachedTopology: com.assavendo.machinevirtuel.performance.CpuTopology? = null
         var cachedVms: List<VmConfig> = emptyList()
         var cachedVcpuThreadIds: List<Long> = emptyList()
+        var cachedIoThreadIds: List<Long> = emptyList()
+        var lastThreadPolicyKey = ""
+        var lastThreadPolicyAppliedMs = 0L
         var cachedTranslationAggregate = TranslationCacheManager(this).aggregate(id)
         val vcpuSampler = VmCpuThreadSampler()
+        val guestCpuTracker = GuestCpuStatsTracker()
+        var cachedGuestCpuMetrics: com.assavendo.machinevirtuel.performance.GuestCpuMetrics? = null
+        var lastGuestAgentSampleMs = 0L
         val audioMonitor = if (vm.audioEnabled) {
             AudioLogMonitor(FilePaths.log(id))
         } else {
@@ -469,21 +493,38 @@ class VmRuntimeService : Service() {
                 }
                 if (handle.qmp != null && now - lastTelemetryRefreshMs >= 5_000L) {
                     cachedVcpuThreadIds = QmpController.queryVcpuThreadIds(handle.qmp)
+                    cachedIoThreadIds = QmpController.queryIoThreadIds(handle.qmp)
                     cachedTranslationAggregate = TranslationCacheManager(this).aggregate(id)
                     lastTelemetryRefreshMs = now
                 }
 
                 val vCpuUtilization = vcpuSampler.sample(cachedVcpuThreadIds)
                 val audioUnderruns = audioMonitor?.sample()
+                if (vm.guestAgentEnabled && handle.guestAgentSocket != null &&
+                    now - lastGuestAgentSampleMs >= 5_000L
+                ) {
+                    val guestCounters = QemuGuestAgentClient.queryLinuxCpuStats(handle.guestAgentSocket)
+                    cachedGuestCpuMetrics = if (guestCounters == null) {
+                        guestCpuTracker.reset()
+                        null
+                    } else {
+                        // update() returns null for a baseline or counter reset. Do not
+                        // retain older percentages across a discontinuity.
+                        guestCpuTracker.update(guestCounters, now)
+                    }
+                    lastGuestAgentSampleMs = now
+                }
                 VmMetricsRegistry.record(
                     id,
                     sample,
                     fps = VmMetricsRegistry.last(id, 1).asReversed().firstOrNull()?.fps,
                     vCpuUtilization = vCpuUtilization,
+                    effectiveVcpus = vm.vCpu,
                     cacheHitRate = cachedTranslationAggregate.cacheHitRate,
                     translationMs = cachedTranslationAggregate.averageTranslationMs,
                     audioUnderruns = audioUnderruns,
                     audioLatencyConfiguredMs = vm.audioBufferMs.toDouble().takeIf { vm.audioEnabled },
+                    guestCpuMetrics = cachedGuestCpuMetrics,
                 )
                 val host = cachedHost ?: error("Host capability cache unavailable.")
                 val topology = cachedTopology ?: error("CPU topology cache unavailable.")
@@ -494,6 +535,41 @@ class VmRuntimeService : Service() {
                     host = host,
                     metrics = sample,
                 )
+                val threadDecision = GlobalVmScheduler()
+                    .schedule(cachedVms, topology, host.availableMemoryMb)
+                    .firstOrNull { it.vmId == id }
+                val processId = backendProcessId
+                if (threadDecision != null && processId != null &&
+                    (handle.qmp != null || handle.controlSocket != null)
+                ) {
+                    val thermalPriority = if (sample.isThrottling) 2 else 0
+                    val effectiveDecision = threadDecision.copy(
+                        threadPriority = (threadDecision.threadPriority + thermalPriority).coerceAtMost(12),
+                        reason = threadDecision.reason + if (sample.isThrottling) {
+                            " Priorité CPU réduite temporairement par la charge thermique."
+                        } else "",
+                    )
+                    val policyKey = listOf(
+                        effectiveDecision.assignedCpuIds.joinToString(","),
+                        effectiveDecision.threadPriority.toString(),
+                        cachedVcpuThreadIds.joinToString(","),
+                        cachedIoThreadIds.joinToString(","),
+                    ).joinToString("|")
+                    if (policyKey != lastThreadPolicyKey || now - lastThreadPolicyAppliedMs >= 15_000L) {
+                        val applied = VmCpuThreadScheduler.apply(
+                            processId = processId,
+                            vcpuThreadIds = cachedVcpuThreadIds,
+                            ioThreadIds = cachedIoThreadIds,
+                            decision = effectiveDecision,
+                        )
+                        VmLogger(this, id).info(
+                            "CPU thread policy: " + applied.summary() +
+                                "; assigned CPUs=" + effectiveDecision.assignedCpuIds.joinToString(",")
+                        )
+                        lastThreadPolicyKey = policyKey
+                        lastThreadPolicyAppliedMs = now
+                    }
+                }
                 if (decision.reason != lastPolicyMessage) {
                     lastPolicyMessage = decision.reason
                     VmEventBus.emit(
@@ -552,19 +628,6 @@ class VmRuntimeService : Service() {
         }
         error("QEMU ne fournit pas de réponse QMP après 15 secondes; VM non publiée comme démarrée. Dernier état: " +
             (lastStatus ?: "aucune réponse"))
-    }
-
-    private fun findQemuPid(qmp: File): Long? {
-        val entries = File("/proc").listFiles() ?: return null
-        for (entry in entries) {
-            if (!entry.name.all { it.isDigit() }) continue
-            val cmdline = runCatching { File(entry, "cmdline").readBytes().toString(Charsets.UTF_8) }
-                .getOrNull() ?: continue
-            if (cmdline.contains("qemu-system") && cmdline.contains(qmp.absolutePath)) {
-                return entry.name.toLongOrNull()
-            }
-        }
-        return null
     }
 
     private fun startBackend(
@@ -857,6 +920,7 @@ class VmRuntimeService : Service() {
 
     private fun cleanupHandleResources(id: String, handle: Handle) {
         handle.controlSocket?.delete()
+        handle.guestAgentSocket?.delete()
         runCatching { VirtioFsManager.stop(handle.virtioFs) }
             .onFailure { VmLogger(this, id).warn("virtiofsd cleanup failed: " + (it.message ?: "unknown")) }
         runCatching { TpmManager.stop(handle.tpm) }
@@ -982,6 +1046,7 @@ class VmRuntimeService : Service() {
         val backend: BackendKind,
         val qmp: File?,
         val controlSocket: File?,
+        val guestAgentSocket: File?,
         val tapOwned: Boolean,
         val virtioFs: VirtioFsHandle?,
         val tpm: TpmHandle?,

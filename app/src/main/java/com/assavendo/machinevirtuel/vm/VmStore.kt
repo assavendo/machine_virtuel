@@ -14,7 +14,7 @@ class VmStore internal constructor(
         context.getSharedPreferences("phoenixvm_vms", Context.MODE_PRIVATE)
     )
 
-    private val schemaVersion = 4
+    private val schemaVersion = 5
 
     companion object {
         /**
@@ -194,6 +194,7 @@ class VmStore internal constructor(
             androidUserdataPath = o.optString("androidUserdataPath"),
             androidAdbEnabled = o.optBoolean("androidAdbEnabled", false),
             androidAdbHostPort = o.optInt("androidAdbHostPort", 5555),
+            guestAgentEnabled = o.optBoolean("guestAgentEnabled", false),
             firmwarePath = o.optString("firmwarePath"),
             firmwareKind = o.optString("firmwareKind", "UEFI"),
             secureBoot = o.optBoolean("secureBoot", false),
@@ -252,6 +253,7 @@ class VmStore internal constructor(
         put("isoPath", vm.isoPath); put("kernelPath", vm.kernelPath); put("initrdPath", vm.initrdPath); put("dtbPath", vm.dtbPath)
         put("kernelCommandLine", vm.kernelCommandLine); put("androidSystemPath", vm.androidSystemPath); put("androidVendorPath", vm.androidVendorPath); put("androidUserdataPath", vm.androidUserdataPath)
         put("androidAdbEnabled", vm.androidAdbEnabled); put("androidAdbHostPort", vm.androidAdbHostPort)
+        put("guestAgentEnabled", vm.guestAgentEnabled)
         put("firmwarePath", vm.firmwarePath); put("firmwareKind", vm.firmwareKind)
         put("secureBoot", vm.secureBoot); put("tpmEnabled", vm.tpmEnabled); put("tpmStatePath", vm.tpmStatePath)
         put("sharedDirPath", vm.sharedDirPath); put("sharedDirTag", vm.sharedDirTag); put("sharedDirReadOnly", vm.sharedDirReadOnly)

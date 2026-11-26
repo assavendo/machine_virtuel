@@ -18,6 +18,7 @@ object QemuCommandBuilder {
         virtioFsSocket: File? = null,
         tpmHandle: TpmHandle? = null,
         usbPassthrough: List<UsbHostAttachment> = emptyList(),
+        guestAgentSocket: File? = null,
     ): List<String> {
         val qemu = when (vm.arch) {
             GuestArch.ARM64 -> paths.qemu
@@ -37,6 +38,18 @@ object QemuCommandBuilder {
         }
         if (vm.tpmEnabled) require(tpmHandle != null) {
             "TPM activé mais aucun backend swtpm actif."
+        }
+        if (vm.guestAgentEnabled) {
+            require(guestAgentSocket != null) {
+                "QEMU Guest Agent activé mais aucun socket privé n'a été configuré."
+            }
+            require(guestAgentSocket.absolutePath.length <= 100) {
+                "Le chemin du socket QEMU Guest Agent dépasse la limite UNIX locale."
+            }
+        } else {
+            require(guestAgentSocket == null) {
+                "Un socket QEMU Guest Agent a été fourni alors que la fonction est désactivée."
+            }
         }
 
         if (vm.secureBoot) {
@@ -217,6 +230,18 @@ object QemuCommandBuilder {
             args += "-device"; args += "virtio-mouse-pci,disable-legacy=on,disable-modern=off"
         }
         args += "-rtc"; args += "base=utc"
+
+        if (vm.guestAgentEnabled) {
+            val agentSocket = qemuKeyValue(
+                requireNotNull(guestAgentSocket).absolutePath,
+                "guestAgentSocket",
+            )
+            args += "-chardev"
+            args += "socket,id=qga0,path=$agentSocket,server=on,wait=off"
+            args += "-device"; args += "virtio-serial-pci,id=virtio-serial0"
+            args += "-device"
+            args += "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0"
+        }
 
         val shares = buildList {
             if (vm.sharedDirPath.isNotBlank()) {
