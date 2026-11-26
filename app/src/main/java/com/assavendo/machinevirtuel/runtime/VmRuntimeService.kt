@@ -472,6 +472,7 @@ class VmRuntimeService : Service() {
         var cachedTranslationAggregate = TranslationCacheManager(this).aggregate(id)
         val vcpuSampler = VmCpuThreadSampler()
         val guestCpuTracker = GuestCpuStatsTracker()
+        var cachedGuestCpuMetrics: com.assavendo.machinevirtuel.performance.GuestCpuMetrics? = null
         var lastGuestAgentSampleMs = 0L
         val audioMonitor = if (vm.audioEnabled) {
             AudioLogMonitor(FilePaths.log(id))
@@ -499,15 +500,17 @@ class VmRuntimeService : Service() {
 
                 val vCpuUtilization = vcpuSampler.sample(cachedVcpuThreadIds)
                 val audioUnderruns = audioMonitor?.sample()
-                var guestCpuMetrics: com.assavendo.machinevirtuel.performance.GuestCpuMetrics? = null
                 if (vm.guestAgentEnabled && handle.guestAgentSocket != null &&
                     now - lastGuestAgentSampleMs >= 5_000L
                 ) {
                     val guestCounters = QemuGuestAgentClient.queryLinuxCpuStats(handle.guestAgentSocket)
-                    if (guestCounters == null) {
+                    cachedGuestCpuMetrics = if (guestCounters == null) {
                         guestCpuTracker.reset()
+                        null
                     } else {
-                        guestCpuMetrics = guestCpuTracker.update(guestCounters, now)
+                        // update() returns null for a baseline or counter reset. Do not
+                        // retain older percentages across a discontinuity.
+                        guestCpuTracker.update(guestCounters, now)
                     }
                     lastGuestAgentSampleMs = now
                 }
@@ -521,7 +524,7 @@ class VmRuntimeService : Service() {
                     translationMs = cachedTranslationAggregate.averageTranslationMs,
                     audioUnderruns = audioUnderruns,
                     audioLatencyConfiguredMs = vm.audioBufferMs.toDouble().takeIf { vm.audioEnabled },
-                    guestCpuMetrics = guestCpuMetrics,
+                    guestCpuMetrics = cachedGuestCpuMetrics,
                 )
                 val host = cachedHost ?: error("Host capability cache unavailable.")
                 val topology = cachedTopology ?: error("CPU topology cache unavailable.")
