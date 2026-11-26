@@ -31,6 +31,8 @@ L’option TCG `tb-size` dimensionne le cache des Translation Blocks en mémoire
 
 Les plugins TCG exposent des événements de traduction et d’exécution à des plugins d’observation. Leur API est passive : elle ne permet pas au plugin de modifier l’état de la machine ni de remplacer le chemin de traduction TCG. Un plugin peut donc profiler les blocs, mais ne peut pas, à lui seul, restaurer une traduction dans le cache interne.
 
+QEMU 11.1.3 expose aussi la commande QMP instable \`x-query-jit\` (déclarée dans \`qapi/machine.json\` sous \`CONFIG_TCG\`). PhoenixVM interroge cette commande et parse les données réellement publiées par \`accel/tcg/tcg-stats.c\` : nombre de TB présents, taille/capacité du code généré, compteurs de flush/invalidation et nombre de sauts directs. Ces compteurs sont utiles comme baseline et comme preuve que TCG tourne ; ils décrivent exclusivement l'état du processus courant. Ils ne donnent ni le nombre de hits L2 persistants, ni les blocs restaurés depuis un processus précédent. Les tests du parseur utilisent les libellés produits par QEMU 11.1.3 et tolèrent l'absence de champs optionnels.
+
 La réutilisation inter-processus exige une évolution du cœur QEMU. Il est interdit d’injecter une option non prise en charge telle que `-accel tcg,persistent-cache=...` dans le runtime stock.
 
 Références à revalider lors de toute mise à niveau QEMU :
