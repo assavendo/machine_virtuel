@@ -19,7 +19,7 @@ enum class VmCreationWizardStep(val title: String) {
             "guestOs", "guestVersion", "isoPath", "diskPath", "kernelPath",
             "initrdPath", "dtbPath", "androidSystemPath", "androidVendorPath",
             "androidUserdataPath", "androidArtifacts", "androidAdbEnabled",
-            "androidAdbHostPort" -> GUEST_OS_AND_MEDIA
+            "androidAdbHostPort", "guestAgentEnabled" -> GUEST_OS_AND_MEDIA
             "ramMb", "vCpu", "diskSizeGiB", "diskFormat" -> RESOURCES
             "gpuBackend", "displayWidth", "displayHeight", "headless" -> GRAPHICS
             "network", "networkMode", "tapName" -> NETWORK
