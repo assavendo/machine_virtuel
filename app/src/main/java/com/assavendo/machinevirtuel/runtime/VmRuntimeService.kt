@@ -516,6 +516,7 @@ class VmRuntimeService : Service() {
                     sample,
                     fps = VmMetricsRegistry.last(id, 1).asReversed().firstOrNull()?.fps,
                     vCpuUtilization = vCpuUtilization,
+                    effectiveVcpus = vm.vCpu,
                     cacheHitRate = cachedTranslationAggregate.cacheHitRate,
                     translationMs = cachedTranslationAggregate.averageTranslationMs,
                     audioUnderruns = audioUnderruns,
