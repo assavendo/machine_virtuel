@@ -42,8 +42,8 @@ pub struct PvTcgCompatibility {
 pub struct PvTcgL2Handle {
     store: Arc<TcgIrL2Store>,
     vm_id: String,
-    resident: RwLock<ResidentL1>,
-    resident_clock: AtomicU64,
+    resident: Arc<RwLock<ResidentL1>>,
+    resident_clock: Arc<AtomicU64>,
     worker_tx: Option<SyncSender<PersistCommand>>,
     worker: Option<std::thread::JoinHandle<()>>,
     worker_errors: Arc<AtomicU64>,
@@ -258,6 +258,10 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_open(
         );
         let worker_store = Arc::clone(&store);
         let worker_vm_id = vm_id.clone();
+        let resident = Arc::new(RwLock::new(ResidentL1::new(256, 32 * 1024 * 1024)));
+        let worker_resident = Arc::clone(&resident);
+        let resident_clock = Arc::new(AtomicU64::new(0));
+        let worker_clock = Arc::clone(&resident_clock);
         let worker_errors = Arc::new(AtomicU64::new(0));
         let worker_errors_thread = Arc::clone(&worker_errors);
         let (worker_tx, worker_rx) = mpsc::sync_channel::<PersistCommand>(128);
@@ -267,7 +271,15 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_open(
                 while let Ok(command) = worker_rx.recv() {
                     match command {
                         PersistCommand::Store(block) => {
-                            if worker_store.store(&worker_vm_id, &block).is_err() {
+                            let persisted = worker_store.store(&worker_vm_id, &block);
+                            let resident_inserted = persisted.and_then(|()| {
+                                worker_resident
+                                    .write()
+                                    .map_err(|_| crate::tcg_ir_cache::TcgIrCacheError::Invalid("L1 lock poisoned"))?
+                                    .insert_arc(block, &worker_clock)
+                                    .map_err(|_| crate::tcg_ir_cache::TcgIrCacheError::Invalid("L1 insert failed"))
+                            });
+                            if resident_inserted.is_err() {
                                 worker_errors_thread.fetch_add(1, Ordering::Relaxed);
                             }
                         }
@@ -281,8 +293,8 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_open(
         Ok::<_, ()>(Box::into_raw(Box::new(PvTcgL2Handle {
             store,
             vm_id,
-            resident: RwLock::new(ResidentL1::new(256, 32 * 1024 * 1024)),
-            resident_clock: AtomicU64::new(0),
+            resident,
+            resident_clock,
             worker_tx: Some(worker_tx),
             worker: Some(worker),
             worker_errors,
@@ -483,7 +495,9 @@ pub unsafe extern "C" fn phoenixvm_tcg_l1_lookup(
     let result = catch_unwind(AssertUnwindSafe(|| {
         let handle = unsafe { &*handle };
         let key = unsafe { copy_compatibility(compatibility) }.map_err(|_| ())?;
-        let resident = handle.resident.read().map_err(|_| ())?;
+        // Never wait for a worker-side L1 write lock on the vCPU path. A
+        // concurrent preload/invalidation/store publication is a safe miss.
+        let resident = handle.resident.try_read().map_err(|_| ())?;
         resident.lookup(&key, &handle.resident_clock)
     }));
     match result {
@@ -712,7 +726,11 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_flush(handle: *mut PvTcgL2Handle) -> i
         let sender = handle.worker_tx.as_ref().ok_or(())?;
         let (ack_tx, ack_rx) = mpsc::sync_channel(0);
         sender.send(PersistCommand::Flush(ack_tx)).map_err(|_| ())?;
-        ack_rx.recv().map_err(|_| ())
+        ack_rx.recv().map_err(|_| ())?;
+        if handle.worker_errors.load(Ordering::Relaxed) != 0 {
+            return Err(());
+        }
+        Ok(())
     }));
     if matches!(result, Ok(Ok(()))) {
         0
@@ -753,13 +771,9 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_store_block(
     let result = catch_unwind(AssertUnwindSafe(|| {
         let handle = unsafe { &*handle };
         let block = unsafe { &*block };
-        // Encode once here to validate the complete IR before publishing it.
-        block.block.encode().map_err(|_| ())?;
-        handle
-            .resident
-            .write()
-            .map_err(|_| ())?
-            .insert_arc(Arc::clone(&block.block), &handle.resident_clock)?;
+        // Do not encode, touch L1 locks or access disk on this path. The bounded
+        // worker queue owns the block after this nonblocking enqueue; the worker
+        // validates/persists it and then publishes it into resident L1.
         let sender = handle.worker_tx.as_ref().ok_or(())?;
         match sender.try_send(PersistCommand::Store(Arc::clone(&block.block))) {
             Ok(()) => Ok::<_, ()>(0),
