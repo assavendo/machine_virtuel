@@ -442,8 +442,14 @@ class VmRuntimeService : Service() {
         // Target the actual QEMU/crosvm process, not a possible su/launcher wrapper PID.
         // The same PID is used for both metrics and CPU scheduling to keep them aligned.
         val backendProcessId = when {
-            handle.qmp != null -> findQemuPid(handle.qmp)
-            handle.controlSocket != null -> findCrosvmPid(handle.controlSocket)
+            handle.qmp != null -> BackendProcessLocator.find(
+                executableNeedle = "qemu-system",
+                controlPath = handle.qmp.absolutePath,
+            )
+            handle.controlSocket != null -> BackendProcessLocator.find(
+                executableNeedle = "crosvm",
+                controlPath = handle.controlSocket.absolutePath,
+            )
             else -> null
         } ?: runCatching { handle.process.pid() }.getOrNull()
         val collector = HostMetricsCollector(this, backendProcessId)
@@ -600,34 +606,6 @@ class VmRuntimeService : Service() {
         }
         error("QEMU ne fournit pas de réponse QMP après 15 secondes; VM non publiée comme démarrée. Dernier état: " +
             (lastStatus ?: "aucune réponse"))
-    }
-
-    private fun findQemuPid(qmp: File): Long? {
-        val entries = File("/proc").listFiles() ?: return null
-        for (entry in entries) {
-            if (!entry.name.all { it.isDigit() }) continue
-            val cmdline = runCatching { File(entry, "cmdline").readBytes().toString(Charsets.UTF_8) }
-                .getOrNull() ?: continue
-            if (cmdline.contains("qemu-system") && cmdline.contains(qmp.absolutePath)) {
-                return entry.name.toLongOrNull()
-            }
-        }
-        return null
-    }
-
-    private fun findCrosvmPid(controlSocket: File): Long? {
-        val socketPath = controlSocket.absolutePath
-        val entries = File("/proc").listFiles() ?: return null
-        for (entry in entries) {
-            if (!entry.name.all { it.isDigit() }) continue
-            val cmdline = runCatching {
-                File(entry, "cmdline").readBytes().toString(Charsets.UTF_8)
-            }.getOrNull() ?: continue
-            if (cmdline.contains("crosvm") && cmdline.contains(socketPath)) {
-                return entry.name.toLongOrNull()
-            }
-        }
-        return null
     }
 
     private fun startBackend(
