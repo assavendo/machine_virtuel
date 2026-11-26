@@ -41,6 +41,13 @@ class ProcMetricsParserTest {
         assertNull(ProcMetricsParser.systemCpuTimes("cpu 1 2 3"))
         assertNull(ProcMetricsParser.systemCpuTimes("cpu0 1 2 3 4 5"))
         assertNull(ProcMetricsParser.processIo("read_bytes: 10"))
-        assertNull(ProcMetricsParser.processIo("read_bytes: -1\\nwrite_bytes: 2"))
+        assertNull(
+            ProcMetricsParser.processIo(
+                """
+                read_bytes: -1
+                write_bytes: 2
+                """.trimIndent()
+            )
+        )
     }
 }
