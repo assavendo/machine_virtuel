@@ -53,11 +53,12 @@ object VmCpuThreadScheduler {
             placements += CpuThreadPlacement(tid, decision.assignedCpuIds, null)
         }
 
+        // A VM can retain more configured vCPUs than its current scheduler CPU
+        // slots. Do not change guest-visible vCPU count here; round-robin all known
+        // vCPU threads over the allowed pool so no worker escapes the VM affinity set.
         vcpus.forEachIndexed { index, tid ->
-            val cpu = decision.assignedCpuIds.getOrNull(index)
-            if (cpu != null) {
-                placements += CpuThreadPlacement(tid, listOf(cpu), decision.threadPriority.coerceIn(0, 10))
-            }
+            val cpu = decision.assignedCpuIds[index % decision.assignedCpuIds.size]
+            placements += CpuThreadPlacement(tid, listOf(cpu), decision.threadPriority.coerceIn(0, 10))
         }
 
         val ioPriority = (decision.threadPriority.coerceIn(0, 10) + 3).coerceIn(0, 19)
