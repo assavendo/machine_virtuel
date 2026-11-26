@@ -346,8 +346,28 @@ static bool pv_global_layout_digest(uint8_t digest[32])
     }
 
     pv_checksum_u64(sum, tcg_ctx->nb_globals);
+    pv_checksum_u64(sum, tcg_ctx->nb_indirects);
     pv_checksum_u64(sum, tcg_ctx->addr_type);
     pv_checksum_u64(sum, tcg_ctx->guest_mo);
+    pv_checksum_u64(sum, tcg_ctx->reserved_regs);
+    pv_checksum_u64(sum, (uint64_t)tcg_ctx->current_frame_offset);
+    pv_checksum_u64(sum, (uint64_t)tcg_ctx->frame_start);
+    pv_checksum_u64(sum, (uint64_t)tcg_ctx->frame_end);
+
+    if (tcg_ctx->frame_temp != NULL) {
+        uintptr_t base = (uintptr_t)tcg_ctx->temps;
+        uintptr_t ptr = (uintptr_t)tcg_ctx->frame_temp;
+        uintptr_t end = base + sizeof(TCGTemp) * TCG_MAX_TEMPS;
+
+        if (ptr < base || ptr >= end ||
+            ((ptr - base) % sizeof(TCGTemp)) != 0) {
+            g_checksum_free(sum);
+            return false;
+        }
+        pv_checksum_u64(sum, (ptr - base) / sizeof(TCGTemp));
+    } else {
+        pv_checksum_u64(sum, UINT64_MAX);
+    }
 
     for (int i = 0; i < tcg_ctx->nb_globals; i++) {
         const TCGTemp *ts = &tcg_ctx->temps[i];
