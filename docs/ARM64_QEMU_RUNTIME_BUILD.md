@@ -12,7 +12,7 @@ Run the script natively from an Android ARM64/aarch64 environment such as Termux
 
 The build environment must provide a native Android ARM64 toolchain and at least:
 - `curl`, `sha256sum`, `tar`, `ninja`, `pkg-config`, `getconf`, `python3` 3.9+, `cc` and `c++`;
-- GLib and Pixman development packages;
+- GLib, Pixman and zlib development packages;
 - libslirp development files exposed through the `slirp` pkg-config module;
 - enough free storage and memory for a full QEMU build. The default Ninja parallelism is capped at four jobs; set `NINJA_JOBS` explicitly to override it.
 
