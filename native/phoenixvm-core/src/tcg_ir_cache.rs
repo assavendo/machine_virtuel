@@ -332,18 +332,14 @@ fn is_writable_operand(operand: &TcgOperand) -> bool {
     matches!(operand, TcgOperand::Temp(_) | TcgOperand::Global(_))
 }
 
-fn validate_operation_type(
-    operation: &TcgIrOperation,
-) -> Result<TcgValueType, TcgIrCacheError> {
+fn validate_operation_type(operation: &TcgIrOperation) -> Result<TcgValueType, TcgIrCacheError> {
     if operation.param2 != 0 {
         return Err(TcgIrCacheError::Invalid(
             "unsupported TCG opcode parameter flags",
         ));
     }
     match TcgValueType::decode(operation.param1)? {
-        TcgValueType::I32 | TcgValueType::I64 => {
-            Ok(TcgValueType::decode(operation.param1)?)
-        }
+        TcgValueType::I32 | TcgValueType::I64 => Ok(TcgValueType::decode(operation.param1)?),
         _ => Err(TcgIrCacheError::Invalid(
             "first TCG IR importer supports only I32/I64 scalar operations",
         )),
@@ -423,7 +419,10 @@ fn validate_operation_schema(
         }
         "mov" => {
             let ty = validate_operation_type(operation)?;
-            if operands.len() != 2 || !is_writable_operand(&operands[0]) || !is_value_operand(&operands[1]) {
+            if operands.len() != 2
+                || !is_writable_operand(&operands[0])
+                || !is_value_operand(&operands[1])
+            {
                 return Err(invalid());
             }
             validate_value_type(&operands[0], ty, temporaries)?;
@@ -1478,10 +1477,7 @@ mod tests {
                     opcode: "mov".into(),
                     param1: TcgValueType::I64 as u8,
                     param2: 0,
-                    operands: vec![
-                        TcgOperand::Temp(0),
-                        TcgOperand::Global(0),
-                    ],
+                    operands: vec![TcgOperand::Temp(0), TcgOperand::Global(0)],
                 },
                 TcgIrOperation {
                     opcode: "insn_start".into(),
