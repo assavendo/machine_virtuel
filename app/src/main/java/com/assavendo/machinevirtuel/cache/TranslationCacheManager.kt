@@ -273,9 +273,22 @@ class TranslationCacheManager(context: Context) {
     fun invalidateAll(vmId: String) {
         val id = fingerprint(vmId)
         File(root, id).deleteRecursively()
-        val ownerMarker = "\"vm_id_hash\":\"" + fingerprint(vmId) + "\""
+        val ownerHash = fingerprint(vmId)
+        val ownerMarker = "\"vm_id_hash\":\"" + ownerHash + "\""
         memoryL0.entries.removeAll { it.value.contains(ownerMarker) }
         processL1.entries.removeAll { it.value.contains(ownerMarker) }
+
+        // L3 is global in location only: every entry remains owned by exactly one VM.
+        // Removing a VM must therefore remove its opt-in global metadata as well.
+        globalRoot.listFiles()?.forEach { file ->
+            if (!file.isFile || file.length() !in 1..METADATA_MAX_BYTES.toLong()) {
+                return@forEach
+            }
+            val entryOwner = runCatching {
+                JSONObject(file.readText(Charsets.UTF_8)).optString("vm_id_hash")
+            }.getOrNull()
+            if (entryOwner == ownerHash) file.delete()
+        }
     }
 
     @Synchronized
