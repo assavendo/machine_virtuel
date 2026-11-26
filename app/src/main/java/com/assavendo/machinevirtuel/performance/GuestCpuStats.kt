@@ -63,10 +63,12 @@ object GuestCpuStatsParser {
                 niceMs = nice,
                 systemMs = system,
                 idleMs = idle,
-                ioWaitMs = optionalLong(stats, "iowait") ?: return null,
-                irqMs = optionalLong(stats, "irq") ?: return null,
-                softIrqMs = optionalLong(stats, "softirq") ?: return null,
-                stealMs = optionalLong(stats, "steal") ?: return null,
+                // QGA marks these fields optional. Do not turn an absent field into 0:
+                // missing kernel counters make the whole guest sample unavailable.
+                ioWaitMs = requiredLong(stats, "iowait") ?: return null,
+                irqMs = requiredLong(stats, "irq") ?: return null,
+                softIrqMs = requiredLong(stats, "softirq") ?: return null,
+                stealMs = requiredLong(stats, "steal") ?: return null,
             )
             if (!hasSafeTotal(counters)) return null
             result += counters
