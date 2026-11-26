@@ -45,6 +45,7 @@ class QemuBackend(private val backendKind: BackendKind) : HypervisorBackend {
             serial,
             log,
             usbPassthrough = usbPassthrough,
+            guestAgentSocket = if (vm.guestAgentEnabled) FilePaths.guestAgent(vm.id) else null,
         ),
         environment = mapOf(
             "LD_LIBRARY_PATH" to paths.libDir.absolutePath,
@@ -52,6 +53,7 @@ class QemuBackend(private val backendKind: BackendKind) : HypervisorBackend {
         ),
         qmpSocket = qmp,
         controlSocket = null,
+        guestAgentSocket = if (vm.guestAgentEnabled) FilePaths.guestAgent(vm.id) else null,
     )
 
     override fun supportsPauseResume() = true
@@ -93,6 +95,9 @@ class CrosvmBackend(private val backendKind: BackendKind) : HypervisorBackend {
     ): BackendLaunchSpec {
         require(usbPassthrough.isEmpty()) {
             "Le passthrough USB hôte est uniquement disponible sur le backend QEMU vérifié."
+        }
+        require(!vm.guestAgentEnabled) {
+            "Le canal QEMU Guest Agent n'est pas disponible sur le backend crosvm; sélectionnez QEMU."
         }
         val controlSocket = FilePaths.controlSocket(vm.id)
         return BackendLaunchSpec(
