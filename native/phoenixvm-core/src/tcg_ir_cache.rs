@@ -1,5 +1,9 @@
 use sha2::{Digest, Sha256};
 use std::fmt;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const MAGIC: &[u8; 8] = b"PVTCGIR\0";
 const FORMAT_VERSION: u16 = 1;
@@ -13,6 +17,7 @@ const MAX_LABELS: usize = 512;
 const MAX_OPERATIONS: usize = 16_384;
 const MAX_OPERANDS: usize = 32;
 const MAX_INSTRUCTIONS: u16 = 512;
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TcgEndian {
@@ -214,6 +219,7 @@ pub enum TcgIrCacheError {
     Corrupt,
     UnsupportedVersion,
     TooLarge,
+    Io(std::io::ErrorKind),
 }
 
 impl fmt::Display for TcgIrCacheError {
@@ -223,6 +229,7 @@ impl fmt::Display for TcgIrCacheError {
             Self::Corrupt => write!(f, "corrupt TCG IR cache block"),
             Self::UnsupportedVersion => write!(f, "unsupported TCG IR cache format version"),
             Self::TooLarge => write!(f, "TCG IR cache block exceeds its size limit"),
+            Self::Io(kind) => write!(f, "TCG IR cache I/O error: {kind}"),
         }
     }
 }
@@ -260,6 +267,17 @@ impl TcgIrBlock {
                 || (temp.subindex != 0 && temp.base_id >= temp.id)
             {
                 return Err(TcgIrCacheError::Invalid("invalid temporary group"));
+            }
+            if temp.subindex != 0 {
+                let base = &self.temporaries[usize::from(temp.base_id)];
+                if base.subindex != 0
+                    || base.base_id != base.id
+                    || base.base_type != temp.base_type
+                    || base.kind != temp.kind
+                    || u32::from(temp.id) != u32::from(temp.base_id) + u32::from(temp.subindex)
+                {
+                    return Err(TcgIrCacheError::Invalid("inconsistent multi-slot temporary group"));
+                }
             }
         }
 
@@ -372,6 +390,66 @@ impl TcgIrBlock {
             return Err(TcgIrCacheError::TooLarge);
         }
         Ok(writer.bytes)
+    }
+
+    /// Persist one encoded block using a same-directory temporary file and atomic rename.
+    ///
+    /// The file and containing directory are synced before success is reported. The
+    /// caller still owns per-VM isolation, quotas, cleanup and process-level locking.
+    pub fn write_atomic(&self, path: impl AsRef<Path>) -> Result<(), TcgIrCacheError> {
+        let path = path.as_ref();
+        let parent = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        let mut temporary_name = path.as_os_str().to_os_string();
+        temporary_name.push(format!(
+            ".tmp-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let temporary_path = PathBuf::from(temporary_name);
+
+        let result = (|| {
+            fs::create_dir_all(parent).map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+            let encoded = self.encode()?;
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary_path)
+                .map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+            file.write_all(&encoded)
+                .map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+            file.sync_all()
+                .map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+            drop(file);
+
+            fs::rename(&temporary_path, path)
+                .map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+            File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+            Ok(())
+        })();
+
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary_path);
+        }
+        result
+    }
+
+    /// Read one record without allowing a file to allocate beyond the cache limit.
+    pub fn read_file(path: impl AsRef<Path>) -> Result<Self, TcgIrCacheError> {
+        let mut file = File::open(path).map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+        let mut encoded = Vec::new();
+        file.by_ref()
+            .take((MAX_CACHE_BYTES + 1) as u64)
+            .read_to_end(&mut encoded)
+            .map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+        if encoded.len() > MAX_CACHE_BYTES {
+            return Err(TcgIrCacheError::TooLarge);
+        }
+        Self::decode(&encoded)
     }
 
     /// Decode only a complete, authenticated-by-digest record within strict bounds.
@@ -891,4 +969,38 @@ mod tests {
                 .contains(&TcgOperand::Helper("helper_cpuid".into()))
         }));
     }
+    #[test]
+    fn atomic_file_round_trip_rejects_corruption() {
+        let block = sample_block();
+        let unique = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!(
+            "phoenixvm-tcg-ir-{}-{unique}",
+            std::process::id()
+        ));
+        let path = directory.join("block.pvir");
+        block.write_atomic(&path).unwrap();
+        assert_eq!(TcgIrBlock::read_file(&path).unwrap(), block);
+
+        let mut bytes = fs::read(&path).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        fs::write(&path, bytes).unwrap();
+        assert_eq!(TcgIrBlock::read_file(&path), Err(TcgIrCacheError::Corrupt));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn rejects_inconsistent_multislot_temp_groups() {
+        let mut block = sample_block();
+        block.temporaries.push(TcgTempRecord {
+            id: 2,
+            base_id: 0,
+            subindex: 2,
+            base_type: TcgValueType::I128,
+            value_type: TcgValueType::I64,
+            kind: TcgTempKind::Tb,
+        });
+        assert!(matches!(block.encode(), Err(TcgIrCacheError::Invalid(_))));
+    }
+
 }
