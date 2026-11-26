@@ -29,8 +29,8 @@ class GlobalVmScheduler {
         val active = vms.filter { it.state == VmState.RUNNING || it.state == VmState.STARTING }
         if (active.isEmpty()) return emptyList()
 
-        val cpuIds = topology.allowedCpuIds.distinct().ifEmpty { topology.cores.map { it.id }.distinct() }
-        val cpuBudget = cpuIds.size.coerceAtLeast(1)
+        val cpuIds = topology.allowedCpuIds.distinct()
+        val cpuBudget = cpuIds.size
         val ramBudget = max(1L, availableMemoryMb)
         val targetRamPerVm = max(512L, ramBudget / active.size)
         val ordered = active.sortedWith(
