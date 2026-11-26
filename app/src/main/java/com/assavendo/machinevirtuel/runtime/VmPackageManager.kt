@@ -4,6 +4,8 @@ import android.content.Context
 import android.os.StatFs
 import com.assavendo.machinevirtuel.security.PackageSignatureManager
 import com.assavendo.machinevirtuel.security.PackageSignatureVerifier
+import com.assavendo.machinevirtuel.host.HostCapabilityScanner
+import com.assavendo.machinevirtuel.performance.ResourceAdmissionController
 import com.assavendo.machinevirtuel.security.SecurityGuards
 import com.assavendo.machinevirtuel.vm.*
 import java.io.BufferedOutputStream
@@ -23,8 +25,8 @@ object VmPackageManager {
     private const val MAX_TOTAL_BYTES = 4_398_046_511_104L // 4 TiB; also bounded by available device storage.
 
     fun export(context: Context, vm: VmConfig, output: File, includeSnapshots: Boolean = false): File {
-        require(vm.state == VmState.OFF || vm.state == VmState.ERROR) {
-            "L'export sécurisé exige une VM complètement arrêtée."
+        require(vm.state == VmState.OFF) {
+            "L'export sécurisé exige l'état OFF confirmé ; ERROR peut encore correspondre à un processus vivant."
         }
         val disk = File(vm.diskPath).canonicalFile
         require(disk.isFile && disk.canRead()) { "Disque VM introuvable ou illisible." }
@@ -308,7 +310,7 @@ object VmPackageManager {
                 )
             }
             val vm = decodedVm.copy(id = id)
-            vm.name = manifest.optString("name", vm.name).take(120).ifBlank { "Imported VM" }
+            vm.name = manifest.optString("name", vm.name).take(80).ifBlank { "Imported VM" }
             vm.state = VmState.OFF
             vm.lastStartedAt = null
             vm.diskFormat = DiskFormat.valueOf(manifest.optString("disk_format", vm.diskFormat.name))
@@ -406,7 +408,13 @@ object VmPackageManager {
                 }
                 snapshotsPublished = true
             }
-            store.save(store.list().toMutableList().apply { add(vm) })
+            val host = HostCapabilityScanner(context).scan()
+            store.insertUnique(vm) { latest ->
+                val admission = ResourceAdmissionController.check(vm, latest, host)
+                require(admission.allowed) {
+                    "Import refusé par le contrôle de ressources : " + admission.reason
+                }
+            }
             return vm
         } catch (t: Throwable) {
             if (snapshotsPublished) finalSnapshotsDir.deleteRecursively()

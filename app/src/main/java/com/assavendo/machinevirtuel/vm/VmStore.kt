@@ -1,14 +1,109 @@
 package com.assavendo.machinevirtuel.vm
 
 import android.content.Context
+import android.content.SharedPreferences
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
 import org.json.JSONArray
 import org.json.JSONObject
 
-class VmStore(context: Context) {
-    private val prefs = context.getSharedPreferences("phoenixvm_vms", Context.MODE_PRIVATE)
+class VmStore internal constructor(
+    private val prefs: SharedPreferences,
+) {
+    constructor(context: Context) : this(
+        context.getSharedPreferences("phoenixvm_vms", Context.MODE_PRIVATE)
+    )
+
     private val schemaVersion = 4
 
-    fun list(): MutableList<VmConfig> {
+    companion object {
+        /**
+         * Shared by every VmStore instance in this process. SharedPreferences itself
+         * is thread-safe, but a list/read-modify-write sequence must also be atomic.
+         */
+        private val processMutationLock = Any()
+        private val perVmOperationLocks = ConcurrentHashMap<String, ReentrantLock>()
+    }
+
+    /**
+     * Exclusively protects an operation for one VM ID across every VmStore instance.
+     * Unlike the collection mutation lock, this does not prevent independent VMs from
+     * progressing while a large disk snapshot, clone, restore or export is running.
+     */
+    fun <T> withVmLock(vmId: String, block: () -> T): T {
+        require(vmId.isNotBlank()) { "VM ID must not be blank." }
+        val lock = perVmOperationLocks.computeIfAbsent(vmId) { ReentrantLock() }
+        lock.lock()
+        return try {
+            block()
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    fun list(): MutableList<VmConfig> = synchronized(processMutationLock) {
+        readUnlocked()
+    }
+
+    /** Replace the entire collection. Prefer insertUnique/remove/update for mutations. */
+    fun save(items: List<VmConfig>) = synchronized(processMutationLock) {
+        writeUnlocked(items)
+    }
+
+    /**
+     * Execute a read/modify/write operation against one locked snapshot. If [block]
+     * throws, no partial collection is written.
+     */
+    fun <T> mutate(block: (MutableList<VmConfig>) -> T): T =
+        synchronized(processMutationLock) {
+            val items = readUnlocked()
+            val result = block(items)
+            writeUnlocked(items)
+            result
+        }
+
+    /**
+     * Atomically enforce VM identity/name uniqueness, run a caller's latest-state
+     * admission checks, and publish the new VM without overwriting concurrent state
+     * changes made by the runtime service.
+     */
+    fun insertUnique(
+        vm: VmConfig,
+        validateCurrent: (List<VmConfig>) -> Unit = {},
+    ): VmConfig = mutate { items ->
+        val normalizedName = vm.name.trim()
+        require(normalizedName.isNotEmpty()) { "Le nom de la VM est vide." }
+        require(normalizedName.length <= 80 && normalizedName.none { it.isISOControl() }) {
+            "Le nom doit contenir au plus 80 caractères imprimables."
+        }
+        vm.name = normalizedName
+        require(items.none { it.id == vm.id }) { "Une VM utilise déjà cet identifiant." }
+        require(items.none { it.name.trim().equals(normalizedName, ignoreCase = true) }) {
+            "Une VM porte déjà ce nom ; les noms doivent être uniques."
+        }
+        validateCurrent(items)
+        items.add(vm)
+        vm
+    }
+
+    /** Atomically validate and remove one VM record. */
+    fun remove(
+        id: String,
+        validate: (VmConfig) -> Unit = {},
+    ): VmConfig? = mutate { items ->
+        val vm = items.firstOrNull { it.id == id } ?: return@mutate null
+        validate(vm)
+        items.removeAll { it.id == id }
+        vm
+    }
+
+    fun update(id: String, block: (VmConfig) -> Unit): VmConfig? = mutate { items ->
+        val vm = items.firstOrNull { it.id == id } ?: return@mutate null
+        block(vm)
+        vm
+    }
+
+    private fun readUnlocked(): MutableList<VmConfig> {
         val result = mutableListOf<VmConfig>()
         val array = JSONArray(prefs.getString("vms", "[]") ?: "[]")
         for (i in 0 until array.length()) {
@@ -18,18 +113,10 @@ class VmStore(context: Context) {
         return result
     }
 
-    fun save(items: List<VmConfig>) {
+    private fun writeUnlocked(items: List<VmConfig>) {
         val array = JSONArray()
         items.forEach { array.put(encode(it)) }
         prefs.edit().putInt("schemaVersion", schemaVersion).putString("vms", array.toString()).apply()
-    }
-
-    fun update(id: String, block: (VmConfig) -> Unit): VmConfig? {
-        val items = list()
-        val vm = items.firstOrNull { it.id == id } ?: return null
-        block(vm)
-        save(items)
-        return vm
     }
 
     fun encodeConfigForPackage(vm: VmConfig): JSONObject = encode(vm)

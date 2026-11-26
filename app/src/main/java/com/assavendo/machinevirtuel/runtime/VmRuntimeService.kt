@@ -124,36 +124,55 @@ class VmRuntimeService : Service() {
             return
         }
 
-        val vm = original.copy()
+        var vm = original.copy()
         var tapOwned = false
         var lastError: Throwable? = null
         var launchedHandle: Handle? = null
         var launchedHandleRegistered = false
 
         try {
-            VmSpecValidator.validate(vm).firstOrNull { it.fatal }?.let { error(it.message) }
-            val paths = RuntimeInstaller.ensure(this)
-            val usbAttachments = UsbPassthroughManager.resolveAll(this, vm.usbPassthrough)
-
-            if (vm.networkMode == NetworkMode.TAP) {
-                val tap = TapNetworkManager()
-                tapOwned = !tap.exists(vm.tapName)
-                check(tap.ensureInterface(vm.tapName)) {
-                    "Impossible de preparer l'interface TAP " + vm.tapName
+            // Hold the per-VM lock from the latest configuration read through STARTING
+            // publication. Offline disk operations and startup therefore cannot race,
+            // and independent VM IDs remain free to progress.
+            val (paths, host, usbAttachments) = store.withVmLock(id) {
+                val current = store.list().firstOrNull { it.id == id }
+                    ?: error("VM configuration disappeared before startup admission.")
+                check(current.state == VmState.OFF) {
+                    "VM startup requires confirmed OFF state; current state is " + current.state.name
                 }
-            }
-
-            val host = HostCapabilityScanner(this).scan()
-            val admitted = runtimeGate.runIfOpen {
-                synchronized(admissionLock) {
-                    val admission = ResourceAdmissionController.check(vm, store.list(), host)
-                    check(admission.allowed) { admission.reason }
-                    check(persistVmUpdate(store, id) { it.state = VmState.STARTING } != null) {
-                        "VM configuration disappeared before startup admission."
+                vm = current.copy()
+                VmSpecValidator.validate(vm).firstOrNull { it.fatal }?.let { error(it.message) }
+                val runtimePaths = RuntimeInstaller.ensure(this)
+                val resolvedUsb = UsbPassthroughManager.resolveAll(this, vm.usbPassthrough)
+                if (vm.networkMode == NetworkMode.TAP) {
+                    val tap = TapNetworkManager()
+                    tapOwned = !tap.exists(vm.tapName)
+                    check(tap.ensureInterface(vm.tapName)) {
+                        "Impossible de preparer l'interface TAP " + vm.tapName
                     }
                 }
+                val hostCapabilities = HostCapabilityScanner(this).scan()
+                val admitted = runtimeGate.runIfOpen {
+                    synchronized(admissionLock) {
+                        // Resource admission and OFF -> STARTING are one collection
+                        // transaction. Parallel starts/creates cannot consume the
+                        // same apparent free-RAM budget from a stale snapshot.
+                        store.mutate { items ->
+                            val latest = items.firstOrNull { it.id == id }
+                                ?: error("VM configuration disappeared before startup admission.")
+                            check(latest.state == VmState.OFF) {
+                                "VM startup requires confirmed OFF state; current state is " + latest.state.name
+                            }
+                            val admission = ResourceAdmissionController.check(latest, items, hostCapabilities)
+                            check(admission.allowed) { admission.reason }
+                            vm = latest.copy()
+                            latest.state = VmState.STARTING
+                        }
+                    }
+                }
+                check(admitted) { "Runtime service is shutting down; VM startup was not admitted." }
+                Triple(runtimePaths, hostCapabilities, resolvedUsb)
             }
-            check(admitted) { "Runtime service is shutting down; VM startup was not admitted." }
 
             DiskManager.ensureVmStorage(filesDir, vm, paths)
             DiskManager.ensureNvram(vm, DiskManager.firmwareTemplate(paths, vm))
@@ -393,8 +412,16 @@ class VmRuntimeService : Service() {
             if (!recorded || orphanedProcess) {
                 persistVmUpdate(store, id) { it.state = VmState.RECOVERY }
             }
-            val failedVm = store.list().firstOrNull { it.id == id } ?: vm
-            val plan = RecoveryManager.plan(filesDir, failedVm, t.message ?: "VM start failed")
+            val failedVm = store.list().firstOrNull { it.id == id }
+            if (failedVm == null && !orphanedProcess) {
+                // A queued start may lose the race to a confirmed OFF deletion.
+                // No backend was admitted/launched, so do not leave recovery metadata
+                // for a VM which no longer exists.
+                RecoveryPlanStore.clear(filesDir, id)
+                logger.info("VM startup cancelled because its configuration was removed before admission.")
+                return
+            }
+            val plan = RecoveryManager.plan(filesDir, failedVm ?: vm, t.message ?: "VM start failed")
             RecoveryPlanStore.write(filesDir, plan)
             VmEventBus.emit(
                 VmEvent(
@@ -766,15 +793,14 @@ class VmRuntimeService : Service() {
             handle.recoveryRequiredOnExit ||
             runtimeGate.isClosed()
         val disposition = VmExitPolicy.resolve(exitCode, requestedStop, effectiveRecoveryRequired)
-        val vm = synchronized(admissionLock) {
-            val current = store.list()
-            current.firstOrNull { it.id == id }?.let { item ->
-                val previousState = item.copy()
+        var previousVm: VmConfig? = null
+        synchronized(admissionLock) {
+            store.update(id) { item ->
+                previousVm = item.copy()
                 item.state = disposition.state
-                store.save(current)
-                previousState
             }
         }
+        val vm = previousVm
         if (vm != null && disposition.requiresRecoveryPlan) {
             val reason = if (disposition.unexpectedFailure) {
                 "Backend " + handle.backend.label + " exited unexpectedly with code " + exitCode

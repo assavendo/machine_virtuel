@@ -48,6 +48,20 @@ class ResourceAdmissionTest {
         )
     }
 
+    @Test
+    fun stoppingRecoveryAndErrorVmsRetainTheirRamCommitment() {
+        val request = VmConfig(name = "new", ramMb = 2048)
+        listOf(VmState.STOPPING, VmState.RECOVERY, VmState.ERROR).forEachIndexed { index, state ->
+            val retained = VmConfig(name = "retained-$index", ramMb = 4096).apply { this.state = state }
+            val result = ResourceAdmissionController.check(
+                request,
+                listOf(retained),
+                host(8192, 7000),
+            )
+            assertFalse(result.allowed, "$state must retain its reserved RAM until reconciled")
+        }
+    }
+
     @Test fun excludesTheVmBeingRestartedFromItsOwnCommittedRam() {
         val vm = VmConfig(name = "restart", ramMb = 2048).apply { state = VmState.ERROR }
         assertTrue(ResourceAdmissionController.check(vm, listOf(vm), host(8192, 4096)).allowed)
