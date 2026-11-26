@@ -1,5 +1,14 @@
 # PhoenixVM — implementation status against the source cahier
 
+## Latest Section 9 increment — shared LRU and persistent profile aggregate corrections
+
+The L0 read path now refreshes the recency of the matching resident in L1 for both metadata and artifacts. Without this propagation, an active L0 manifest could remain the oldest L1 item and be evicted by a later artifact insertion even though the shared LRU policy was intended to account for its recent use. The existing cross-kind LRU regression test now exercises this precise sequence.
+
+The profile aggregate reader now parses the nested JSON string stored in the versioned metadata envelope, verifies that the profile compatibility fingerprint matches the envelope key, validates non-negative hit/miss/execution counters and their sum, and protects aggregate counters against integer overflow. putProfile() also rejects hit/miss additions that would overflow. New tests verify aggregate recovery from persisted profiles through a recreated manager and reject invalid overflow counters.
+
+These corrections improve the metadata/artifact cache foundation and its telemetry only. They do not connect the artifact API to QEMU's internal TCG translator and do not demonstrate persistent TCG Translation Block reuse. Section 9 therefore remains PARTIEL until the QEMU 11.1.3 core integration and cold/warm process-relaunch acceptance tests pass.
+
+
 ## Latest implementation increment — persistent translation cache foundation
 
 Section 9 now has a content-addressed cache API for translator-provided, relocation-safe artifacts and metadata. `TranslationCacheKey` includes SHA-256 of the exact guest code bytes, guest-build fingerprint, translator version, host architecture, CPU features and level. The VM-local key also includes the VM ID; the optional global key deliberately excludes it so compatible VMs can reuse an L3 entry without sharing per-VM execution counters.
