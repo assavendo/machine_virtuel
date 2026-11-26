@@ -588,7 +588,8 @@ class MainActivity : Activity() {
             pendingVmCreationStep = activeStep
             dialog.dismiss()
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                type = "application/octet-stream"
+                // ISO, VHD/QCOW and kernel images are exposed with different provider MIME types.
+                type = "*/*"
                 addCategory(Intent.CATEGORY_OPENABLE)
                 if (requestCode == 714) putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
             }, requestCode)
