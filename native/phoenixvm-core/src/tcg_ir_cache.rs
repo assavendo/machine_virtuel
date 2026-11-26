@@ -338,8 +338,9 @@ fn validate_operation_type(operation: &TcgIrOperation) -> Result<TcgValueType, T
             "unsupported TCG opcode parameter flags",
         ));
     }
-    match TcgValueType::decode(operation.param1)? {
-        TcgValueType::I32 | TcgValueType::I64 => Ok(TcgValueType::decode(operation.param1)?),
+    match operation.param1 {
+        value if value == TcgValueType::I32 as u8 => Ok(TcgValueType::I32),
+        value if value == TcgValueType::I64 as u8 => Ok(TcgValueType::I64),
         _ => Err(TcgIrCacheError::Invalid(
             "first TCG IR importer supports only I32/I64 scalar operations",
         )),
