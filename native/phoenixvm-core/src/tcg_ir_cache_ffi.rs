@@ -1311,7 +1311,7 @@ mod tests {
             unsafe { phoenixvm_tcg_l1_lookup(handle, &key, &mut block) },
             -1
         );
-        assert!(started.elapsed() < Duration::from_millis(100));
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
         drop(write_guard);
 
         assert_eq!(
@@ -1319,7 +1319,7 @@ mod tests {
             0
         );
         unsafe { phoenixvm_tcg_l2_close(handle) };
-        fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
