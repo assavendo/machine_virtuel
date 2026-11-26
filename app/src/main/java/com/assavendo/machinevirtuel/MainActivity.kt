@@ -500,9 +500,6 @@ class MainActivity : Activity() {
         }
         updateSecureBootAvailability()
         val autoSnapshot = checkBox("Créer un snapshot froid initial", base.autoSnapshotOnInstall)
-        val androidAdb = checkBox("Activer ADB réseau (Android invité uniquement)", base.androidAdbEnabled)
-        addLabel("Port hôte ADB")
-        val adbPort = edit(base.androidAdbHostPort.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
         fun updateAndroidControls() {
             val isAndroid = GuestOsChoice.entries[osSpinner.selectedItemPosition] == GuestOsChoice.ANDROID
             androidAdb.isEnabled = isAndroid
@@ -606,6 +603,9 @@ class MainActivity : Activity() {
         artifactButton("Choisir Android vendor.img (facultatif)", "android-vendor", 712)
         artifactButton("Choisir Android userdata.img", "android-userdata", 713)
         artifactButton("Ajouter des fichiers ponctuels au dossier partagé", "shared-files", 714)
+        val androidAdb = checkBox("Activer ADB réseau (Android invité uniquement)", base.androidAdbEnabled)
+        addLabel("Port hôte ADB")
+        val adbPort = edit(base.androidAdbHostPort.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
         content.addView(cardText().apply {
             text = buildString {
                 append("ISO : ").append(base.isoPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "non sélectionnée").append('\n')
@@ -616,15 +616,7 @@ class MainActivity : Activity() {
             }
         })
 
-        val stepTitles = listOf(
-            "Architecture",
-            "Système invité et médias",
-            "Ressources",
-            "GPU et affichage",
-            "Réseau",
-            "Partage hôte / invité",
-            "Optimisation et sécurité",
-        )
+        val stepTitles = VmCreationWizardStep.entries.map { it.title }
         val progressLabel = TextView(this).apply {
             setTextColor(violet)
             textSize = 16f
@@ -647,17 +639,6 @@ class MainActivity : Activity() {
             scroll.removeAllViews()
             scroll.addView(stepPages[activeStep])
             progressLabel.text = "Étape ${activeStep + 1}/7 — ${stepTitles[activeStep]}"
-        }
-        fun stepForField(field: String): Int = when (field) {
-            "name", "arch" -> 0
-            "guestOs", "guestVersion", "isoPath", "diskPath", "kernelPath",
-            "initrdPath", "dtbPath", "androidSystemPath", "androidVendorPath",
-            "androidUserdataPath", "androidArtifacts" -> 1
-            "ramMb", "vCpu", "diskSizeGiB", "diskFormat" -> 2
-            "gpuBackend", "displayWidth", "displayHeight" -> 3
-            "network", "networkMode", "tapName", "androidAdbEnabled" -> 4
-            "sharedDirs", "sharedDirPath" -> 5
-            else -> 6
         }
         renderStep()
 
@@ -712,7 +693,7 @@ class MainActivity : Activity() {
 
                 val issues = VmSpecValidator.validate(config).filter { it.fatal }
                 if (issues.isNotEmpty()) {
-                    activeStep = stepForField(issues.first().field)
+                    activeStep = VmCreationWizardStep.forValidationField(issues.first().field).ordinal
                     renderStep()
                     updateNavigation()
                     toast(issues.joinToString("\n") { it.field + " : " + it.message })
