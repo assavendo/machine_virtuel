@@ -69,6 +69,24 @@ int32_t phoenixvm_tcg_l2_invalidate(PvTcgL2Handle *handle,
 int32_t phoenixvm_tcg_l2_invalidate_vm(PvTcgL2Handle *handle);
 
 /*
+ * Cache-worker API: perform bounded disk preload of the VM L2 into an
+ * in-memory resident L1. This function blocks on I/O and MUST NOT run on a
+ * vCPU thread.
+ */
+int32_t phoenixvm_tcg_l2_preload(PvTcgL2Handle *handle,
+                                 size_t max_entries,
+                                 uint64_t max_bytes);
+
+/*
+ * vCPU-path API: memory-only lookup after preload. This never accesses disk.
+ * Returns 1 on hit, 0 on miss, -1 on invalid input/lock error.
+ * On hit, the caller owns the block and must free it.
+ */
+int32_t phoenixvm_tcg_l1_lookup(PvTcgL2Handle *handle,
+                                const PvTcgCompatibility *compatibility,
+                                PvTcgIrBlockHandle **out_block);
+
+/*
  * Structured PVTCGIR v3 builder and reader. No QEMU process pointers are
  * accepted by this API. Operand tags: 0=Temp, 1=Global, 2=Immediate, 3=Label.
  * Type tags: I32=0, I64=1, I128=2, V64=3, V128=4, V256=5, Ptr=6.
