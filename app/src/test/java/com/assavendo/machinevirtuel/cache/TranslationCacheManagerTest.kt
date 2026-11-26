@@ -102,7 +102,7 @@ class TranslationCacheManagerTest {
             assertContentEquals(payload, cache.getArtifact(first))
             assertEquals(2L, cache.stats().l0Hits)
 
-            cache.putArtifact(second, byteArrayOf(21, 22, 23))
+            cache.putArtifact(second, byteArrayOf(21, 22, 23), relocationSafe = true)
             assertContentEquals(payload, cache.getArtifact(first))
             assertEquals(1L, cache.stats().l1Hits)
 
@@ -125,7 +125,7 @@ class TranslationCacheManagerTest {
             val vmB = key(destination, "vm-b")
             val payload = byteArrayOf(1, 3, 3, 7, 9)
 
-            source.putArtifact(vmA, payload, allowGlobalLevel3 = true)
+            source.putArtifact(vmA, payload, relocationSafe = true, allowGlobalLevel3 = true)
             assertContentEquals(payload, destination.getArtifact(vmB, allowGlobalLevel3 = true))
             assertEquals(1L, destination.stats().l3Hits)
 
@@ -191,7 +191,7 @@ class TranslationCacheManagerTest {
             val keyC = key(cacheC, "vm-c")
             val payload = byteArrayOf(4, 5, 6, 7)
 
-            cacheA.putArtifact(keyA, payload, allowGlobalLevel3 = true)
+            cacheA.putArtifact(keyA, payload, relocationSafe = true, allowGlobalLevel3 = true)
             cacheA.invalidateAll("vm-a")
             assertContentEquals(payload, cacheB.getArtifact(keyB, allowGlobalLevel3 = true))
             assertEquals(1L, cacheB.stats().l3Hits)
@@ -229,7 +229,7 @@ class TranslationCacheManagerTest {
         try {
             val cache = TranslationCacheManager.forTesting(root, policy())
             val key = key(cache, "vm-corrupt")
-            cache.putArtifact(key, byteArrayOf(7, 8, 9, 10))
+            cache.putArtifact(key, byteArrayOf(7, 8, 9, 10), relocationSafe = true)
             val artifactFile = File(root, cache.fingerprint(key.vmId))
                 .listFiles()
                 ?.single { it.name.endsWith(".artifact") }
