@@ -3,12 +3,29 @@ package com.assavendo.machinevirtuel
 import com.assavendo.machinevirtuel.vm.GuestArch
 import com.assavendo.machinevirtuel.vm.GuestOsChoice
 import com.assavendo.machinevirtuel.vm.VmCreationPolicy
+import com.assavendo.machinevirtuel.vm.VmCreationWizardStep
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class VmCreationPolicyTest {
+    @Test
+    fun wizardExposesSevenStableStepsAndRoutesValidationBackToTheOwningPage() {
+        assertEquals(7, VmCreationWizardStep.entries.size)
+        assertEquals(VmCreationWizardStep.ARCHITECTURE, VmCreationWizardStep.forValidationField("name"))
+        assertEquals(VmCreationWizardStep.ARCHITECTURE, VmCreationWizardStep.forValidationField("arch"))
+        assertEquals(VmCreationWizardStep.GUEST_OS_AND_MEDIA, VmCreationWizardStep.forValidationField("isoPath"))
+        assertEquals(VmCreationWizardStep.GUEST_OS_AND_MEDIA, VmCreationWizardStep.forValidationField("androidArtifacts"))
+        assertEquals(VmCreationWizardStep.GUEST_OS_AND_MEDIA, VmCreationWizardStep.forValidationField("androidAdbHostPort"))
+        assertEquals(VmCreationWizardStep.RESOURCES, VmCreationWizardStep.forValidationField("ramMb"))
+        assertEquals(VmCreationWizardStep.GRAPHICS, VmCreationWizardStep.forValidationField("gpuBackend"))
+        assertEquals(VmCreationWizardStep.NETWORK, VmCreationWizardStep.forValidationField("tapName"))
+        assertEquals(VmCreationWizardStep.SHARING, VmCreationWizardStep.forValidationField("sharedDirs"))
+        assertEquals(VmCreationWizardStep.OPTIMIZATION_AND_SECURITY, VmCreationWizardStep.forValidationField("secureBoot"))
+        assertTrue(VmCreationWizardStep.entries.all { it.title.isNotBlank() })
+    }
+
     @Test
     fun guestChoicesExposeOnlySupportedArchitectures() {
         assertEquals(setOf(GuestArch.ARM64), GuestOsChoice.ANDROID.allowedArchitectures())
