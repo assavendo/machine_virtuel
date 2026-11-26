@@ -737,6 +737,147 @@ mod tests {
     }
 
     #[test]
+    fn structured_c_abi_builds_stores_loads_and_inspects_tcg_ir() {
+        let root = std::env::temp_dir().join(format!(
+            "phoenixvm-tcg-ffi-structured-{}-{}",
+            std::process::id(),
+            TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let root_c = CString::new(root.to_string_lossy().as_bytes()).unwrap();
+        let vm = CString::new("ffi-vm-structured").unwrap();
+        let key = compatibility();
+
+        // SAFETY: input C strings and compatibility descriptors remain alive.
+        let handle = unsafe {
+            phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024)
+        };
+        assert!(!handle.is_null());
+
+        // SAFETY: key is valid for this call; builder owns its copied metadata.
+        let builder = unsafe { phoenixvm_tcg_ir_block_create(&key, 4, 1) };
+        assert!(!builder.is_null());
+        assert_eq!(
+            unsafe { phoenixvm_tcg_ir_block_add_temp(builder, 0, 0, 0, 1, 1, 0) },
+            0
+        );
+
+        let insn = CString::new("insn_start").unwrap();
+        let insn_index = unsafe {
+            phoenixvm_tcg_ir_block_add_operation(builder, insn.as_ptr(), 0, 0)
+        };
+        assert_eq!(insn_index, 0);
+        for value in [0x1000, 0, 0] {
+            assert_eq!(
+                unsafe {
+                    phoenixvm_tcg_ir_block_add_operand(builder, insn_index as u32, 2, value)
+                },
+                0
+            );
+        }
+
+        let mov = CString::new("mov").unwrap();
+        let mov_index = unsafe {
+            phoenixvm_tcg_ir_block_add_operation(
+                builder,
+                mov.as_ptr(),
+                crate::tcg_ir_cache::TcgValueType::I64 as u8,
+                0,
+            )
+        };
+        assert_eq!(mov_index, 1);
+        assert_eq!(
+            unsafe { phoenixvm_tcg_ir_block_add_operand(builder, 1, 0, 0) },
+            0
+        );
+        assert_eq!(
+            unsafe { phoenixvm_tcg_ir_block_add_operand(builder, 1, 1, 0) },
+            0
+        );
+        assert_eq!(unsafe { phoenixvm_tcg_l2_store_block(handle, builder) }, 0);
+        unsafe { phoenixvm_tcg_ir_block_free(builder) };
+
+        let mut decoded = ptr::null_mut();
+        assert_eq!(
+            unsafe { phoenixvm_tcg_l2_load_block(handle, &key, &mut decoded) },
+            1
+        );
+        assert!(!decoded.is_null());
+
+        let (mut guest_size, mut instruction_count) = (0, 0);
+        let (mut temp_count, mut label_count, mut operation_count) = (0, 0, 0);
+        assert_eq!(
+            unsafe {
+                phoenixvm_tcg_ir_block_get_summary(
+                    decoded,
+                    &mut guest_size,
+                    &mut instruction_count,
+                    &mut temp_count,
+                    &mut label_count,
+                    &mut operation_count,
+                )
+            },
+            0
+        );
+        assert_eq!((guest_size, instruction_count), (4, 1));
+        assert_eq!((temp_count, label_count, operation_count), (1, 0, 2));
+
+        let (mut id, mut base_id) = (0, 0);
+        let (mut subindex, mut base_type, mut value_type, mut kind) = (0, 0, 0, 0);
+        assert_eq!(
+            unsafe {
+                phoenixvm_tcg_ir_block_get_temp(
+                    decoded,
+                    0,
+                    &mut id,
+                    &mut base_id,
+                    &mut subindex,
+                    &mut base_type,
+                    &mut value_type,
+                    &mut kind,
+                )
+            },
+            0
+        );
+        assert_eq!((id, base_id, subindex), (0, 0, 0));
+        assert_eq!((base_type, value_type, kind), (1, 1, 0));
+
+        let (mut opcode, mut opcode_len) = (ptr::null(), 0);
+        let (mut param1, mut param2, mut operand_count) = (0, 0, 0);
+        assert_eq!(
+            unsafe {
+                phoenixvm_tcg_ir_block_get_operation(
+                    decoded,
+                    1,
+                    &mut opcode,
+                    &mut opcode_len,
+                    &mut param1,
+                    &mut param2,
+                    &mut operand_count,
+                )
+            },
+            0
+        );
+        assert_eq!(unsafe { slice::from_raw_parts(opcode, opcode_len) }, b"mov");
+        assert_eq!((param1, param2, operand_count), (1, 0, 2));
+
+        let (mut tag, mut value) = (0, 0);
+        assert_eq!(
+            unsafe { phoenixvm_tcg_ir_block_get_operand(decoded, 1, 0, &mut tag, &mut value) },
+            0
+        );
+        assert_eq!((tag, value), (0, 0));
+        assert_eq!(
+            unsafe { phoenixvm_tcg_ir_block_get_operand(decoded, 1, 1, &mut tag, &mut value) },
+            0
+        );
+        assert_eq!((tag, value), (1, 0));
+
+        unsafe { phoenixvm_tcg_ir_block_free(decoded) };
+        unsafe { phoenixvm_tcg_l2_close(handle) };
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn c_abi_round_trips_vm_scoped_v3_records_and_invalidation() {
         let root = std::env::temp_dir().join(format!(
             "phoenixvm-tcg-ffi-{}-{}",
