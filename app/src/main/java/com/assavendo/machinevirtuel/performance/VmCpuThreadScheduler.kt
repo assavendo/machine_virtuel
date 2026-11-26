@@ -56,11 +56,11 @@ object VmCpuThreadScheduler {
         vcpus.forEachIndexed { index, tid ->
             val cpu = decision.assignedCpuIds.getOrNull(index)
             if (cpu != null) {
-                placements += CpuThreadPlacement(tid, listOf(cpu), decision.threadPriority)
+                placements += CpuThreadPlacement(tid, listOf(cpu), decision.threadPriority.coerceIn(0, 10))
             }
         }
 
-        val ioPriority = (decision.threadPriority + 3).coerceAtLeast(0).coerceAtMost(19)
+        val ioPriority = (decision.threadPriority.coerceIn(0, 10) + 3).coerceIn(0, 19)
         ioThreads.forEach { tid ->
             placements += CpuThreadPlacement(tid, decision.assignedCpuIds, ioPriority)
         }
@@ -98,7 +98,7 @@ object VmCpuThreadScheduler {
 
             placement.priority?.let { priority ->
                 val success = runCatching {
-                    Process.setThreadPriority(placement.threadId.toInt(), priority.coerceIn(-4, 19))
+                    Process.setThreadPriority(placement.threadId.toInt(), priority.coerceIn(0, 19))
                     true
                 }.getOrDefault(false)
                 if (success) priorityApplied++ else priorityFailed++
