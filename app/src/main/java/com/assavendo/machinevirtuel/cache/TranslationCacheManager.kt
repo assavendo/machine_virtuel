@@ -267,9 +267,13 @@ class TranslationCacheManager private constructor(
     fun putArtifact(
         key: TranslationCacheKey,
         artifact: ByteArray,
+        relocationSafe: Boolean,
         allowGlobalLevel3: Boolean = policy.globalLevel3Enabled,
     ) {
         validateKey(key)
+        require(relocationSafe) {
+            "Persistent translation artifacts must be explicitly declared relocation-safe."
+        }
         require(artifact.isNotEmpty() && artifact.size <= policy.maxArtifactBytes) {
             "Translation artifact is empty or exceeds the configured per-artifact limit."
         }
@@ -710,6 +714,7 @@ class TranslationCacheManager private constructor(
             .put("level", key.level)
             .put("artifact_sha256", fingerprintCode(payload))
             .put("artifact_bytes", payload.size)
+            .put("relocation_safe", true)
         if (scope == "VM") header.put("vm_id_hash", fingerprint(key.vmId))
         val headerBytes = header.toString().toByteArray(Charsets.UTF_8)
         require(headerBytes.size <= ARTIFACT_HEADER_MAX_BYTES)
@@ -739,6 +744,7 @@ class TranslationCacheManager private constructor(
                 val payloadLength = input.readInt()
                 require(payloadLength in 1..policy.maxArtifactBytes)
                 require(header.getInt("artifact_bytes") == payloadLength)
+                require(header.getBoolean("relocation_safe"))
                 require(header.getInt("format_version") == FORMAT_VERSION)
                 require(header.getString("scope") == scope)
                 require(header.getString("key_fingerprint") == id)
