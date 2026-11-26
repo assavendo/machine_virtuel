@@ -76,6 +76,7 @@ class VmMetricsRegistryTest {
             assertEquals(8.69, sample.guestCpuIoWaitPercent)
             assertEquals(4.34, sample.guestCpuInterruptPercent)
             assertEquals(60L, sample.guestCpuTimeDeltaMs)
+            assertEquals(1000L, sample.guestCpuIntervalMs)
 
             val window = VmMetricsRegistry.windows("vm-linux-agent").first()
             assertEquals(8.69, window.guestCpuIoWaitAvgPercent)
