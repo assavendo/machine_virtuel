@@ -1011,7 +1011,11 @@ class MainActivity : Activity() {
             append("Attente I/O guest : ").append(value(latest?.guestCpuIoWaitPercent, " %")).append("\n")
             append("Interruptions guest : ").append(value(latest?.guestCpuInterruptPercent, " %")).append("\n")
             append("Temps CPU guest (échantillon) : ")
-                .append(latest?.guestCpuTimeDeltaMs?.let { "$it ms" } ?: "indisponible")
+                .append(
+                    if (latest?.guestCpuTimeDeltaMs != null && latest.guestCpuIntervalMs != null) {
+                        latest.guestCpuTimeDeltaMs.toString() + " ms sur " + latest.guestCpuIntervalMs + " ms"
+                    } else "indisponible"
+                )
                 .append("\n")
             append("Attente I/O hôte : ").append(value(latest?.systemCpuIoWaitPercent, " %")).append("\n")
             append("vCPU host-thread : ").append(value(latest?.vCpuUtilization, " %")).append("\n")
