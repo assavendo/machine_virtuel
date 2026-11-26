@@ -33,6 +33,10 @@ class VmManager(private val context: Context) {
     fun list(): List<VmConfig> = store.list()
     fun capabilities() = scanner.scan()
     fun cacheStats() = cache.stats()
+    fun translationCachePolicy() = cache.currentPolicy()
+    fun configureTranslationCache(policy: com.assavendo.machinevirtuel.cache.TranslationCachePolicy) =
+        cache.configure(policy)
+    fun cleanTranslationCache() = cache.cleanup()
 
     fun createDefault(name: String = "Linux ARM64 VM"): VmConfig {
         val caps = capabilities()
