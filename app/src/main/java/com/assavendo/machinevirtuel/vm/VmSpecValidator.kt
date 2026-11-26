@@ -18,6 +18,13 @@ object VmSpecValidator {
             issues += ValidationIssue("diskSizeGiB", "La taille du disque doit être comprise entre 1 et 4096 Gio.", true)
         }
         if (vm.guestOs.isBlank()) issues += ValidationIssue("guestOs", "Le système invité doit être sélectionné.", true)
+        if (vm.guestAgentEnabled && !vm.guestOs.startsWith("Linux", ignoreCase = true)) {
+            issues += ValidationIssue(
+                "guestAgentEnabled",
+                "QEMU Guest Agent CPU statistics require a Linux guest selected in the Linux profile.",
+                true,
+            )
+        }
         if (vm.displayWidth !in 320..16384) issues += ValidationIssue("displayWidth", "Résolution horizontale invalide.", true)
         if (vm.displayHeight !in 240..16384) issues += ValidationIssue("displayHeight", "Résolution verticale invalide.", true)
 
