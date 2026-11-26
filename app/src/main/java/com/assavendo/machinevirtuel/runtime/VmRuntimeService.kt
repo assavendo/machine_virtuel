@@ -22,6 +22,7 @@ import com.assavendo.machinevirtuel.performance.DeviceTopology
 import com.assavendo.machinevirtuel.performance.GlobalVmScheduler
 import com.assavendo.machinevirtuel.performance.PerformanceOptimizer
 import com.assavendo.machinevirtuel.performance.VmMetricsRegistry
+import com.assavendo.machinevirtuel.performance.GuestCpuStatsTracker
 import com.assavendo.machinevirtuel.vm.*
 import java.io.File
 import java.io.FileOutputStream
@@ -277,6 +278,7 @@ class VmRuntimeService : Service() {
                         backend = backend.kind,
                         qmp = spec.qmpSocket,
                         controlSocket = controlSocket,
+                        guestAgentSocket = guestAgentSocket,
                         tapOwned = tapOwned,
                         virtioFs = fsHandle,
                         tpm = tpmHandle,
@@ -316,6 +318,7 @@ class VmRuntimeService : Service() {
                     if (launchedHandle != null) throw t
                     VirtioFsManager.stop(fsHandle)
                     TpmManager.stop(tpmHandle)
+                    FilePaths.guestAgent(id).delete()
                     lastError = t
                     appendLog(log, "BACKEND " + backend.kind.label + " FAILED: " + (t.message ?: "unknown") + "\n")
                 }
@@ -467,6 +470,8 @@ class VmRuntimeService : Service() {
         var lastThreadPolicyAppliedMs = 0L
         var cachedTranslationAggregate = TranslationCacheManager(this).aggregate(id)
         val vcpuSampler = VmCpuThreadSampler()
+        val guestCpuTracker = GuestCpuStatsTracker()
+        var lastGuestAgentSampleMs = 0L
         val audioMonitor = if (vm.audioEnabled) {
             AudioLogMonitor(FilePaths.log(id))
         } else {
@@ -493,6 +498,18 @@ class VmRuntimeService : Service() {
 
                 val vCpuUtilization = vcpuSampler.sample(cachedVcpuThreadIds)
                 val audioUnderruns = audioMonitor?.sample()
+                var guestCpuMetrics: com.assavendo.machinevirtuel.performance.GuestCpuMetrics? = null
+                if (vm.guestAgentEnabled && handle.guestAgentSocket != null &&
+                    now - lastGuestAgentSampleMs >= 5_000L
+                ) {
+                    val guestCounters = QemuGuestAgentClient.queryLinuxCpuStats(handle.guestAgentSocket)
+                    if (guestCounters == null) {
+                        guestCpuTracker.reset()
+                    } else {
+                        guestCpuMetrics = guestCpuTracker.update(guestCounters, now)
+                    }
+                    lastGuestAgentSampleMs = now
+                }
                 VmMetricsRegistry.record(
                     id,
                     sample,
@@ -502,6 +519,7 @@ class VmRuntimeService : Service() {
                     translationMs = cachedTranslationAggregate.averageTranslationMs,
                     audioUnderruns = audioUnderruns,
                     audioLatencyConfiguredMs = vm.audioBufferMs.toDouble().takeIf { vm.audioEnabled },
+                    guestCpuMetrics = guestCpuMetrics,
                 )
                 val host = cachedHost ?: error("Host capability cache unavailable.")
                 val topology = cachedTopology ?: error("CPU topology cache unavailable.")
@@ -897,6 +915,7 @@ class VmRuntimeService : Service() {
 
     private fun cleanupHandleResources(id: String, handle: Handle) {
         handle.controlSocket?.delete()
+        handle.guestAgentSocket?.delete()
         runCatching { VirtioFsManager.stop(handle.virtioFs) }
             .onFailure { VmLogger(this, id).warn("virtiofsd cleanup failed: " + (it.message ?: "unknown")) }
         runCatching { TpmManager.stop(handle.tpm) }
@@ -1022,6 +1041,7 @@ class VmRuntimeService : Service() {
         val backend: BackendKind,
         val qmp: File?,
         val controlSocket: File?,
+        val guestAgentSocket: File?,
         val tapOwned: Boolean,
         val virtioFs: VirtioFsHandle?,
         val tpm: TpmHandle?,
