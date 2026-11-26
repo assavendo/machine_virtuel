@@ -12,12 +12,13 @@
 
 #include "qemu/osdep.h"
 
-#ifndef CONFIG_USER_ONLY
+#if !defined(CONFIG_USER_ONLY) && defined(CONFIG_POSIX)
 
 #include <dlfcn.h>
 #include <unistd.h>
 
 #include "accel/tcg/phoenixvm-tcg-cache.h"
+#include "accel/tcg/phoenixvm-tcg-cache-ffi.h"
 #include "accel/tcg/cpu-mmu-index.h"
 #include "exec/translation-block.h"
 #include "system/physmem.h"
@@ -1272,7 +1273,7 @@ void phoenixvm_tcg_cache_store(CPUState *cpu,
     }
 }
 
-#else /* CONFIG_USER_ONLY */
+#else /* CONFIG_USER_ONLY || !CONFIG_POSIX */
 
 void phoenixvm_tcg_cache_start(void)
 {
