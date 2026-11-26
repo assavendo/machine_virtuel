@@ -12,9 +12,9 @@ import kotlin.math.max
 
 data class HostMetrics(
     val timestampMs: Long,
-    val processCpuPercent: Double,
+    val processCpuPercent: Double?,
     val systemCpuPercent: Double,
-    val processRssMb: Long,
+    val processRssMb: Long?,
     val availableMemoryMb: Long,
     val totalMemoryMb: Long = 0,
     val thermalStatus: Int,
@@ -106,7 +106,7 @@ class HostMetricsCollector(
         ) {
             ((processCpuNs - previousProcessCpu).toDouble() / sampleDeltaNs.toDouble() /
                 cpuCount.toDouble()) * 100.0
-        } else 0.0
+        } else null
         if (processCpuNs != null) lastProcessCpuNs = processCpuNs
         lastWallNs = nowNs
 
@@ -150,7 +150,7 @@ class HostMetricsCollector(
 
         return HostMetrics(
             timestampMs = System.currentTimeMillis(),
-            processCpuPercent = processPercent.coerceIn(0.0, 100.0),
+            processCpuPercent = processPercent?.coerceIn(0.0, 100.0),
             systemCpuPercent = cpuMetrics.first,
             processRssMb = readProcessRssMb(),
             availableMemoryMb = memory.availMem / (1024L * 1024L),
@@ -191,14 +191,14 @@ class HostMetricsCollector(
         return totalTicks * 1_000_000_000L / clockTicksPerSecond
     }
 
-    private fun readProcessRssMb(): Long {
-        val pid = targetPid ?: return 0L
+    private fun readProcessRssMb(): Long? {
+        val pid = targetPid ?: return null
         val status = File("/proc/$pid/status")
-        if (!status.isFile) return 0L
+        if (!status.isFile) return null
         val line = runCatching {
             status.useLines { lines -> lines.firstOrNull { it.startsWith("VmRSS:") } }
-        }.getOrNull() ?: return 0L
-        val kb = line.trim().split(Regex("\\s+")).getOrNull(1)?.toLongOrNull() ?: return 0L
+        }.getOrNull() ?: return null
+        val kb = line.trim().split(Regex("\\s+")).getOrNull(1)?.toLongOrNull() ?: return null
         return kb / 1024L
     }
 
