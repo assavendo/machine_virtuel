@@ -731,32 +731,6 @@ static bool pv_restore_block(PvTcgCacheApi *api,
                 goto out;
             }
 
-            if (pv_name_is(name, name_len, "movi")) {
-                uint8_t tag;
-                int64_t immediate;
-                TCGTemp *dest;
-
-                if (def->nb_oargs != 1 || def->nb_iargs != 0 ||
-                    def->nb_cargs != 1 || operand_count != 2) {
-                    goto out;
-                }
-                dest = pv_restore_value(api, block, i, 0, type,
-                                        temps, temp_count, true);
-                if (dest == NULL ||
-                    !pv_read_operand(api, block, i, 1, &tag, &immediate) ||
-                    tag != PV_OPERAND_IMMEDIATE) {
-                    goto out;
-                }
-                op = tcg_emit_op(opcode, def->nb_args);
-                TCGOP_TYPE(op) = type;
-                TCGOP_FLAGS(op) = param2;
-                op->args[0] = temp_arg(dest);
-                op->args[1] = type == TCG_TYPE_I32
-                              ? (TCGArg)(uint32_t)immediate
-                              : (TCGArg)immediate;
-                continue;
-            }
-
             if (pv_name_is(name, name_len, "mov") ||
                 pv_name_is(name, name_len, "add") ||
                 pv_name_is(name, name_len, "sub") ||
@@ -902,13 +876,6 @@ static bool pv_supported_operation(const TCGOp *op, const TCGOpDef **out_def)
         if (def->nb_oargs != 0 || def->nb_iargs != 0 ||
             def->nb_cargs != INSN_START_WORDS ||
             op->param1 != 0 || op->param2 != 0) {
-            return false;
-        }
-    } else if (strcmp(def->name, "movi") == 0) {
-        if (def->nb_oargs != 1 || def->nb_iargs != 0 ||
-            def->nb_cargs != 1 ||
-            (op->param1 != TCG_TYPE_I32 && op->param1 != TCG_TYPE_I64) ||
-            op->param2 != 0) {
             return false;
         }
     } else if (strcmp(def->name, "mov") == 0) {
@@ -1206,17 +1173,6 @@ static bool pv_serialize_translation(PvTcgCacheState *state,
             index = value - base;
             if ((index != 0 && index != 1 && index != 3) ||
                 !pv_add_immediate(&state->api, block, this_op, index)) {
-                goto out;
-            }
-        } else if (strcmp(name, "movi") == 0) {
-            if (!pv_add_temp_operand(&state->api, block, this_op,
-                                      arg_temp(op->args[0]), true, temp_map)) {
-                goto out;
-            }
-            if (!pv_add_immediate(&state->api, block, this_op,
-                                  op->param1 == TCG_TYPE_I32
-                                  ? (int32_t)(uint32_t)op->args[1]
-                                  : (int64_t)op->args[1])) {
                 goto out;
             }
         } else {
