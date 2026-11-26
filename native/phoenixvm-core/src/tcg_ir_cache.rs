@@ -443,7 +443,7 @@ impl TcgIrBlock {
     pub fn read_file(path: impl AsRef<Path>) -> Result<Self, TcgIrCacheError> {
         let mut file = File::open(path).map_err(|error| TcgIrCacheError::Io(error.kind()))?;
         let mut encoded = Vec::new();
-        file.by_ref()
+        Read::by_ref(&mut file)
             .take((MAX_CACHE_BYTES + 1) as u64)
             .read_to_end(&mut encoded)
             .map_err(|error| TcgIrCacheError::Io(error.kind()))?;
