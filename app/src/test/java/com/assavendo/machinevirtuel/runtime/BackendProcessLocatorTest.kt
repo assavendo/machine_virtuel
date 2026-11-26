@@ -6,25 +6,52 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class BackendProcessLocatorTest {
+    private fun writeCmdline(proc: File, pid: Int, vararg args: String) {
+        val directory = File(proc, pid.toString()).apply { mkdirs() }
+        val bytes = args.joinToString(separator = "\u0000", postfix = "\u0000")
+        File(directory, "cmdline").writeBytes(bytes.toByteArray())
+    }
+
     @Test
-    fun resolvesTheBackendMatchingItsControlSocketAmongMultipleVMs() {
+    fun resolvesTheActualBackendRatherThanItsSuWrapperAmongMultipleVms() {
         val proc = createTempDir(prefix = "phoenix-proc-fixture-")
         try {
-            val qemuOld = File(proc, "120").apply { mkdirs() }
-            File(qemuOld, "cmdline").writeBytes(
-                "/opt/qemu-system-aarch64\\u0000-qmp\\u0000unix:/run/vm-a.qmp\\u0000".toByteArray()
+            // A su command line may contain the full child command, but argv[0] is still su.
+            writeCmdline(
+                proc,
+                60,
+                "/system/bin/su",
+                "-c",
+                "/opt/qemu-system-aarch64 -qmp unix:/run/vm-b.qmp",
             )
-            val qemuTarget = File(proc, "240").apply { mkdirs() }
-            File(qemuTarget, "cmdline").writeBytes(
-                "/opt/qemu-system-aarch64\\u0000-qmp\\u0000unix:/run/vm-b.qmp\\u0000".toByteArray()
+            writeCmdline(
+                proc,
+                120,
+                "/opt/qemu-system-aarch64",
+                "-qmp",
+                "unix:/run/vm-a.qmp",
             )
-            val crosvm = File(proc, "360").apply { mkdirs() }
-            File(crosvm, "cmdline").writeBytes(
-                "/opt/crosvm\\u0000run\\u0000--socket\\u0000/run/vm-c.sock\\u0000".toByteArray()
+            writeCmdline(
+                proc,
+                240,
+                "/opt/qemu-system-aarch64",
+                "-qmp",
+                "unix:/run/vm-b.qmp",
             )
-            val unrelated = File(proc, "480").apply { mkdirs() }
-            File(unrelated, "cmdline").writeBytes(
-                "/opt/qemu-system-aarch64\\u0000-qmp\\u0000unix:/run/other.qmp\\u0000".toByteArray()
+            writeCmdline(
+                proc,
+                360,
+                "/opt/crosvm",
+                "run",
+                "--socket",
+                "/run/vm-c.sock",
+            )
+            writeCmdline(
+                proc,
+                480,
+                "/opt/qemu-system-aarch64",
+                "-qmp",
+                "unix:/run/other.qmp",
             )
 
             assertEquals(
@@ -44,9 +71,12 @@ class BackendProcessLocatorTest {
     fun missingExecutableOrControlSocketMatchReturnsNull() {
         val proc = createTempDir(prefix = "phoenix-proc-missing-")
         try {
-            val process = File(proc, "120").apply { mkdirs() }
-            File(process, "cmdline").writeBytes(
-                "/opt/qemu-system-aarch64\\u0000-qmp\\u0000unix:/run/vm.qmp\\u0000".toByteArray()
+            writeCmdline(
+                proc,
+                120,
+                "/opt/qemu-system-aarch64",
+                "-qmp",
+                "unix:/run/vm.qmp",
             )
             assertNull(BackendProcessLocator.find(proc, "qemu-system", "/run/missing.qmp"))
             assertNull(BackendProcessLocator.find(proc, "crosvm", "/run/vm.qmp"))
