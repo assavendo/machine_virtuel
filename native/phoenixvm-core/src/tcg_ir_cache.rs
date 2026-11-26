@@ -912,6 +912,15 @@ impl TcgIrL2Store {
             .lock
             .lock()
             .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        let directory = self.vm_directory(vm_id);
+        let metadata = match fs::symlink_metadata(&directory) {
+            Ok(value) => value,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(TcgIrCacheError::Io(error.kind())),
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(TcgIrCacheError::Invalid("VM cache path must be a real directory"));
+        }
         let path = self.entry_path(vm_id, compatibility)?;
         match fs::remove_file(path) {
             Ok(()) => Ok(()),
@@ -959,7 +968,9 @@ impl TcgIrL2Store {
         self.scan_entries().map(|entries| {
             TcgIrL2Stats {
                 entries: entries.len(),
-                bytes: entries.iter().map(|entry| entry.bytes).sum(),
+                bytes: entries.iter().fold(0_u64, |total, entry| {
+                    total.saturating_add(entry.bytes)
+                }),
             }
         })
     }
@@ -1046,13 +1057,21 @@ impl TcgIrL2Store {
 
     fn cleanup_locked(&self) -> Result<TcgIrL2Stats, TcgIrCacheError> {
         let mut entries = self.scan_entries()?;
-        let mut bytes: u64 = entries.iter().map(|entry| entry.bytes).sum();
+        let mut bytes = entries.iter().fold(0_u64, |total, entry| {
+            total.saturating_add(entry.bytes)
+        });
         entries.sort_by_key(|entry| entry.modified);
 
-        while entries.len() > self.max_entries || bytes > self.max_bytes {
+        while (entries.len() > self.max_entries || bytes > self.max_bytes)
+            && !entries.is_empty()
+        {
             let oldest = entries.remove(0);
-            if fs::remove_file(&oldest.path).is_ok() {
-                bytes = bytes.saturating_sub(oldest.bytes);
+            match fs::remove_file(&oldest.path) {
+                Ok(()) => bytes = bytes.saturating_sub(oldest.bytes),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    bytes = bytes.saturating_sub(oldest.bytes);
+                }
+                Err(error) => return Err(TcgIrCacheError::Io(error.kind())),
             }
         }
 
