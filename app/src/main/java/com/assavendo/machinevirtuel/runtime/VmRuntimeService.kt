@@ -337,7 +337,6 @@ class VmRuntimeService : Service() {
                     check(persistVmUpdate(store, id) {
                         it.backend = active.backend
                         it.state = VmState.RUNNING
-                        it.vCpu = vm.vCpu
                         it.monitoringIntervalMs = vm.monitoringIntervalMs
                         it.lastStartedAt = vm.lastStartedAt
                     } != null) {
