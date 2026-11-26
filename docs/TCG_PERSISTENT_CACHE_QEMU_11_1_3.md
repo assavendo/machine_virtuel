@@ -142,6 +142,10 @@ Les `TEMP_CONST` ne doivent pas être restaurés comme adresses temporaires : le
 
 Enfin, les opérations `qemu_ld/qemu_st` dépendent du contexte `guest_mo`, des chemins ldst différés et de la finalisation des labels de slow path. Elles ne sont pas équivalentes à des opérations arithmétiques ordinaires, même si leurs formes figurent dans `tcg_op_defs[]`.
 
+## Tests structurels ajoutés au codec v2
+
+Le codec vérifie maintenant que le nombre d'opérations `insn_start` est exactement égal à `instruction_count`, et que chaque entrée de table de labels pointe vers un unique `set_label` portant le même identifiant. Les tests de régression vérifient le rejet d'un compteur incomplet, d'un index de définition erroné et d'une opération de définition absente, ainsi que l'aller-retour ordonné des adresses d'instruction et du label. Le commit natif `d50ac449513549cc1b8d0089b63274a8ed6df95d` passe `cargo fmt --check` et `cargo test`; cette validation porte toujours sur le codec/store Rust, sans intégration C au TCG.
+
 ## Architecture requise pour une vraie persistance L2
 
 ### 1. Format de cache versionné et non exécutable
