@@ -158,12 +158,7 @@ impl ResidentL1 {
         let candidate = self
             .entries
             .iter()
-            .filter(|(_, entry)| {
-                entry
-                    .block
-                    .compatibility
-                    .matches_translation_probe(probe)
-            })
+            .filter(|(_, entry)| entry.block.compatibility.matches_translation_probe(probe))
             .max_by_key(|(_, entry)| entry.last_access.load(Ordering::Relaxed));
         let Some((_, entry)) = candidate else {
             return Ok(None);
@@ -1299,8 +1294,7 @@ mod tests {
         let root_c = CString::new(root.to_string_lossy().as_bytes()).unwrap();
         let vm = CString::new("ffi-vm-lock").unwrap();
         let key = compatibility();
-        let handle =
-            unsafe { phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024) };
+        let handle = unsafe { phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024) };
         assert!(!handle.is_null());
 
         let handle_ref = unsafe { &*handle };
