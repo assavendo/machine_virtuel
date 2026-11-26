@@ -198,6 +198,31 @@ impl TcgIrCompatibility {
     pub fn exactly_matches(&self, candidate: &Self) -> bool {
         self == candidate
     }
+
+    /// Match a lookup probe whose guest-code digest is deliberately unset.
+    ///
+    /// The caller must verify the candidate's stored digest against freshly
+    /// read guest code before restoring any cached operations. All other
+    /// compatibility dimensions, including the physical page set, match
+    /// exactly. This is only a candidate index, never an execution decision.
+    pub fn matches_translation_probe(&self, probe: &Self) -> bool {
+        self.qemu_build_id == probe.qemu_build_id
+            && self.guest_arch == probe.guest_arch
+            && self.guest_cpu_model == probe.guest_cpu_model
+            && self.guest_build_id == probe.guest_build_id
+            && self.host_arch == probe.host_arch
+            && self.host_abi == probe.host_abi
+            && self.host_endian == probe.host_endian
+            && self.host_page_size == probe.host_page_size
+            && self.host_cpu_features == probe.host_cpu_features
+            && self.guest_pc == probe.guest_pc
+            && self.guest_cs_base == probe.guest_cs_base
+            && self.tb_flags == probe.tb_flags
+            && self.tb_cflags == probe.tb_cflags
+            && self.mmu_index == probe.mmu_index
+            && self.physical_pages == probe.physical_pages
+            && self.tb_context_sha256 == probe.tb_context_sha256
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -448,6 +473,72 @@ fn validate_operation_schema(
 }
 
 impl TcgIrBlock {
+    /// Estimate the heap footprint retained by the decoded block in resident L1.
+    ///
+    /// This accounts for Vec capacities, String capacities, operation operands,
+    /// and the Arc control block. It is intentionally separate from the encoded
+    /// file size: resident quotas constrain RAM, not the on-disk representation.
+    pub fn resident_size_bytes(&self) -> u64 {
+        use std::mem::size_of;
+
+        let mut bytes = size_of::<TcgIrBlock>()
+            .saturating_add(2 * size_of::<usize>())
+            .saturating_add(self.compatibility.qemu_build_id.capacity())
+            .saturating_add(self.compatibility.guest_arch.capacity())
+            .saturating_add(self.compatibility.guest_cpu_model.capacity())
+            .saturating_add(self.compatibility.guest_build_id.capacity())
+            .saturating_add(self.compatibility.host_arch.capacity())
+            .saturating_add(self.compatibility.host_abi.capacity())
+            .saturating_add(
+                self.compatibility
+                    .host_cpu_features
+                    .capacity()
+                    .saturating_mul(size_of::<String>()),
+            )
+            .saturating_add(
+                self.compatibility
+                    .physical_pages
+                    .capacity()
+                    .saturating_mul(size_of::<u64>()),
+            )
+            .saturating_add(
+                self.temporaries
+                    .capacity()
+                    .saturating_mul(size_of::<TcgTempRecord>()),
+            )
+            .saturating_add(
+                self.labels
+                    .capacity()
+                    .saturating_mul(size_of::<TcgLabelRecord>()),
+            )
+            .saturating_add(
+                self.operations
+                    .capacity()
+                    .saturating_mul(size_of::<TcgIrOperation>()),
+            );
+
+        for feature in &self.compatibility.host_cpu_features {
+            bytes = bytes.saturating_add(feature.capacity());
+        }
+        for operation in &self.operations {
+            bytes = bytes
+                .saturating_add(operation.opcode.capacity())
+                .saturating_add(
+                    operation
+                        .operands
+                        .capacity()
+                        .saturating_mul(size_of::<TcgOperand>()),
+                );
+            for operand in &operation.operands {
+                if let TcgOperand::Helper(name) = operand {
+                    bytes = bytes.saturating_add(name.capacity());
+                }
+            }
+        }
+
+        u64::try_from(bytes).unwrap_or(u64::MAX)
+    }
+
     pub fn validate(&self) -> Result<(), TcgIrCacheError> {
         self.compatibility.validate()?;
         if self.guest_size == 0 {
