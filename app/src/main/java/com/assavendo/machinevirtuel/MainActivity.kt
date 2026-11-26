@@ -41,6 +41,7 @@ class MainActivity : Activity() {
     private var isoTargetVm: String? = null
     private var pendingVmCreationDraft: VmConfig? = null
     private var pendingVmCreationArtifact: String? = null
+    private var pendingVmCreationStep: Int = 0
 
     private val bg = Color.rgb(11, 14, 19)
     private val panel = Color.rgb(21, 26, 34)
@@ -274,7 +275,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun createVm(initial: VmConfig? = null) {
+    private fun createVm(initial: VmConfig? = null, initialStep: Int = 0) {
         val caps = manager.capabilities()
         val defaultRam = ResourceAdmissionController.check(
             VmConfig(name = "PhoenixVM", ramMb = 2048),
@@ -292,11 +293,25 @@ class MainActivity : Activity() {
         val vmId = base.id
         pendingVmCreationDraft = base
 
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(18, 8, 18, 8)
+        val stepPages = Array(7) {
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(18, 8, 18, 8)
+            }
         }
+        var buildStep = 0
+        var content = stepPages[0]
         fun section(label: String) {
+            buildStep = when {
+                label.startsWith("B —") -> 1
+                label.startsWith("C —") -> 2
+                label.startsWith("D —") -> 3
+                label.startsWith("E —") -> 4
+                label.startsWith("F —") -> 5
+                label.startsWith("G —") -> 6
+                else -> 0
+            }
+            content = stepPages[buildStep]
             content.addView(TextView(this).apply {
                 text = label
                 setTextColor(violet)
@@ -568,6 +583,7 @@ class MainActivity : Activity() {
             }
             pendingVmCreationDraft = draft
             pendingVmCreationArtifact = kind
+            pendingVmCreationStep = activeStep
             dialog.dismiss()
             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                 type = "application/octet-stream"
@@ -598,39 +614,131 @@ class MainActivity : Activity() {
             }
         })
 
-        val scroll = ScrollView(this).apply { addView(content) }
+        var activeStep = initialStep.coerceIn(0, stepPages.lastIndex)
+        pendingVmCreationStep = activeStep
+        val stepTitles = listOf(
+            "Architecture",
+            "Système invité et médias",
+            "Ressources",
+            "GPU et affichage",
+            "Réseau",
+            "Partage hôte / invité",
+            "Optimisation et sécurité",
+        )
+        val progressLabel = TextView(this).apply {
+            setTextColor(violet)
+            textSize = 16f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(18, 14, 18, 8)
+        }
+        val scroll = ScrollView(this).apply { isFillViewport = true }
+        val wizardRoot = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(progressLabel)
+            addView(
+                scroll,
+                LinearLayout.LayoutParams(
+                    -1,
+                    (resources.displayMetrics.heightPixels * 0.55f).toInt().coerceAtLeast(320),
+                ),
+            )
+        }
+        fun renderStep() {
+            scroll.removeAllViews()
+            scroll.addView(stepPages[activeStep])
+            progressLabel.text = "Étape ${activeStep + 1}/7 — ${stepTitles[activeStep]}"
+        }
+        fun stepForField(field: String): Int = when (field) {
+            "name", "arch" -> 0
+            "guestOs", "guestVersion", "isoPath", "diskPath", "kernelPath",
+            "initrdPath", "dtbPath", "androidSystemPath", "androidVendorPath",
+            "androidUserdataPath" -> 1
+            "ramMb", "vCpu", "diskSizeGiB", "diskFormat" -> 2
+            "gpuBackend", "displayWidth", "displayHeight" -> 3
+            "network", "networkMode", "tapName", "androidAdbEnabled" -> 4
+            "sharedDirs", "sharedDirPath" -> 5
+            else -> 6
+        }
+        renderStep()
+
         dialog = AlertDialog.Builder(this)
-            .setTitle("Assistant de création VM — configuration complète")
-            .setView(scroll)
+            .setTitle("Assistant de création VM — 7 étapes")
+            .setView(wizardRoot)
             .setNegativeButton("Annuler", null)
-            .setPositiveButton("Créer la VM", null)
+            .setNeutralButton("Précédent", null)
+            .setPositiveButton("Suivant", null)
             .create()
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val previousButton = dialog.getButton(AlertDialog.BUTTON_NEUTRAL)
+            val nextButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+
+            fun updateNavigation() {
+                previousButton.isEnabled = activeStep > 0
+                nextButton.text = if (activeStep == stepPages.lastIndex) "Créer la VM" else "Suivant"
+            }
+
+            previousButton.setOnClickListener {
+                if (activeStep > 0) {
+                    activeStep--
+                    pendingVmCreationStep = activeStep
+                    renderStep()
+                    updateNavigation()
+                }
+            }
+
+            nextButton.setOnClickListener {
+                if (activeStep < stepPages.lastIndex) {
+                    activeStep++
+                    pendingVmCreationStep = activeStep
+                    renderStep()
+                    updateNavigation()
+                    return@setOnClickListener
+                }
+
                 val config = runCatching { currentDraft() }.getOrElse {
+                    activeStep = 4
+                    renderStep()
+                    updateNavigation()
                     toast(it.message ?: "Configuration invalide.")
                     return@setOnClickListener
                 }
                 if (config.name.isBlank()) {
+                    activeStep = 0
+                    renderStep()
+                    updateNavigation()
                     toast("Le nom de la VM ne peut pas être vide.")
                     return@setOnClickListener
                 }
+
                 val issues = VmSpecValidator.validate(config).filter { it.fatal }
                 if (issues.isNotEmpty()) {
-                    toast(issues.joinToString("\n") { it.field + " : " + it.message })
+                    activeStep = stepForField(issues.first().field)
+                    renderStep()
+                    updateNavigation()
+                    toast(issues.joinToString("\\n") { it.field + " : " + it.message })
                     return@setOnClickListener
                 }
+
                 val existing = manager.list()
                 if (existing.any { it.name.equals(config.name, ignoreCase = true) }) {
+                    activeStep = 0
+                    renderStep()
+                    updateNavigation()
                     toast("Une VM porte déjà ce nom. Choisis un nom unique.")
                     return@setOnClickListener
                 }
+
                 val admission = ResourceAdmissionController.check(config, existing, caps)
                 if (!admission.allowed) {
+                    activeStep = 2
+                    renderStep()
+                    updateNavigation()
                     toast(admission.reason)
                     return@setOnClickListener
                 }
+
                 pendingVmCreationDraft = config
+                pendingVmCreationStep = 2
                 dialog.dismiss()
                 Toast.makeText(this, "Création de la VM en cours…", Toast.LENGTH_SHORT).show()
                 Thread({
@@ -639,19 +747,22 @@ class MainActivity : Activity() {
                         result.onSuccess {
                             pendingVmCreationDraft = null
                             pendingVmCreationArtifact = null
+                            pendingVmCreationStep = 0
                             toast("VM créée : ${it.name}. Le démarrage invité reste à valider.")
                         }.onFailure {
+                            pendingVmCreationDraft = config
+                            pendingVmCreationStep = 2
                             toast("Création impossible : " + (it.message ?: "erreur inconnue"))
+                            createVm(config, 2)
                         }
                         refresh()
                     }
                 }, "phoenixvm-vm-create").start()
             }
+            updateNavigation()
         }
         dialog.show()
-    }
-
-    private fun cloneVm(vm: VmConfig) {
+    }    private fun cloneVm(vm: VmConfig) {
         val input = EditText(this).apply {
             hint = "Nom du clone"
             setText(vm.name + " Clone")
@@ -1213,7 +1324,7 @@ class MainActivity : Activity() {
             val hasSelectedFile = data?.data != null || (requestCode == 714 && data?.clipData != null)
             if (resultCode != RESULT_OK || data == null || !hasSelectedFile) {
                 pendingVmCreationArtifact = null
-                if (draft != null) createVm(draft)
+                if (draft != null) createVm(draft, pendingVmCreationStep)
                 return
             }
             if (draft == null || kind == null) {
@@ -1248,10 +1359,10 @@ class MainActivity : Activity() {
                             if (selectedKind == "shared-files") "Fichiers ajoutés au partage de cette VM."
                             else "Fichier importé et copié dans le stockage privé PhoenixVM."
                         )
-                        createVm(updated)
+                        createVm(updated, pendingVmCreationStep)
                     }.onFailure { error ->
                         toast("Import du fichier impossible : " + (error.message ?: "erreur inconnue"))
-                        createVm(draft)
+                        createVm(draft, pendingVmCreationStep)
                     }
                 }
             }, "phoenixvm-create-artifact").start()
