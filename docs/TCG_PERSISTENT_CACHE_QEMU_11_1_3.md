@@ -124,6 +124,24 @@ Les appels (`call`), labels/branches (`set_label`, `br`, `brcond`), sorties/cha�
 
 Même après import d'IR, QEMU doit continuer à appliquer normalement `tcg_optimize()`, reachability/liveness, allocation de registres, génération code hôte, unwind, finalisation ldst/pool, insertion/lien TB et invalidation page. Le cache évite le décodage invité uniquement pour les formes entièrement prises en charge ; il ne restaure pas le code machine hôte ni les structures internes d'un ancien TB.
 
+## Précisions complémentaires du contexte et des métadonnées TB
+
+Le contexte de compatibilité doit aussi représenter l'ordre mémoire invité `TCGContext.guest_mo`, le mode de traduction (notamment MTTCG), les flags de comptage/icount, le mode single-step/replay, l'état des plugins TCG et les autres options qui changent la sémantique ou la forme des opérations. Ces valeurs doivent être prises depuis le contexte effectif du TB, pas déduites du seul profil utilisateur. Si une option active n'a pas de représentation complète dans la clé et dans l'IR, l'import doit être refusé.
+
+Le tableau des opérations impose une distinction entre :
+- les arguments sortie/entrée décrivant des temporaires ou globals ;
+- les arguments constants décrits par `TCGOpDef.nb_cargs` ;
+- les opérations à nombre d'arguments variable ou qui possèdent des pointeurs auxiliaires, comme `call` ;
+- les opérations spéciales qui imposent une reconstruction dédiée.
+
+Le champ `TCGOp.nargs` n'est pas une taille de format persistante fiable : QEMU peut réutiliser une structure dans `free_ops` avec une capacité supérieure au nombre d'arguments logiques. Le format doit encoder le nombre logique déterminé par `TCGOpDef` ou par le descripteur spécialisé ; le reconstructeur alloue ensuite la taille locale requise. `life`, `output_pref`, les liens intrusifs et les données de passes sont recalculés par les passes normales.
+
+Les `TEMP_CONST` ne doivent pas être restaurés comme adresses temporaires : leur valeur doit être encodée comme immédiat ou reconstruite avec `tcg_constant_internal()`. Pour les globals/fixed temps, la clé doit inclure un digest canonique du layout de `tcg_ctx->temps[0..nb_globals)` (nom, type, kind, registre fixe ou base/offset mémoire, relations indirectes) ; la validation par nom seul n'est pas suffisante. Les temporaires locaux seront remappés dans le contexte courant, leur ordre d'allocation n'a pas à reproduire les anciens pointeurs, mais chaque référence IR doit viser le nouveau temporaire correspondant.
+
+`INDEX_op_insn_start` est une opération dédiée dont les constantes constituent les données de restauration invitées. Sa présence et son ordre sont obligatoires pour régénérer `gen_insn_data`, `gen_insn_end_off`, `tb->icount` et les données compactées par `encode_search()`. Si un bloc ne contient pas exactement le nombre attendu de marqueurs, ou si un marqueur est manquant/non pris en charge, il doit être rejeté.
+
+Enfin, les opérations `qemu_ld/qemu_st` dépendent du contexte `guest_mo`, des chemins ldst différés et de la finalisation des labels de slow path. Elles ne sont pas équivalentes à des opérations arithmétiques ordinaires, même si leurs formes figurent dans `tcg_op_defs[]`.
+
 ## Architecture requise pour une vraie persistance L2
 
 ### 1. Format de cache versionné et non exécutable
