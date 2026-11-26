@@ -42,7 +42,10 @@ object DeviceTopology {
             .orEmpty()
         if (discovered.isEmpty()) return CpuTopology(emptyList(), emptyList(), emptyList(), emptyList())
 
-        val online = readCpuList(File(root, "online"))?.takeIf { it.isNotEmpty() } ?: discovered
+        val onlineFile = File(root, "online")
+        // If the kernel exposes an online mask but it is malformed/empty, fail closed
+        // instead of widening the set to every discovered CPU directory.
+        val online = if (onlineFile.isFile) readCpuList(onlineFile).orEmpty() else discovered.toSet()
         val allowed = readProcAllowedCpuList(procStatus)
             ?: cgroupFiles.firstNotNullOfOrNull(::readCpuList)
             ?: online.toSet()
@@ -119,13 +122,13 @@ object DeviceTopology {
                     ?.trim()
             }
         }.getOrNull() ?: return null
-        return parseCpuList(value).takeIf { it.isNotEmpty() }
+        return parseCpuList(value)
     }
 
     private fun readCpuList(file: File): Set<Int>? {
         if (!file.isFile) return null
         val text = runCatching { file.readText().trim() }.getOrNull() ?: return null
-        return parseCpuList(text).takeIf { it.isNotEmpty() }
+        return parseCpuList(text)
     }
 
     private fun readLong(file: File): Long? =
