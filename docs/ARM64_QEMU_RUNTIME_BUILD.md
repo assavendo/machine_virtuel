@@ -1,8 +1,8 @@
-# PhoenixVM — reproducible Android ARM64 QEMU runtime build
+# PhoenixVM — checksum-verified Android ARM64 QEMU source-build recipe
 
 ## Purpose
 
-The pinned DroidVM-Prebuilts bundle remains the default ARM64 runtime. This recipe adds a reproducible source-build route for the full-system `qemu-system-aarch64` executable and `qemu-img`, using the same QEMU release and verified source archive as the optional x86 runtime builder.
+The pinned DroidVM-Prebuilts bundle remains the default ARM64 runtime. This recipe adds a source-build route for the full-system `qemu-system-aarch64` executable and `qemu-img`, using the same QEMU release and checksum-verified source archive as the optional x86 runtime builder.
 
 It is a build/provenance prerequisite for future QEMU/TCG work. It does **not** currently replace the pinned runtime automatically, change the app's runtime selection, or implement persistent TCG Translation Blocks.
 
@@ -10,11 +10,11 @@ It is a build/provenance prerequisite for future QEMU/TCG work. It does **not** 
 
 Run the script natively from an Android ARM64/aarch64 environment such as Termux. It intentionally rejects x86 hosts and does not claim to be an Android cross-compiler.
 
-The build environment must provide:
-- `curl`, `sha256sum`, `tar`, `ninja`, `pkg-config`, and `getconf`;
+The build environment must provide a native Android ARM64 toolchain and at least:
+- `curl`, `sha256sum`, `tar`, `ninja`, `pkg-config`, `getconf`, `python3` 3.9+, `cc` and `c++`;
 - GLib and Pixman development packages;
 - libslirp development files exposed through the `slirp` pkg-config module;
-- enough free storage and memory for a full QEMU build.
+- enough free storage and memory for a full QEMU build. The default Ninja parallelism is capped at four jobs; set `NINJA_JOBS` explicitly to override it.
 
 The script derives the project root from its own location, so it can be invoked from any working directory:
 
@@ -46,7 +46,7 @@ The package contains the installed QEMU prefix libraries and a `SHA256SUMS` mani
 
 ## Integration and validation boundary
 
-This recipe makes the ARM64 QEMU source version, source hash, target list and build flags reproducible. The generated package is not yet consumed by the Android app's runtime installer and is not a tested drop-in replacement for the pinned DroidVM-Prebuilts binary. Dynamic dependency resolution, package import/rollback, device execution and guest boot must be implemented and validated before it can become a supported app runtime.
+This recipe pins and verifies the upstream QEMU source archive and records the target list/build flags. It is not yet a bit-for-bit reproducible build: the Termux toolchain and external dependency versions are supplied by the build host and are not locked by this repository. The generated package is not yet consumed by the Android app's runtime installer and is not a tested drop-in replacement for the pinned DroidVM-Prebuilts binary. Dynamic dependency resolution, package import/rollback, device execution and guest boot must be implemented and validated before it can become a supported app runtime.
 
 The build also does not add a persistent-TB patch. QEMU TCG's live Translation Blocks contain host-code and guest-state relationships, direct-jump chains and invalidation bookkeeping. A cache that reloads those blocks must be designed and tested inside the corresponding QEMU source tree; a generic Android-side artifact cache cannot safely serialize them.
 
