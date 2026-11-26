@@ -1,9 +1,12 @@
 use crate::tcg_ir_cache::{TcgEndian, TcgIrBlock, TcgIrCompatibility, TcgIrL2Store};
+use std::collections::HashMap;
 use std::ffi::{c_char, CStr};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::ptr;
 use std::slice;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 
 const MAX_FFI_STRING_BYTES: usize = 4096;
 const MAX_FFI_CPU_FEATURES: usize = 128;
@@ -38,6 +41,100 @@ pub struct PvTcgCompatibility {
 pub struct PvTcgL2Handle {
     store: TcgIrL2Store,
     vm_id: String,
+    resident: RwLock<ResidentL1>,
+    resident_clock: AtomicU64,
+}
+
+struct ResidentEntry {
+    block: Arc<TcgIrBlock>,
+    bytes: u64,
+    last_access: AtomicU64,
+}
+
+struct ResidentL1 {
+    entries: HashMap<[u8; 32], ResidentEntry>,
+    bytes: u64,
+    max_entries: usize,
+    max_bytes: u64,
+}
+
+impl ResidentL1 {
+    fn new(max_entries: usize, max_bytes: u64) -> Self {
+        Self {
+            entries: HashMap::new(),
+            bytes: 0,
+            max_entries: max_entries.max(1),
+            max_bytes: max_bytes.max(1),
+        }
+    }
+
+    fn insert(
+        &mut self,
+        block: TcgIrBlock,
+        access_clock: &AtomicU64,
+    ) -> Result<(), ()> {
+        let encoded_len = block.encode().map_err(|_| ())?.len() as u64;
+        if encoded_len > self.max_bytes {
+            return Ok(());
+        }
+        let key = block
+            .compatibility
+            .fingerprint()
+            .map_err(|_| ())?;
+        if let Some(old) = self.entries.remove(&key) {
+            self.bytes = self.bytes.saturating_sub(old.bytes);
+        }
+        while self.entries.len() >= self.max_entries
+            || self.bytes.saturating_add(encoded_len) > self.max_bytes
+        {
+            let Some(oldest_key) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_access.load(Ordering::Relaxed))
+                .map(|(key, _)| *key)
+            else {
+                break;
+            };
+            if let Some(oldest) = self.entries.remove(&oldest_key) {
+                self.bytes = self.bytes.saturating_sub(oldest.bytes);
+            }
+        }
+        let last_access = access_clock.fetch_add(1, Ordering::Relaxed).saturating_add(1);
+        self.entries.insert(
+            key,
+            ResidentEntry {
+                block: Arc::new(block),
+                bytes: encoded_len,
+                last_access: AtomicU64::new(last_access),
+            },
+        );
+        self.bytes = self.bytes.saturating_add(encoded_len);
+        Ok(())
+    }
+
+    fn lookup(
+        &self,
+        compatibility: &TcgIrCompatibility,
+        access_clock: &AtomicU64,
+    ) -> Result<Option<Arc<TcgIrBlock>>, ()> {
+        let key = compatibility.fingerprint().map_err(|_| ())?;
+        let Some(entry) = self.entries.get(&key) else {
+            return Ok(None);
+        };
+        entry.last_access.store(
+            access_clock.fetch_add(1, Ordering::Relaxed).saturating_add(1),
+            Ordering::Relaxed,
+        );
+        Ok(Some(Arc::clone(&entry.block)))
+    }
+
+    fn remove(&mut self, compatibility: &TcgIrCompatibility) -> Result<(), ()> {
+        let key = compatibility.fingerprint().map_err(|_| ())?;
+        if let Some(entry) = self.entries.remove(&key) {
+            self.bytes = self.bytes.saturating_sub(entry.bytes);
+        }
+        Ok(())
+    }
 }
 
 unsafe fn copy_c_string(value: *const c_char) -> Result<String, ()> {
@@ -137,7 +234,13 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_open(
         let vm_id = unsafe { copy_c_string(vm_id) }.map_err(|_| ())?;
         let store =
             TcgIrL2Store::new(PathBuf::from(root), max_entries, max_bytes).map_err(|_| ())?;
-        Ok::<_, ()>(Box::into_raw(Box::new(PvTcgL2Handle { store, vm_id })))
+        Ok::<_, ()>(Box::into_raw(Box::new(PvTcgL2Handle {
+            store,
+            vm_id,
+            // Bound process-resident TCG IR independently of the persistent L2 quota.
+            resident: RwLock::new(ResidentL1::new(256, 32 * 1024 * 1024)),
+            resident_clock: AtomicU64::new(0),
+        })))
     }));
     match result {
         Ok(Ok(handle)) => handle,
@@ -248,7 +351,12 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_invalidate(
     let result = catch_unwind(AssertUnwindSafe(|| {
         let handle = unsafe { &*handle };
         let key = unsafe { copy_compatibility(compatibility) }.map_err(|_| ())?;
-        handle.store.invalidate(&handle.vm_id, &key).map_err(|_| ())
+        handle.store.invalidate(&handle.vm_id, &key).map_err(|_| ())?;
+        handle
+            .resident
+            .write()
+            .map_err(|_| ())?
+            .remove(&key)
     }));
     if matches!(result, Ok(Ok(()))) {
         0
@@ -265,12 +373,78 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_invalidate_vm(handle: *mut PvTcgL2Hand
     }
     let result = catch_unwind(AssertUnwindSafe(|| {
         let handle = unsafe { &*handle };
-        handle.store.invalidate_vm(&handle.vm_id).map_err(|_| ())
+        handle.store.invalidate_vm(&handle.vm_id).map_err(|_| ())?;
+        let mut resident = handle.resident.write().map_err(|_| ())?;
+        resident.entries.clear();
+        resident.bytes = 0;
+        Ok::<_, ()>(())
     }));
     if matches!(result, Ok(Ok(()))) {
         0
     } else {
         -1
+    }
+}
+
+/// Preload this VM's most-recently-used L2 records into a bounded memory L1.
+///
+/// This performs filesystem I/O and MUST be called by a cache worker before
+/// guest vCPU execution. Returns 0 on success, -1 on invalid quota or I/O error.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_l2_preload(
+    handle: *mut PvTcgL2Handle,
+    max_entries: usize,
+    max_bytes: u64,
+) -> i32 {
+    if handle.is_null() || max_entries == 0 || max_bytes == 0 {
+        return -1;
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = unsafe { &*handle };
+        let blocks = handle
+            .store
+            .preload_vm(&handle.vm_id, max_entries, max_bytes)
+            .map_err(|_| ())?;
+        let mut resident = ResidentL1::new(max_entries, max_bytes);
+        for block in blocks {
+            resident.insert(block, &handle.resident_clock)?;
+        }
+        let mut current = handle.resident.write().map_err(|_| ())?;
+        *current = resident;
+        Ok::<_, ()>(())
+    }));
+    if matches!(result, Ok(Ok(()))) { 0 } else { -1 }
+}
+
+/// Nonblocking, memory-only lookup for the QEMU vCPU translation path.
+///
+/// This function never touches the filesystem. It returns 1 on hit, 0 on miss,
+/// and -1 on invalid context/lock failure. The returned block must be freed.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_l1_lookup(
+    handle: *mut PvTcgL2Handle,
+    compatibility: *const PvTcgCompatibility,
+    out_block: *mut *mut PvTcgIrBlockHandle,
+) -> i32 {
+    if handle.is_null() || compatibility.is_null() || out_block.is_null() {
+        return -1;
+    }
+    unsafe { *out_block = ptr::null_mut() };
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        let handle = unsafe { &*handle };
+        let key = unsafe { copy_compatibility(compatibility) }.map_err(|_| ())?;
+        let resident = handle.resident.read().map_err(|_| ())?;
+        resident.lookup(&key, &handle.resident_clock)
+    }));
+    match result {
+        Ok(Ok(Some(block))) => {
+            unsafe { *out_block = Box::into_raw(Box::new(PvTcgIrBlockHandle {
+                block: (*block).clone(),
+            })) };
+            1
+        }
+        Ok(Ok(None)) => 0,
+        _ => -1,
     }
 }
 
@@ -490,7 +664,12 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_store_block(
         handle
             .store
             .store(&handle.vm_id, &block.block)
-            .map_err(|_| ())
+            .map_err(|_| ())?;
+        handle
+            .resident
+            .write()
+            .map_err(|_| ())?
+            .insert(block.block.clone(), &handle.resident_clock)
     }));
     if matches!(result, Ok(Ok(()))) {
         0
@@ -513,7 +692,15 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_load_block(
     let result = catch_unwind(AssertUnwindSafe(|| {
         let handle = unsafe { &*handle };
         let key = unsafe { copy_compatibility(compatibility) }.map_err(|_| ())?;
-        handle.store.load(&handle.vm_id, &key).map_err(|_| ())
+        let block = handle.store.load(&handle.vm_id, &key).map_err(|_| ())?;
+        if let Some(block) = &block {
+            handle
+                .resident
+                .write()
+                .map_err(|_| ())?
+                .insert(block.clone(), &handle.resident_clock)?;
+        }
+        Ok::<_, ()>(block)
     }));
     match result {
         Ok(Ok(Some(block))) => {
