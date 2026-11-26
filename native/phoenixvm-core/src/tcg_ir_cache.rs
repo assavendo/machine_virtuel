@@ -4,6 +4,8 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime};
 
 const MAGIC: &[u8; 8] = b"PVTCGIR\0";
 const FORMAT_VERSION: u16 = 1;
@@ -772,6 +774,313 @@ impl<'a> Reader<'a> {
     }
 }
 
+const MAX_L2_ENTRIES: usize = 65_536;
+const MAX_L2_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+const STALE_TEMP_FILE_AGE: Duration = Duration::from_secs(5 * 60);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TcgIrL2Stats {
+    pub entries: usize,
+    pub bytes: u64,
+}
+
+/// VM-isolated native L2 store for canonical TCG IR records.
+///
+/// All filesystem operations are intended for a cache worker, not a vCPU thread:
+/// loading can block on disk. The QEMU adapter must prefetch on a worker and pass
+/// validated records into the translation path. This store does not itself attach
+/// to QEMU's TCG translator.
+pub struct TcgIrL2Store {
+    root: PathBuf,
+    max_entries: usize,
+    max_bytes: u64,
+    lock: Mutex<()>,
+}
+
+impl TcgIrL2Store {
+    pub fn new(
+        root: impl AsRef<Path>,
+        max_entries: usize,
+        max_bytes: u64,
+    ) -> Result<Self, TcgIrCacheError> {
+        if !(1..=MAX_L2_ENTRIES).contains(&max_entries) {
+            return Err(TcgIrCacheError::Invalid("invalid L2 entry quota"));
+        }
+        if !(1..=MAX_L2_BYTES).contains(&max_bytes) {
+            return Err(TcgIrCacheError::Invalid("invalid L2 byte quota"));
+        }
+
+        let root = root.as_ref().to_path_buf();
+        fs::create_dir_all(&root).map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+        let metadata =
+            fs::symlink_metadata(&root).map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(TcgIrCacheError::Invalid("L2 root must be a real directory"));
+        }
+
+        Ok(Self {
+            root,
+            max_entries,
+            max_bytes,
+            lock: Mutex::new(()),
+        })
+    }
+
+    /// Persist one VM-owned entry; the guest-code fingerprint must already reflect
+    /// the current translated bytes. The caller supplies the fresh context.
+    pub fn store(
+        &self,
+        vm_id: &str,
+        block: &TcgIrBlock,
+    ) -> Result<(), TcgIrCacheError> {
+        validate_vm_id(vm_id)?;
+        let encoded = block.encode()?;
+        if encoded.len() as u64 > self.max_bytes {
+            return Err(TcgIrCacheError::TooLarge);
+        }
+
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        let directory = self.vm_directory(vm_id);
+        self.ensure_real_directory(&directory)?;
+        block.write_atomic(self.entry_path(vm_id, &block.compatibility)?)?;
+        self.cleanup_locked()?;
+        Ok(())
+    }
+
+    /// Return a record only if every compatibility component exactly matches the
+    /// caller's freshly constructed identity. Corrupt or unsupported records become
+    /// safe cache misses and are removed.
+    pub fn load(
+        &self,
+        vm_id: &str,
+        expected: &TcgIrCompatibility,
+    ) -> Result<Option<TcgIrBlock>, TcgIrCacheError> {
+        validate_vm_id(vm_id)?;
+        expected.validate()?;
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        let directory = self.vm_directory(vm_id);
+        if !directory.exists() {
+            return Ok(None);
+        }
+        self.ensure_real_directory(&directory)?;
+        let path = self.entry_path(vm_id, expected)?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(value) => value,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(TcgIrCacheError::Io(error.kind())),
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            let _ = fs::remove_file(&path);
+            return Ok(None);
+        }
+
+        match TcgIrBlock::read_file(&path) {
+            Ok(block) if block.is_compatible_with(expected) => {
+                let _ = fs::File::open(&path)
+                    .and_then(|file| file.set_modified(SystemTime::now()));
+                Ok(Some(block))
+            }
+            Ok(_) | Err(TcgIrCacheError::Corrupt)
+            | Err(TcgIrCacheError::UnsupportedVersion)
+            | Err(TcgIrCacheError::TooLarge) => {
+                let _ = fs::remove_file(&path);
+                Ok(None)
+            }
+            Err(TcgIrCacheError::Io(kind))
+                if kind == std::io::ErrorKind::NotFound =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn invalidate(
+        &self,
+        vm_id: &str,
+        compatibility: &TcgIrCompatibility,
+    ) -> Result<(), TcgIrCacheError> {
+        validate_vm_id(vm_id)?;
+        compatibility.validate()?;
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        let path = self.entry_path(vm_id, compatibility)?;
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(TcgIrCacheError::Io(error.kind())),
+        }
+    }
+
+    pub fn invalidate_vm(&self, vm_id: &str) -> Result<(), TcgIrCacheError> {
+        validate_vm_id(vm_id)?;
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        let directory = self.vm_directory(vm_id);
+        match fs::symlink_metadata(&directory) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                fs::remove_file(directory)
+                    .map_err(|error| TcgIrCacheError::Io(error.kind()))
+            }
+            Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(directory)
+                .map_err(|error| TcgIrCacheError::Io(error.kind())),
+            Ok(_) => {
+                let _ = fs::remove_file(directory);
+                Ok(())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(TcgIrCacheError::Io(error.kind())),
+        }
+    }
+
+    pub fn cleanup(&self) -> Result<TcgIrL2Stats, TcgIrCacheError> {
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        self.cleanup_locked()
+    }
+
+    pub fn stats(&self) -> Result<TcgIrL2Stats, TcgIrCacheError> {
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        self.scan_entries().map(|entries| {
+            TcgIrL2Stats {
+                entries: entries.len(),
+                bytes: entries.iter().map(|entry| entry.bytes).sum(),
+            }
+        })
+    }
+
+    fn vm_directory(&self, vm_id: &str) -> PathBuf {
+        let digest = Sha256::digest(vm_id.as_bytes());
+        self.root.join(hex_digest(&digest))
+    }
+
+    fn entry_path(
+        &self,
+        vm_id: &str,
+        compatibility: &TcgIrCompatibility,
+    ) -> Result<PathBuf, TcgIrCacheError> {
+        let fingerprint = compatibility.fingerprint()?;
+        Ok(self
+            .vm_directory(vm_id)
+            .join(format!("{}.pvir", hex_digest(&fingerprint))))
+    }
+
+    fn ensure_real_directory(&self, path: &Path) -> Result<(), TcgIrCacheError> {
+        fs::create_dir_all(path).map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+        let metadata =
+            fs::symlink_metadata(path).map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(TcgIrCacheError::Invalid("VM cache path must be a real directory"));
+        }
+        Ok(())
+    }
+
+    fn scan_entries(&self) -> Result<Vec<L2Entry>, TcgIrCacheError> {
+        let mut entries = Vec::new();
+        let now = SystemTime::now();
+        for vm_entry in fs::read_dir(&self.root)
+            .map_err(|error| TcgIrCacheError::Io(error.kind()))?
+        {
+            let vm_entry = vm_entry.map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+            let vm_path = vm_entry.path();
+            let vm_metadata = match fs::symlink_metadata(&vm_path) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            if vm_metadata.file_type().is_symlink() || !vm_metadata.is_dir() {
+                continue;
+            }
+
+            for file_entry in fs::read_dir(&vm_path)
+                .map_err(|error| TcgIrCacheError::Io(error.kind()))?
+            {
+                let file_entry = file_entry.map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+                let path = file_entry.path();
+                let metadata = match fs::symlink_metadata(&path) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
+                if metadata.file_type().is_symlink() || !metadata.is_file() {
+                    continue;
+                }
+
+                let name = file_entry.file_name();
+                let name = name.to_string_lossy();
+                if name.contains(".tmp-") {
+                    let age = now
+                        .duration_since(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH))
+                        .unwrap_or_default();
+                    if age >= STALE_TEMP_FILE_AGE {
+                        let _ = fs::remove_file(path);
+                    }
+                    continue;
+                }
+                if path.extension().and_then(|value| value.to_str()) != Some("pvir") {
+                    continue;
+                }
+
+                entries.push(L2Entry {
+                    path,
+                    bytes: metadata.len(),
+                    modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                });
+            }
+        }
+        Ok(entries)
+    }
+
+    fn cleanup_locked(&self) -> Result<TcgIrL2Stats, TcgIrCacheError> {
+        let mut entries = self.scan_entries()?;
+        let mut bytes: u64 = entries.iter().map(|entry| entry.bytes).sum();
+        entries.sort_by_key(|entry| entry.modified);
+
+        while entries.len() > self.max_entries || bytes > self.max_bytes {
+            let oldest = entries.remove(0);
+            if fs::remove_file(&oldest.path).is_ok() {
+                bytes = bytes.saturating_sub(oldest.bytes);
+            }
+        }
+
+        Ok(TcgIrL2Stats {
+            entries: entries.len(),
+            bytes,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct L2Entry {
+    path: PathBuf,
+    bytes: u64,
+    modified: SystemTime,
+}
+
+fn validate_vm_id(vm_id: &str) -> Result<(), TcgIrCacheError> {
+    if vm_id.is_empty() || vm_id.len() > 1024 {
+        return Err(TcgIrCacheError::Invalid("invalid VM identifier"));
+    }
+    Ok(())
+}
+
+fn hex_digest(digest: &[u8]) -> String {
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -850,6 +1159,86 @@ mod tests {
                 },
             ],
         }
+    }
+
+
+    #[test]
+    fn vm_l2_store_isolates_owners_and_invalidates_selectively() {
+        let root = std::env::temp_dir().join(format!(
+            "phoenixvm-tcg-l2-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let store = TcgIrL2Store::new(&root, 8, 8 * 1024 * 1024).unwrap();
+        let block = sample_block();
+        let key = block.compatibility.clone();
+
+        store.store("vm-one", &block).unwrap();
+        assert_eq!(store.load("vm-one", &key).unwrap(), Some(block.clone()));
+        assert_eq!(store.load("vm-two", &key).unwrap(), None);
+
+        let mut changed = key.clone();
+        changed.guest_code_sha256[0] ^= 0x80;
+        assert_eq!(store.load("vm-one", &changed).unwrap(), None);
+
+        store.invalidate("vm-one", &key).unwrap();
+        assert_eq!(store.load("vm-one", &key).unwrap(), None);
+        assert_eq!(store.stats().unwrap().entries, 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn vm_l2_store_enforces_lru_entry_quota() {
+        let root = std::env::temp_dir().join(format!(
+            "phoenixvm-tcg-l2-quota-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let store = TcgIrL2Store::new(&root, 1, 8 * 1024 * 1024).unwrap();
+        let first = sample_block();
+        let mut second = sample_block();
+        second.compatibility.guest_pc += 4;
+
+        store.store("vm-one", &first).unwrap();
+        let first_path = store.entry_path("vm-one", &first.compatibility).unwrap();
+        fs::File::open(first_path)
+            .unwrap()
+            .set_modified(SystemTime::UNIX_EPOCH)
+            .unwrap();
+
+        store.store("vm-one", &second).unwrap();
+        assert_eq!(store.stats().unwrap().entries, 1);
+        assert_eq!(store.load("vm-one", &first.compatibility).unwrap(), None);
+        assert_eq!(
+            store.load("vm-one", &second.compatibility).unwrap(),
+            Some(second)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn vm_l2_store_deletes_corrupt_records_as_safe_misses() {
+        let root = std::env::temp_dir().join(format!(
+            "phoenixvm-tcg-l2-corrupt-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let store = TcgIrL2Store::new(&root, 8, 8 * 1024 * 1024).unwrap();
+        let block = sample_block();
+        store.store("vm-one", &block).unwrap();
+
+        let path = store.entry_path("vm-one", &block.compatibility).unwrap();
+        let mut encoded = fs::read(&path).unwrap();
+        let last = encoded.len() - 1;
+        encoded[last] ^= 0x20;
+        fs::write(&path, encoded).unwrap();
+
+        assert_eq!(
+            store.load("vm-one", &block.compatibility).unwrap(),
+            None
+        );
+        assert!(!path.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
