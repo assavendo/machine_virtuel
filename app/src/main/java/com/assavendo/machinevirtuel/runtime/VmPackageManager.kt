@@ -310,7 +310,7 @@ object VmPackageManager {
                 )
             }
             val vm = decodedVm.copy(id = id)
-            vm.name = manifest.optString("name", vm.name).take(120).ifBlank { "Imported VM" }
+            vm.name = manifest.optString("name", vm.name).take(80).ifBlank { "Imported VM" }
             vm.state = VmState.OFF
             vm.lastStartedAt = null
             vm.diskFormat = DiskFormat.valueOf(manifest.optString("disk_format", vm.diskFormat.name))
