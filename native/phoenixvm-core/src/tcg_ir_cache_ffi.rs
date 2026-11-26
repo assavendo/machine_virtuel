@@ -1350,28 +1350,18 @@ mod tests {
         let vm = CString::new("ffi-vm-close-drain").unwrap();
         let key = compatibility();
 
-        let writer = unsafe {
-            phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024)
-        };
+        let writer = unsafe { phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024) };
         assert!(!writer.is_null());
 
         let builder = unsafe { phoenixvm_tcg_ir_block_create(&key, 4, 1) };
         assert!(!builder.is_null());
         let opcode = CString::new("insn_start").unwrap();
-        let operation = unsafe {
-            phoenixvm_tcg_ir_block_add_operation(builder, opcode.as_ptr(), 0, 0)
-        };
+        let operation =
+            unsafe { phoenixvm_tcg_ir_block_add_operation(builder, opcode.as_ptr(), 0, 0) };
         assert_eq!(operation, 0);
         for value in [0x1000_i64, 0, 0] {
             assert_eq!(
-                unsafe {
-                    phoenixvm_tcg_ir_block_add_operand(
-                        builder,
-                        operation as u32,
-                        2,
-                        value,
-                    )
-                },
+                unsafe { phoenixvm_tcg_ir_block_add_operand(builder, operation as u32, 2, value,) },
                 0
             );
         }
@@ -1382,9 +1372,7 @@ mod tests {
         unsafe { phoenixvm_tcg_ir_block_free(builder) };
         unsafe { phoenixvm_tcg_l2_close(writer) };
 
-        let reader = unsafe {
-            phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024)
-        };
+        let reader = unsafe { phoenixvm_tcg_l2_open(root_c.as_ptr(), vm.as_ptr(), 8, 1024 * 1024) };
         assert!(!reader.is_null());
         assert_eq!(
             unsafe { phoenixvm_tcg_l2_preload(reader, 8, 1024 * 1024) },
