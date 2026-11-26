@@ -15,16 +15,58 @@ data class CpuThreadSchedulingReport(
 ) {
     fun summary(): String =
         "threads=$processThreadCount, vCPU=$vcpuThreadCount, I/O=$ioThreadCount, " +
-            "affinity=$affinityApplied/$affinityFailed failed, " +
-            "priority=$priorityApplied/$priorityFailed failed"
+            "affinity=$affinityApplied applied/$affinityFailed failed, " +
+            "priority=$priorityApplied applied/$priorityFailed failed"
 }
+
+internal data class CpuThreadPlacement(
+    val threadId: Long,
+    val cpuIds: List<Int>,
+    val priority: Int?,
+)
 
 /**
  * Applies scheduler decisions only to TIDs belonging to PhoenixVM's own backend process.
- * vCPU workers get a single-core affinity where QMP identifies them; other backend threads
- * stay within the VM's assigned CPU set. Unsupported/denied affinity never blocks the VM.
+ * QMP-identified vCPU workers receive a single-core affinity; I/O workers receive the
+ * VM's allowed CPU set and a deliberately lower priority. Other backend threads remain
+ * within the VM CPU set but are not guessed to be GPU/audio threads.
  */
 object VmCpuThreadScheduler {
+    internal fun plan(
+        processThreadIds: List<Long>,
+        vcpuThreadIds: List<Long>,
+        ioThreadIds: List<Long>,
+        decision: VmScheduleDecision,
+    ): List<CpuThreadPlacement> {
+        if (decision.assignedCpuIds.isEmpty()) return emptyList()
+        val processThreads = processThreadIds
+            .filter { it in 1..Int.MAX_VALUE.toLong() }
+            .distinct()
+        val processThreadSet = processThreads.toSet()
+        val vcpus = vcpuThreadIds.distinct().filter { it in processThreadSet }
+        val vcpuSet = vcpus.toSet()
+        val ioThreads = ioThreadIds.distinct().filter { it in processThreadSet && it !in vcpuSet }
+        val known = vcpuSet + ioThreads.toSet()
+        val placements = mutableListOf<CpuThreadPlacement>()
+
+        processThreads.filter { it !in known }.forEach { tid ->
+            placements += CpuThreadPlacement(tid, decision.assignedCpuIds, null)
+        }
+
+        vcpus.forEachIndexed { index, tid ->
+            val cpu = decision.assignedCpuIds.getOrNull(index)
+            if (cpu != null) {
+                placements += CpuThreadPlacement(tid, listOf(cpu), decision.threadPriority)
+            }
+        }
+
+        val ioPriority = (decision.threadPriority + 3).coerceAtLeast(0).coerceAtMost(19)
+        ioThreads.forEach { tid ->
+            placements += CpuThreadPlacement(tid, decision.assignedCpuIds, ioPriority)
+        }
+        return placements
+    }
+
     fun apply(
         processId: Long,
         vcpuThreadIds: List<Long>,
@@ -39,52 +81,34 @@ object VmCpuThreadScheduler {
         val processThreads = File(procRoot, "$processId/task")
             .listFiles()
             ?.mapNotNull { it.name.toLongOrNull() }
-            ?.filter { it > 0L && it <= Int.MAX_VALUE.toLong() }
-            ?.distinct()
             .orEmpty()
-        val processThreadSet = processThreads.toSet()
-        val vcpus = vcpuThreadIds.distinct().filter { it in processThreadSet }
-        val ioThreads = ioThreadIds.distinct().filter { it in processThreadSet && it !in vcpus }
+        val processThreadSet = processThreads.filter { it in 1..Int.MAX_VALUE.toLong() }.toSet()
+        val vcpuSet = vcpuThreadIds.distinct().filter { it in processThreadSet }.toSet()
+        val ioSet = ioThreadIds.distinct().filter { it in processThreadSet && it !in vcpuSet }.toSet()
+        val placements = plan(processThreads, vcpuThreadIds, ioThreadIds, decision)
 
         var affinityApplied = 0
         var affinityFailed = 0
         var priorityApplied = 0
         var priorityFailed = 0
 
-        fun setAffinity(tid: Long, cpus: List<Int>) {
-            val result = NativeEngine.setThreadAffinity(tid, cpus)
-            if (result.applied) affinityApplied++ else affinityFailed++
-        }
+        placements.forEach { placement ->
+            val affinity = NativeEngine.setThreadAffinity(placement.threadId, placement.cpuIds)
+            if (affinity.applied) affinityApplied++ else affinityFailed++
 
-        fun setPriority(tid: Long, priority: Int) {
-            val success = runCatching {
-                Process.setThreadPriority(tid.toInt(), priority.coerceIn(-4, 19))
-                true
-            }.getOrDefault(false)
-            if (success) priorityApplied++ else priorityFailed++
-        }
-
-        // Unclassified main/worker/renderer threads are kept inside the VM CPU budget,
-        // without guessing whether they are GPU or audio threads.
-        val known = (vcpus + ioThreads).toSet()
-        processThreads.filter { it !in known }.forEach { setAffinity(it, decision.assignedCpuIds) }
-
-        vcpus.forEachIndexed { index, tid ->
-            val cpu = decision.assignedCpuIds.getOrNull(index)
-            if (cpu != null) setAffinity(tid, listOf(cpu))
-            setPriority(tid, decision.threadPriority)
-        }
-
-        val ioPriority = (decision.threadPriority + 3).coerceAtLeast(0).coerceAtMost(19)
-        ioThreads.forEach { tid ->
-            setAffinity(tid, decision.assignedCpuIds)
-            setPriority(tid, ioPriority)
+            placement.priority?.let { priority ->
+                val success = runCatching {
+                    Process.setThreadPriority(placement.threadId.toInt(), priority.coerceIn(-4, 19))
+                    true
+                }.getOrDefault(false)
+                if (success) priorityApplied++ else priorityFailed++
+            }
         }
 
         return CpuThreadSchedulingReport(
-            processThreadCount = processThreads.size,
-            vcpuThreadCount = vcpus.size,
-            ioThreadCount = ioThreads.size,
+            processThreadCount = processThreadSet.size,
+            vcpuThreadCount = vcpuSet.size,
+            ioThreadCount = ioSet.size,
             affinityApplied = affinityApplied,
             affinityFailed = affinityFailed,
             priorityApplied = priorityApplied,
