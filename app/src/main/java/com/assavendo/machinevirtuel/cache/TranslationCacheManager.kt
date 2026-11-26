@@ -251,10 +251,11 @@ class TranslationCacheManager private constructor(
             "Translation profile metadata exceeds the configured limit."
         }
         val localId = keyId(key)
+        val shareGlobally = allowGlobalLevel3 && policy.globalLevel3Enabled
         val vmEnvelope = buildMetadataEnvelope(key, localId, "VM", metadata)
         writeAtomically(vmFile(key, localId), vmEnvelope)
 
-        if (allowGlobalLevel3 && key.level == 3) {
+        if (shareGlobally && key.level == 3) {
             val globalId = globalKeyId(key)
             writeAtomically(globalFile(globalId), buildMetadataEnvelope(key, globalId, "GLOBAL", metadata))
         }
@@ -278,10 +279,11 @@ class TranslationCacheManager private constructor(
             "Translation artifact is empty or exceeds the configured per-artifact limit."
         }
         val localId = keyId(key)
+        val shareGlobally = allowGlobalLevel3 && policy.globalLevel3Enabled
         val vmBytes = encodeArtifact(key, localId, "VM", artifact)
         writeAtomically(vmArtifactFile(key, localId), vmBytes)
 
-        if (allowGlobalLevel3 && key.level == 3) {
+        if (shareGlobally && key.level == 3) {
             val globalId = globalKeyId(key)
             writeAtomically(globalArtifactFile(globalId), encodeArtifact(key, globalId, "GLOBAL", artifact))
         }
@@ -296,6 +298,7 @@ class TranslationCacheManager private constructor(
     ): ByteArray? {
         validateKey(key)
         val localId = keyId(key)
+        val allowSharedLookup = allowGlobalLevel3 && policy.globalLevel3Enabled
         memoryArtifactsL0[localId]?.let {
             hitCount.incrementAndGet()
             l0HitCount.incrementAndGet()
@@ -317,7 +320,7 @@ class TranslationCacheManager private constructor(
             return local.copyOf()
         }
 
-        if (allowGlobalLevel3 && key.level == 3) {
+        if (allowSharedLookup && key.level == 3) {
             val globalId = globalKeyId(key)
             val shared = readArtifact(globalArtifactFile(globalId), key, globalId, "GLOBAL")
             if (shared != null) {
@@ -342,6 +345,7 @@ class TranslationCacheManager private constructor(
     ): String? {
         validateKey(key)
         val localId = keyId(key)
+        val allowSharedLookup = allowGlobalLevel3 && policy.globalLevel3Enabled
         memoryL0[localId]?.let {
             if (isValidMetadataEnvelope(it, key, localId, "VM")) {
                 hitCount.incrementAndGet()
@@ -371,7 +375,7 @@ class TranslationCacheManager private constructor(
             return extractMetadata(local)
         }
 
-        if (allowGlobalLevel3 && key.level == 3) {
+        if (allowSharedLookup && key.level == 3) {
             val globalId = globalKeyId(key)
             val globalFile = globalFile(globalId)
             val shared = readMetadataEnvelope(globalFile, key, globalId, "GLOBAL")
@@ -405,7 +409,7 @@ class TranslationCacheManager private constructor(
         if (readMetadataEnvelope(vmFile(key, localId), key, localId, "VM") != null) return true
         if (memoryArtifactsL0.containsKey(localId) || processArtifactsL1.containsKey(localId)) return true
         if (readArtifact(vmArtifactFile(key, localId), key, localId, "VM") != null) return true
-        if (allowGlobalLevel3 && key.level == 3) {
+        if (allowGlobalLevel3 && policy.globalLevel3Enabled && key.level == 3) {
             val globalId = globalKeyId(key)
             if (readMetadataEnvelope(globalFile(globalId), key, globalId, "GLOBAL") != null) return true
             if (readArtifact(globalArtifactFile(globalId), key, globalId, "GLOBAL") != null) return true
