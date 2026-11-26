@@ -286,11 +286,60 @@ impl TcgIrBlock {
             }
         }
 
+        let insn_start_count = self
+            .operations
+            .iter()
+            .filter(|operation| operation.opcode == "insn_start")
+            .count();
+        if insn_start_count != usize::from(self.instruction_count) {
+            return Err(TcgIrCacheError::Invalid(
+                "instruction count does not match insn_start markers",
+            ));
+        }
+
+        let label_definition_count = self
+            .operations
+            .iter()
+            .filter(|operation| operation.opcode == "set_label")
+            .count();
+        if label_definition_count != self.labels.len() {
+            return Err(TcgIrCacheError::Invalid(
+                "label table and set_label operations do not match",
+            ));
+        }
+
         for (index, label) in self.labels.iter().enumerate() {
-            if usize::from(label.id) != index
-                || label.operation_index as usize > self.operations.len()
-            {
+            let operation_index = label.operation_index as usize;
+            if usize::from(label.id) != index || operation_index >= self.operations.len() {
                 return Err(TcgIrCacheError::Invalid("invalid label table"));
+            }
+            let definition = &self.operations[operation_index];
+            if definition.opcode != "set_label"
+                || definition.operands.as_slice() != [TcgOperand::Label(label.id)]
+            {
+                return Err(TcgIrCacheError::Invalid(
+                    "label definition does not match its set_label operation",
+                ));
+            }
+        }
+
+        for (operation_index, operation) in self.operations.iter().enumerate() {
+            if operation.opcode == "set_label" {
+                let Some(TcgOperand::Label(label_id)) = operation.operands.first() else {
+                    return Err(TcgIrCacheError::Invalid(
+                        "set_label operation has no label reference",
+                    ));
+                };
+                if operation.operands.len() != 1
+                    || self
+                        .labels
+                        .get(usize::from(*label_id))
+                        .is_none_or(|label| label.operation_index as usize != operation_index)
+                {
+                    return Err(TcgIrCacheError::Invalid(
+                        "set_label operation has no matching label table entry",
+                    ));
+                }
             }
         }
 
@@ -1144,14 +1193,26 @@ mod tests {
             ],
             labels: vec![TcgLabelRecord {
                 id: 0,
-                operation_index: 2,
+                operation_index: 6,
             }],
             operations: vec![
+                TcgIrOperation {
+                    opcode: "insn_start".into(),
+                    param1: 0,
+                    param2: 0,
+                    operands: vec![TcgOperand::Immediate(0x1000)],
+                },
                 TcgIrOperation {
                     opcode: "movi".into(),
                     param1: TcgValueType::I64 as u8,
                     param2: 0,
                     operands: vec![TcgOperand::Temp(0), TcgOperand::Immediate(7)],
+                },
+                TcgIrOperation {
+                    opcode: "insn_start".into(),
+                    param1: 0,
+                    param2: 0,
+                    operands: vec![TcgOperand::Immediate(0x1004)],
                 },
                 TcgIrOperation {
                     opcode: "add".into(),
@@ -1164,8 +1225,20 @@ mod tests {
                     ],
                 },
                 TcgIrOperation {
+                    opcode: "insn_start".into(),
+                    param1: 0,
+                    param2: 0,
+                    operands: vec![TcgOperand::Immediate(0x1008)],
+                },
+                TcgIrOperation {
                     opcode: "br".into(),
-                    param1: TcgValueType::I32 as u8,
+                    param1: 0,
+                    param2: 0,
+                    operands: vec![TcgOperand::Label(0)],
+                },
+                TcgIrOperation {
+                    opcode: "set_label".into(),
+                    param1: 0,
                     param2: 0,
                     operands: vec![TcgOperand::Label(0)],
                 },
@@ -1331,8 +1404,40 @@ mod tests {
         assert!(matches!(block.encode(), Err(TcgIrCacheError::Invalid(_))));
 
         let mut block = sample_block();
-        block.operations[2].operands[0] = TcgOperand::Label(99);
+        block.operations[5].operands[0] = TcgOperand::Label(99);
         assert!(matches!(block.encode(), Err(TcgIrCacheError::Invalid(_))));
+    }
+
+    #[test]
+    fn rejects_missing_insn_start_markers_and_mismatched_label_definitions() {
+        let mut block = sample_block();
+        block.instruction_count = 2;
+        assert!(matches!(block.encode(), Err(TcgIrCacheError::Invalid(_))));
+
+        block = sample_block();
+        block.labels[0].operation_index = 5;
+        assert!(matches!(block.encode(), Err(TcgIrCacheError::Invalid(_))));
+
+        block = sample_block();
+        block.operations[6].opcode = "nop".into();
+        assert!(matches!(block.encode(), Err(TcgIrCacheError::Invalid(_))));
+    }
+
+    #[test]
+    fn insn_start_markers_and_label_definition_survive_round_trip() {
+        let block = sample_block();
+        let decoded = TcgIrBlock::decode(&block.encode().unwrap()).unwrap();
+        let addresses: Vec<i64> = decoded
+            .operations
+            .iter()
+            .filter(|operation| operation.opcode == "insn_start")
+            .filter_map(|operation| match operation.operands.as_slice() {
+                [TcgOperand::Immediate(value)] => Some(*value),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(addresses, vec![0x1000, 0x1004, 0x1008]);
+        assert_eq!(decoded.labels[0].operation_index, 6);
     }
 
     #[test]
