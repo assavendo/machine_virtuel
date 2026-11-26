@@ -342,7 +342,14 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_open(
 #[no_mangle]
 pub unsafe extern "C" fn phoenixvm_tcg_l2_close(handle: *mut PvTcgL2Handle) {
     if !handle.is_null() {
-        drop(unsafe { Box::from_raw(handle) });
+        let mut handle = unsafe { Box::from_raw(handle) };
+
+        // Drop the sender first: recv() will drain queued commands then return
+        // Disconnected. Join the worker before C can dlclose this Rust library.
+        handle.worker_tx.take();
+        if let Some(worker) = handle.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 
