@@ -382,8 +382,21 @@ class TranslationCacheManager private constructor(
     }
 
     @Synchronized
-    fun has(key: TranslationCacheKey, allowGlobalLevel3: Boolean = policy.globalLevel3Enabled): Boolean =
-        getManifest(key, allowGlobalLevel3) != null || getArtifact(key, allowGlobalLevel3) != null
+    fun has(key: TranslationCacheKey, allowGlobalLevel3: Boolean = policy.globalLevel3Enabled): Boolean {
+        validateKey(key)
+        val localId = keyId(key)
+        if (memoryL0[localId]?.let { isValidMetadataEnvelope(it, key, localId, "VM") } == true) return true
+        if (processL1[localId]?.let { isValidMetadataEnvelope(it, key, localId, "VM") } == true) return true
+        if (readMetadataEnvelope(vmFile(key, localId), key, localId, "VM") != null) return true
+        if (memoryArtifactsL0.containsKey(localId) || processArtifactsL1.containsKey(localId)) return true
+        if (readArtifact(vmArtifactFile(key, localId), key, localId, "VM") != null) return true
+        if (allowGlobalLevel3 && key.level == 3) {
+            val globalId = globalKeyId(key)
+            if (readMetadataEnvelope(globalFile(globalId), key, globalId, "GLOBAL") != null) return true
+            if (readArtifact(globalArtifactFile(globalId), key, globalId, "GLOBAL") != null) return true
+        }
+        return false
+    }
 
     /** Legacy existence check used by early builds. */
     fun has(vmId: String, fingerprint: String): Boolean {
@@ -569,6 +582,12 @@ class TranslationCacheManager private constructor(
         require(key.guestFingerprint.matches(Regex("[0-9a-f]{64}")))
         require(key.translatorVersion.isNotBlank() && key.hostArch.isNotBlank())
         require(key.level in 0..3)
+    }
+
+    /** Canonical VM-local profile identity; shared by the cache and translation engine. */
+    fun compatibilityFingerprint(key: TranslationCacheKey): String {
+        validateKey(key)
+        return keyId(key)
     }
 
     private fun keyId(key: TranslationCacheKey): String = fingerprint(
