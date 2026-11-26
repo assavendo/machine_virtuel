@@ -1,6 +1,10 @@
 # PhoenixVM — implementation status against the source cahier
 
 ## Dernière avancée section 9 — codec TCG IR v2 et stockage L2 natif
+## Exclusion explicite des Translation Blocks one-shot
+
+L'audit de `tb_gen_code()` confirme que QEMU crée un TB temporaire d'une instruction lorsque `phys_pc == -1` et qu'un TB sans page physique associée doit être exécuté au plus une fois, car les lectures I/O peuvent changer. Le futur cache L2 rejettera donc explicitement tout TB sans page(s) RAM validée(s), tout TB MMIO/one-shot et toute page/mapping non revalidable.
+
 ## Vérification des données d'unwind et du contexte TB
 
 L'inspection de `tcg_gen_code()` confirme que `INDEX_op_insn_start` fournit les métadonnées requises pour reconstruire `gen_insn_data` et `gen_insn_end_off`, puis le bloc d'unwind de `encode_search()`. Le pont QEMU devra préserver et compter ces opérations, vérifier leur cohérence avec `tb->icount` et laisser QEMU recalculer les offsets hôte. Le contexte de compatibilité devra aussi couvrir `guest_mo`, MTTCG, icount/replay, single-step et plugins ; `TCGOp.nargs` ne sera pas sérialisé comme taille logique, car QEMU peut réutiliser des capacités d'opérations supérieures à leur nombre d'arguments courant.
