@@ -152,6 +152,12 @@ Enfin, les opérations `qemu_ld/qemu_st` dépendent du contexte `guest_mo`, des 
 
 Le codec vérifie maintenant que le nombre d'opérations `insn_start` est exactement égal à `instruction_count`, et que chaque entrée de table de labels pointe vers un unique `set_label` portant le même identifiant. Les tests de régression vérifient le rejet d'un compteur incomplet, d'un index de définition erroné et d'une opération de définition absente, ainsi que l'aller-retour ordonné des adresses d'instruction et du label. Le commit natif `d50ac449513549cc1b8d0089b63274a8ed6df95d` passe `cargo fmt --check` et `cargo test`; cette validation porte toujours sur le codec/store Rust, sans intégration C au TCG.
 
+### Exclusion des TB one-shot et des pages non persistantes
+
+`tb_gen_code()` traite `phys_pc == -1` comme un TB temporaire limité à une instruction. QEMU indique qu'un TB sans page physique associée doit être exécuté au plus une fois, car une lecture ultérieure de mémoire I/O peut renvoyer une valeur différente. Ces TB ne sont donc jamais sérialisés, jamais recherchés dans L2 et jamais restaurés.
+
+La condition d'éligibilité au cache doit exiger une ou deux pages de code RAM réellement résolues et verrouillables, des mappings/permissions compatibles et une relecture des octets de code identiques. Les fenêtres MMIO, les TB sans page physique, les pages non lisibles de façon fiable, et toute traduction dont l'identité de page ne peut être revalidée sont des cache misses obligatoires.
+
 ## Architecture requise pour une vraie persistance L2
 
 ### 1. Format de cache versionné et non exécutable
