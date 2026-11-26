@@ -170,6 +170,23 @@ class TranslationCacheManagerTest {
     }
 
     @Test
+    fun maximumAllowedMetadataPayloadSurvivesPersistentReopen() {
+        val root = tempRoot()
+        try {
+            val cache = TranslationCacheManager.forTesting(root)
+            val key = key(cache, "vm-max-metadata")
+            val metadata = "x".repeat(1_048_576)
+
+            cache.putManifest(key, metadata)
+            val reopened = TranslationCacheManager.forTesting(root)
+            assertEquals(metadata, reopened.getManifest(key))
+            assertEquals(1L, reopened.stats().l2Hits)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun globalL3SharesOnlyCompatibleArtifactsAcrossDifferentVmIds() {
         val root = tempRoot()
         try {
