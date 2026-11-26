@@ -188,4 +188,26 @@ class VmSpecValidatorTest {
         }
     }
 
+
+    @Test
+    fun guestAgentCpuStatsAreRestrictedToLinuxGuestProfiles() {
+        val linux = VmConfig(
+            name = "linux-agent",
+            guestOs = "Linux ARM64",
+            guestAgentEnabled = true,
+        )
+        assertTrue(VmSpecValidator.validate(linux).none {
+            it.field == "guestAgentEnabled" && it.fatal
+        })
+
+        val windows = VmConfig(
+            name = "windows-agent",
+            guestOs = "Windows ARM64",
+            guestAgentEnabled = true,
+        )
+        assertTrue(VmSpecValidator.validate(windows).any {
+            it.field == "guestAgentEnabled" && it.fatal
+        })
+    }
+
 }
