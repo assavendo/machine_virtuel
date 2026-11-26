@@ -1,6 +1,4 @@
-use crate::tcg_ir_cache::{
-    TcgEndian, TcgIrBlock, TcgIrCompatibility, TcgIrL2Store,
-};
+use crate::tcg_ir_cache::{TcgEndian, TcgIrBlock, TcgIrCompatibility, TcgIrL2Store};
 use std::ffi::{c_char, CStr};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
@@ -50,7 +48,9 @@ unsafe fn copy_c_string(value: *const c_char) -> Result<String, ()> {
     if bytes.is_empty() || bytes.len() > MAX_FFI_STRING_BYTES {
         return Err(());
     }
-    std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| ())
+    std::str::from_utf8(bytes)
+        .map(str::to_owned)
+        .map_err(|_| ())
 }
 
 unsafe fn copy_array<T: Copy>(
@@ -76,9 +76,7 @@ unsafe fn copy_digest(value: *const u8) -> Result<[u8; 32], ()> {
     Ok(digest)
 }
 
-unsafe fn copy_compatibility(
-    value: *const PvTcgCompatibility,
-) -> Result<TcgIrCompatibility, ()> {
+unsafe fn copy_compatibility(value: *const PvTcgCompatibility) -> Result<TcgIrCompatibility, ()> {
     if value.is_null() {
         return Err(());
     }
@@ -137,8 +135,8 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_open(
     let result = catch_unwind(AssertUnwindSafe(|| {
         let root = unsafe { copy_c_string(root) }.map_err(|_| ())?;
         let vm_id = unsafe { copy_c_string(vm_id) }.map_err(|_| ())?;
-        let store = TcgIrL2Store::new(PathBuf::from(root), max_entries, max_bytes)
-            .map_err(|_| ())?;
+        let store =
+            TcgIrL2Store::new(PathBuf::from(root), max_entries, max_bytes).map_err(|_| ())?;
         Ok::<_, ()>(Box::into_raw(Box::new(PvTcgL2Handle { store, vm_id })))
     }));
     match result {
@@ -163,10 +161,7 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_store(
     record: *const u8,
     record_len: usize,
 ) -> i32 {
-    if handle.is_null()
-        || record.is_null()
-        || record_len == 0
-        || record_len > MAX_FFI_RECORD_BYTES
+    if handle.is_null() || record.is_null() || record_len == 0 || record_len > MAX_FFI_RECORD_BYTES
     {
         return -1;
     }
@@ -176,7 +171,11 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_store(
         let block = TcgIrBlock::decode(bytes).map_err(|_| ())?;
         handle.store.store(&handle.vm_id, &block).map_err(|_| ())
     }));
-    if matches!(result, Ok(Ok(()))) { 0 } else { -1 }
+    if matches!(result, Ok(Ok(()))) {
+        0
+    } else {
+        -1
+    }
 }
 
 /// Load one record by its complete compatibility identity.
