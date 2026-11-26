@@ -25,13 +25,13 @@ class VmEngine(private val context: Context) : VmEngineApi {
     override fun clone(id: String, newName: String) = manager.clone(id, newName)
     override fun export(id: String, output: File) = manager.exportVm(id, output)
     override fun importPackage(packageFile: File) = manager.importVm(packageFile)
-    override fun metrics(id: String): Map<String, Number> {
+    override fun metrics(id: String): Map<String, Number?> {
         val sample = metricsCollector.sample()
         return mapOf(
             "host_cpu_percent" to sample.processCpuPercent,
             "available_memory_mb" to sample.availableMemoryMb,
             "thermal_status" to sample.thermalStatus,
-            "temperature_c" to (sample.skinTemperatureC ?: -1.0),
+            "temperature_c" to sample.skinTemperatureC,
         )
     }
     override fun capabilities() = manager.capabilities()
