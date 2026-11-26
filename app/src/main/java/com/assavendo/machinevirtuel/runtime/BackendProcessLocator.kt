@@ -4,8 +4,8 @@ import java.io.File
 
 /**
  * Resolves the actual backend PID from /proc without trusting the launcher Process PID.
- * Matching both executable identity and the backend-specific control socket avoids picking
- * an unrelated QEMU/crosvm instance when multiple VMs run simultaneously.
+ * Matching argv[0] and the backend-specific control socket avoids selecting a su wrapper
+ * or an unrelated QEMU/crosvm instance when multiple VMs run simultaneously.
  */
 internal object BackendProcessLocator {
     fun find(
@@ -21,7 +21,9 @@ internal object BackendProcessLocator {
                 val commandLine = runCatching {
                     File(entry, "cmdline").readBytes().toString(Charsets.UTF_8)
                 }.getOrNull() ?: return@mapNotNull null
-                if (commandLine.contains(executableNeedle) && commandLine.contains(controlPath)) {
+                val arguments = commandLine.split('\u0000').filter { it.isNotBlank() }
+                val executable = arguments.firstOrNull() ?: return@mapNotNull null
+                if (executable.contains(executableNeedle) && arguments.any { it.contains(controlPath) }) {
                     pid
                 } else {
                     null
