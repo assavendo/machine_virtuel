@@ -15,6 +15,7 @@ import com.assavendo.machinevirtuel.hypervisor.QemuBackend
 import com.assavendo.machinevirtuel.cache.TranslationCacheManager
 import com.assavendo.machinevirtuel.performance.AdaptiveResourceCoordinator
 import com.assavendo.machinevirtuel.performance.VmCpuThreadSampler
+import com.assavendo.machinevirtuel.performance.VmCpuThreadScheduler
 import com.assavendo.machinevirtuel.performance.HostMetricsCollector
 import com.assavendo.machinevirtuel.performance.ResourceAdmissionController
 import com.assavendo.machinevirtuel.performance.DeviceTopology
@@ -438,7 +439,11 @@ class VmRuntimeService : Service() {
     }
 
     private fun monitorVm(id: String, handle: Handle, vm: VmConfig) {
-        val collector = HostMetricsCollector(this, handle.qmp?.let(::findQemuPid))
+        val backendPid = runCatching { handle.process.pid() }.getOrNull()
+        val collector = HostMetricsCollector(
+            this,
+            handle.qmp?.let(::findQemuPid) ?: backendPid,
+        )
         val coordinator = AdaptiveResourceCoordinator()
         var lastBalloonRequestMs = 0L
         var lastPolicyMessage = ""
@@ -448,6 +453,9 @@ class VmRuntimeService : Service() {
         var cachedTopology: com.assavendo.machinevirtuel.performance.CpuTopology? = null
         var cachedVms: List<VmConfig> = emptyList()
         var cachedVcpuThreadIds: List<Long> = emptyList()
+        var cachedIoThreadIds: List<Long> = emptyList()
+        var lastThreadPolicyKey = ""
+        var lastThreadPolicyAppliedMs = 0L
         var cachedTranslationAggregate = TranslationCacheManager(this).aggregate(id)
         val vcpuSampler = VmCpuThreadSampler()
         val audioMonitor = if (vm.audioEnabled) {
@@ -469,6 +477,7 @@ class VmRuntimeService : Service() {
                 }
                 if (handle.qmp != null && now - lastTelemetryRefreshMs >= 5_000L) {
                     cachedVcpuThreadIds = QmpController.queryVcpuThreadIds(handle.qmp)
+                    cachedIoThreadIds = QmpController.queryIoThreadIds(handle.qmp)
                     cachedTranslationAggregate = TranslationCacheManager(this).aggregate(id)
                     lastTelemetryRefreshMs = now
                 }
@@ -494,6 +503,42 @@ class VmRuntimeService : Service() {
                     host = host,
                     metrics = sample,
                 )
+                val threadDecision = GlobalVmScheduler()
+                    .schedule(cachedVms, topology, host.availableMemoryMb)
+                    .firstOrNull { it.vmId == id }
+                val processId = backendPid
+                if (threadDecision != null && processId != null &&
+                    (cachedVcpuThreadIds.isNotEmpty() || cachedIoThreadIds.isNotEmpty() ||
+                        handle.controlSocket != null)
+                ) {
+                    val thermalPriority = if (sample.isThrottling) 2 else 0
+                    val effectiveDecision = threadDecision.copy(
+                        threadPriority = (threadDecision.threadPriority + thermalPriority).coerceAtMost(12),
+                        reason = threadDecision.reason + if (sample.isThrottling) {
+                            " Priorité CPU réduite temporairement par la charge thermique."
+                        } else "",
+                    )
+                    val policyKey = listOf(
+                        effectiveDecision.assignedCpuIds.joinToString(","),
+                        effectiveDecision.threadPriority.toString(),
+                        cachedVcpuThreadIds.joinToString(","),
+                        cachedIoThreadIds.joinToString(","),
+                    ).joinToString("|")
+                    if (policyKey != lastThreadPolicyKey || now - lastThreadPolicyAppliedMs >= 15_000L) {
+                        val applied = VmCpuThreadScheduler.apply(
+                            processId = processId,
+                            vcpuThreadIds = cachedVcpuThreadIds,
+                            ioThreadIds = cachedIoThreadIds,
+                            decision = effectiveDecision,
+                        )
+                        VmLogger(this, id).info(
+                            "CPU thread policy: " + applied.summary() +
+                                "; assigned CPUs=" + effectiveDecision.assignedCpuIds.joinToString(",")
+                        )
+                        lastThreadPolicyKey = policyKey
+                        lastThreadPolicyAppliedMs = now
+                    }
+                }
                 if (decision.reason != lastPolicyMessage) {
                     lastPolicyMessage = decision.reason
                     VmEventBus.emit(
