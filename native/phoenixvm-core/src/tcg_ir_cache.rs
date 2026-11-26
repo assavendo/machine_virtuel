@@ -88,7 +88,7 @@ impl Drop for ProcessFileLock {
 }
 
 const MAGIC: &[u8; 8] = b"PVTCGIR\0";
-const FORMAT_VERSION: u16 = 2;
+const FORMAT_VERSION: u16 = 3;
 const HEADER_BYTES: usize = 14;
 const DIGEST_BYTES: usize = 32;
 const MAX_CACHE_BYTES: usize = 2 * 1024 * 1024;
@@ -262,7 +262,9 @@ pub struct TcgTempRecord {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TcgOperand {
     Temp(u16),
-    Global(String),
+    /// Index in TCGContext.temps; tb_context_sha256 must cover the complete
+    /// canonical layout of every global/fixed temp in the current QEMU context.
+    Global(u16),
     Immediate(i64),
     Label(u16),
     /// Stable QEMU helper symbol, resolved by the current process on import.
@@ -318,6 +320,132 @@ impl fmt::Display for TcgIrCacheError {
 }
 
 impl std::error::Error for TcgIrCacheError {}
+
+fn is_value_operand(operand: &TcgOperand) -> bool {
+    matches!(
+        operand,
+        TcgOperand::Temp(_) | TcgOperand::Global(_) | TcgOperand::Immediate(_)
+    )
+}
+
+fn is_writable_operand(operand: &TcgOperand) -> bool {
+    matches!(operand, TcgOperand::Temp(_) | TcgOperand::Global(_))
+}
+
+fn validate_operation_type(
+    operation: &TcgIrOperation,
+) -> Result<TcgValueType, TcgIrCacheError> {
+    if operation.param2 != 0 {
+        return Err(TcgIrCacheError::Invalid(
+            "unsupported TCG opcode parameter flags",
+        ));
+    }
+    match TcgValueType::decode(operation.param1)? {
+        TcgValueType::I32 | TcgValueType::I64 => {
+            Ok(TcgValueType::decode(operation.param1)?)
+        }
+        _ => Err(TcgIrCacheError::Invalid(
+            "first TCG IR importer supports only I32/I64 scalar operations",
+        )),
+    }
+}
+
+fn validate_value_type(
+    operand: &TcgOperand,
+    expected: TcgValueType,
+    temporaries: &[TcgTempRecord],
+) -> Result<(), TcgIrCacheError> {
+    if let TcgOperand::Temp(id) = operand {
+        let temp = temporaries
+            .get(usize::from(*id))
+            .ok_or(TcgIrCacheError::Invalid("unknown temporary"))?;
+        if temp.base_type != expected || temp.value_type != expected {
+            return Err(TcgIrCacheError::Invalid(
+                "temporary type does not match its TCG opcode",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Closed, deliberately conservative TCG opcode schema.
+///
+/// This is a format-level gate, not yet the QEMU C importer. Every opcode not
+/// listed here is rejected instead of being guessed from TCGOpDef argument
+/// counts. Constants are accepted only where their meaning is unambiguous.
+fn validate_operation_schema(
+    operation: &TcgIrOperation,
+    temporaries: &[TcgTempRecord],
+) -> Result<(), TcgIrCacheError> {
+    let operands = operation.operands.as_slice();
+    let invalid = || TcgIrCacheError::Invalid("unsupported TCG opcode/operand schema");
+
+    match operation.opcode.as_str() {
+        "insn_start" => {
+            if operation.param1 != 0
+                || operation.param2 != 0
+                || operands.len() != 3
+                || !operands
+                    .iter()
+                    .all(|operand| matches!(operand, TcgOperand::Immediate(_)))
+            {
+                return Err(TcgIrCacheError::Invalid(
+                    "insn_start must preserve exactly three immediate data words",
+                ));
+            }
+        }
+        "br" | "set_label" => {
+            if operation.param1 != 0
+                || operation.param2 != 0
+                || operands.len() != 1
+                || !matches!(operands[0], TcgOperand::Label(_))
+            {
+                return Err(invalid());
+            }
+        }
+        "goto_tb" => {
+            if operation.param1 != 0
+                || operation.param2 != 0
+                || !matches!(operands, [TcgOperand::Immediate(index)] if (0..=1).contains(index))
+            {
+                return Err(invalid());
+            }
+        }
+        "exit_tb" => {
+            // In PVTCGIR, this immediate is an abstract exit index, never the
+            // old process's tcg_splitwx_to_rx(TB) address.
+            if operation.param1 != 0
+                || operation.param2 != 0
+                || !matches!(operands, [TcgOperand::Immediate(index)] if (0..=2).contains(index))
+            {
+                return Err(invalid());
+            }
+        }
+        "mov" => {
+            let ty = validate_operation_type(operation)?;
+            if operands.len() != 2 || !is_writable_operand(&operands[0]) || !is_value_operand(&operands[1]) {
+                return Err(invalid());
+            }
+            validate_value_type(&operands[0], ty, temporaries)?;
+            validate_value_type(&operands[1], ty, temporaries)?;
+        }
+        "add" | "sub" | "and" | "or" | "xor" | "mul" => {
+            let ty = validate_operation_type(operation)?;
+            if operands.len() != 3
+                || !is_writable_operand(&operands[0])
+                || !is_value_operand(&operands[1])
+                || !is_value_operand(&operands[2])
+            {
+                return Err(invalid());
+            }
+            for operand in operands {
+                validate_value_type(operand, ty, temporaries)?;
+            }
+        }
+        _ => return Err(invalid()),
+    }
+    Ok(())
+}
 
 impl TcgIrBlock {
     pub fn validate(&self) -> Result<(), TcgIrCacheError> {
@@ -440,12 +568,18 @@ impl TcgIrBlock {
                             "operation references an unknown label",
                         ));
                     }
-                    TcgOperand::Global(name) | TcgOperand::Helper(name) => {
+                    TcgOperand::Helper(name) => {
                         validate_identifier(name, MAX_STRING_BYTES)?;
+                    }
+                    TcgOperand::Global(index) if usize::from(*index) >= MAX_TEMPS => {
+                        return Err(TcgIrCacheError::Invalid(
+                            "global temporary index exceeds the TCG limit",
+                        ));
                     }
                     _ => {}
                 }
             }
+            validate_operation_schema(operation, &self.temporaries)?;
         }
         Ok(())
     }
@@ -490,9 +624,9 @@ impl TcgIrBlock {
                         writer.u8(0);
                         writer.u16(*id);
                     }
-                    TcgOperand::Global(name) => {
+                    TcgOperand::Global(index) => {
                         writer.u8(1);
-                        writer.string(name)?;
+                        writer.u16(*index);
                     }
                     TcgOperand::Immediate(value) => {
                         writer.u8(2);
@@ -664,7 +798,7 @@ impl TcgIrBlock {
             for _ in 0..operand_count {
                 let operand = match reader.u8()? {
                     0 => TcgOperand::Temp(reader.u16()?),
-                    1 => TcgOperand::Global(reader.string(MAX_STRING_BYTES)?),
+                    1 => TcgOperand::Global(reader.u16()?),
                     2 => TcgOperand::Immediate(reader.i64()?),
                     3 => TcgOperand::Label(reader.u16()?),
                     4 => TcgOperand::Helper(reader.string(MAX_STRING_BYTES)?),
@@ -1334,19 +1468,30 @@ mod tests {
                     opcode: "insn_start".into(),
                     param1: 0,
                     param2: 0,
-                    operands: vec![TcgOperand::Immediate(0x1000)],
+                    operands: vec![
+                        TcgOperand::Immediate(0x1000),
+                        TcgOperand::Immediate(0),
+                        TcgOperand::Immediate(0),
+                    ],
                 },
                 TcgIrOperation {
-                    opcode: "movi".into(),
+                    opcode: "mov".into(),
                     param1: TcgValueType::I64 as u8,
                     param2: 0,
-                    operands: vec![TcgOperand::Temp(0), TcgOperand::Immediate(7)],
+                    operands: vec![
+                        TcgOperand::Temp(0),
+                        TcgOperand::Global(0),
+                    ],
                 },
                 TcgIrOperation {
                     opcode: "insn_start".into(),
                     param1: 0,
                     param2: 0,
-                    operands: vec![TcgOperand::Immediate(0x1004)],
+                    operands: vec![
+                        TcgOperand::Immediate(0x1004),
+                        TcgOperand::Immediate(0),
+                        TcgOperand::Immediate(0),
+                    ],
                 },
                 TcgIrOperation {
                     opcode: "add".into(),
@@ -1355,14 +1500,18 @@ mod tests {
                     operands: vec![
                         TcgOperand::Temp(1),
                         TcgOperand::Temp(0),
-                        TcgOperand::Global("env_reg0".into()),
+                        TcgOperand::Global(0),
                     ],
                 },
                 TcgIrOperation {
                     opcode: "insn_start".into(),
                     param1: 0,
                     param2: 0,
-                    operands: vec![TcgOperand::Immediate(0x1008)],
+                    operands: vec![
+                        TcgOperand::Immediate(0x1008),
+                        TcgOperand::Immediate(0),
+                        TcgOperand::Immediate(0),
+                    ],
                 },
                 TcgIrOperation {
                     opcode: "br".into(),
@@ -1378,6 +1527,49 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn codec_rejects_unknown_opcodes_and_untyped_operands() {
+        let mut block = sample_block();
+        block.operations[1].opcode = "unknown_process_pointer_op".into();
+        assert!(matches!(block.validate(), Err(TcgIrCacheError::Invalid(_))));
+
+        let mut block = sample_block();
+        block.operations[1].operands[1] = TcgOperand::Helper("unregistered_helper".into());
+        assert!(matches!(block.validate(), Err(TcgIrCacheError::Invalid(_))));
+    }
+
+    #[test]
+    fn codec_requires_complete_insn_start_and_relocation_safe_tb_exit() {
+        let mut block = sample_block();
+        block.operations[0].operands.pop();
+        assert!(matches!(block.validate(), Err(TcgIrCacheError::Invalid(_))));
+
+        let mut block = sample_block();
+        block.operations.push(TcgIrOperation {
+            opcode: "exit_tb".into(),
+            param1: 0,
+            param2: 0,
+            operands: vec![TcgOperand::Immediate(0x1234_5678)],
+        });
+        assert!(matches!(block.validate(), Err(TcgIrCacheError::Invalid(_))));
+
+        let mut block = sample_block();
+        block.operations.push(TcgIrOperation {
+            opcode: "exit_tb".into(),
+            param1: 0,
+            param2: 0,
+            operands: vec![TcgOperand::Immediate(1)],
+        });
+        assert!(block.validate().is_ok());
+    }
+
+    #[test]
+    fn codec_rejects_global_index_outside_tcg_bounds() {
+        let mut block = sample_block();
+        block.operations[1].operands[1] = TcgOperand::Global(MAX_TEMPS as u16);
+        assert!(matches!(block.validate(), Err(TcgIrCacheError::Invalid(_))));
     }
 
     #[test]
