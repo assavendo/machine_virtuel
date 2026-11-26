@@ -3,6 +3,32 @@ package com.assavendo.machinevirtuel.vm
 import java.io.File
 import java.util.Locale
 
+/** Stable page order and validation routing for the A–G VM creation assistant. */
+enum class VmCreationWizardStep(val title: String) {
+    ARCHITECTURE("Architecture"),
+    GUEST_OS_AND_MEDIA("Système invité et médias"),
+    RESOURCES("Ressources"),
+    GRAPHICS("GPU et affichage"),
+    NETWORK("Réseau"),
+    SHARING("Partage hôte / invité"),
+    OPTIMIZATION_AND_SECURITY("Optimisation et sécurité");
+
+    companion object {
+        fun forValidationField(field: String): VmCreationWizardStep = when (field) {
+            "name", "arch", "backend" -> ARCHITECTURE
+            "guestOs", "guestVersion", "isoPath", "diskPath", "kernelPath",
+            "initrdPath", "dtbPath", "androidSystemPath", "androidVendorPath",
+            "androidUserdataPath", "androidArtifacts", "androidAdbEnabled",
+            "androidAdbHostPort" -> GUEST_OS_AND_MEDIA
+            "ramMb", "vCpu", "diskSizeGiB", "diskFormat" -> RESOURCES
+            "gpuBackend", "displayWidth", "displayHeight", "headless" -> GRAPHICS
+            "network", "networkMode", "tapName" -> NETWORK
+            "sharedDirs", "sharedDirPath" -> SHARING
+            else -> OPTIMIZATION_AND_SECURITY
+        }
+    }
+}
+
 enum class GuestOsChoice(val label: String, val defaultArchitecture: GuestArch) {
     LINUX("Linux", GuestArch.ARM64),
     WINDOWS("Windows", GuestArch.ARM64),
