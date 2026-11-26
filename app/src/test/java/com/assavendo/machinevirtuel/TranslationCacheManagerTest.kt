@@ -181,4 +181,34 @@ class TranslationCacheManagerTest {
         assertEquals(4.25, aggregate.averageTranslationMs!!, absoluteTolerance = 1e-12)
     }
 
+
+    @Test
+    fun invalidatingVmAlsoRemovesItsOptionalGlobalL3EntryOnly() = withCache { context ->
+        val manager = TranslationCacheManager(context)
+        val alphaKey = manager.testKey(vmId = "vm-alpha", level = 3)
+        val betaKey = manager.testKey(vmId = "vm-beta", level = 3)
+        manager.putManifest(alphaKey, """{"owner":"alpha"}""", allowGlobalLevel3 = true)
+        manager.putManifest(betaKey, """{"owner":"beta"}""", allowGlobalLevel3 = true)
+
+        val globalDirectory = File(context.filesDir, "translation-cache/global")
+        assertEquals(2, globalDirectory.listFiles()?.count { it.isFile })
+
+        manager.invalidateAll("vm-alpha")
+
+        val remainingGlobalEntries = globalDirectory.listFiles()?.filter { it.isFile }.orEmpty()
+        assertEquals(1, remainingGlobalEntries.size)
+        assertTrue(
+            remainingGlobalEntries.single().readText(Charsets.UTF_8).contains(
+                "\\\"vm_id_hash\\\":\\\"" + manager.fingerprint("vm-beta") + "\\\""
+            )
+        )
+
+        val afterInvalidation = TranslationCacheManager(context)
+        assertNull(afterInvalidation.getManifest(alphaKey, allowGlobalLevel3 = true))
+        assertEquals(
+            """{"owner":"beta"}""",
+            afterInvalidation.getManifest(betaKey, allowGlobalLevel3 = true),
+        )
+    }
+
 }
