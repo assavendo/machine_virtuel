@@ -98,6 +98,7 @@ typedef struct PvTcgCacheState {
 static GMutex pv_init_lock;
 static GCond pv_init_cond;
 static gsize pv_start_once;
+static gsize pv_sync_once;
 static bool pv_init_done;
 static PvTcgCacheState *pv_cache;
 
@@ -106,8 +107,10 @@ static gint pv_misses;
 static gint pv_stores;
 static gint pv_rejections;
 
-static gint pv_string_ptr_compare(gconstpointer a, gconstpointer b)
+static gint pv_string_ptr_compare(gconstpointer a, gconstpointer b,
+                                  gpointer unused)
 {
+    (void)unused;
     return g_strcmp0(*(char * const *)a, *(char * const *)b);
 }
 
@@ -296,6 +299,11 @@ out:
 
 void phoenixvm_tcg_cache_start(void)
 {
+    if (g_once_init_enter(&pv_sync_once)) {
+        g_mutex_init(&pv_init_lock);
+        g_cond_init(&pv_init_cond);
+        g_once_init_leave(&pv_sync_once, 1);
+    }
     if (g_once_init_enter(&pv_start_once)) {
         g_thread_unref(g_thread_new("phoenixvm-tcg-cache",
                                     pv_cache_init_worker, NULL));
@@ -402,19 +410,23 @@ static bool pv_fill_compatibility(PvTcgCacheState *state,
                                   vaddr pc,
                                   uint64_t physical_page,
                                   const uint8_t code_hash[32],
+                                  uint8_t context_hash[32],
+                                  uint64_t *page_storage,
                                   PvTcgCompatibility *key)
 {
     static const char *build_id = PV_QEMU_BUILD_ID;
-    static uint8_t context_hash[32];
-    static uint64_t page;
+#ifdef CONFIG_POSIX
     int host_page_size = getpagesize();
+#else
+    int host_page_size = 4096;
+#endif
 
     if (host_page_size <= 0 ||
         !pv_global_layout_digest(context_hash)) {
         return false;
     }
 
-    page = physical_page;
+    *page_storage = physical_page;
     memset(key, 0, sizeof(*key));
     key->qemu_build_id = build_id;
     key->guest_arch = state->guest_arch;
@@ -435,7 +447,7 @@ static bool pv_fill_compatibility(PvTcgCacheState *state,
     key->tb_flags = tb->flags;
     key->tb_cflags = tb_cflags(tb);
     key->mmu_index = cpu_mmu_index(cpu, true);
-    key->physical_pages = &page;
+    key->physical_pages = page_storage;
     key->physical_pages_len = 1;
     key->guest_code_sha256 = code_hash;
     key->tb_context_sha256 = context_hash;
@@ -476,9 +488,6 @@ static bool pv_tb_eligible(TranslationBlock *tb, vaddr pc, void *host_pc)
         return false;
     }
 #endif
-    if ((pc & (TARGET_PAGE_SIZE - 1)) >= TARGET_PAGE_SIZE) {
-        return false;
-    }
     return true;
 }
 
@@ -794,6 +803,8 @@ bool phoenixvm_tcg_cache_try_restore(CPUState *cpu,
     PvTcgCompatibility probe;
     PvTcgIrBlockHandle *block = NULL;
     uint8_t zero_hash[32] = { 0 };
+    uint8_t context_hash[32];
+    uint64_t page_storage = 0;
     uint8_t stored_hash[32];
     uint8_t current_hash[32];
     uint64_t stored_pages[2] = { 0 };
@@ -810,7 +821,8 @@ bool phoenixvm_tcg_cache_try_restore(CPUState *cpu,
     }
     physical_page = tb_page_addr0(tb) & TARGET_PAGE_MASK;
     if (!pv_fill_compatibility(state, cpu, tb, pc, physical_page,
-                               zero_hash, &probe)) {
+                               zero_hash, context_hash, &page_storage,
+                               &probe)) {
         g_atomic_int_inc(&pv_misses);
         return false;
     }
@@ -828,9 +840,7 @@ bool phoenixvm_tcg_cache_try_restore(CPUState *cpu,
         stored_pages[0] != physical_page ||
         guest_size == 0 ||
         guest_size > TARGET_PAGE_SIZE - (pc & (TARGET_PAGE_SIZE - 1)) ||
-        guest_size > 65535 ||
-        (*max_insns > 0 && guest_size > 0 &&
-         !pv_hash_guest_code(host_pc, guest_size, current_hash)) ||
+        !pv_hash_guest_code(host_pc, guest_size, current_hash) ||
         memcmp(stored_hash, current_hash, sizeof(stored_hash)) != 0) {
         state->api.block_free(block);
         g_atomic_int_inc(&pv_misses);
@@ -1027,6 +1037,8 @@ static bool pv_serialize_translation(PvTcgCacheState *state,
 {
     PvTcgCompatibility key;
     uint8_t code_hash[32];
+    uint8_t context_hash[32];
+    uint64_t page_storage = 0;
     uint16_t *temp_map = NULL;
     TCGTemp *temp_by_id[TCG_MAX_TEMPS] = { 0 };
     uint16_t *label_map = NULL;
@@ -1048,7 +1060,8 @@ static bool pv_serialize_translation(PvTcgCacheState *state,
     physical_page = tb_page_addr0(tb) & TARGET_PAGE_MASK;
     if (!pv_hash_guest_code(host_pc, tb->size, code_hash) ||
         !pv_fill_compatibility(state, cpu, tb, pc, physical_page,
-                               code_hash, &key)) {
+                               code_hash, context_hash, &page_storage,
+                               &key)) {
         return false;
     }
 
