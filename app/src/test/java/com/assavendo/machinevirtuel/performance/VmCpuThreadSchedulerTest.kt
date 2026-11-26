@@ -17,18 +17,18 @@ class VmCpuThreadSchedulerTest {
     @Test
     fun planPinsOnlyQmpIdentifiedVcpusAndLowersIoThreadPriority() {
         val plan = VmCpuThreadScheduler.plan(
-            processThreadIds = listOf(100, 101, 102, 103),
-            vcpuThreadIds = listOf(101, 999),
-            ioThreadIds = listOf(102, 103, 101),
+            processThreadIds = listOf(100L, 101L, 102L, 103L),
+            vcpuThreadIds = listOf(101L, 999L),
+            ioThreadIds = listOf(102L, 103L, 101L),
             decision = decision(),
         )
 
         assertEquals(
             listOf(
-                CpuThreadPlacement(100, listOf(4, 6), null),
-                CpuThreadPlacement(101, listOf(4), -2),
-                CpuThreadPlacement(102, listOf(4, 6), 1),
-                CpuThreadPlacement(103, listOf(4, 6), 1),
+                CpuThreadPlacement(100L, listOf(4, 6), null),
+                CpuThreadPlacement(101L, listOf(4), -2),
+                CpuThreadPlacement(102L, listOf(4, 6), 1),
+                CpuThreadPlacement(103L, listOf(4, 6), 1),
             ),
             plan,
         )
@@ -37,9 +37,9 @@ class VmCpuThreadSchedulerTest {
     @Test
     fun planDeduplicatesThreadsAndRejectsThreadsOutsideBackendProcess() {
         val plan = VmCpuThreadScheduler.plan(
-            processThreadIds = listOf(100, 100, 101),
-            vcpuThreadIds = listOf(101, 101, 500),
-            ioThreadIds = listOf(101, 500, 500),
+            processThreadIds = listOf(100L, 100L, 101L),
+            vcpuThreadIds = listOf(101L, 101L, 500L),
+            ioThreadIds = listOf(101L, 500L, 500L),
             decision = decision(),
         )
 
@@ -55,8 +55,8 @@ class VmCpuThreadSchedulerTest {
         assertEquals(
             emptyList(),
             VmCpuThreadScheduler.plan(
-                processThreadIds = listOf(100, 101),
-                vcpuThreadIds = listOf(101),
+                processThreadIds = listOf(100L, 101L),
+                vcpuThreadIds = listOf(101L),
                 ioThreadIds = emptyList(),
                 decision = empty,
             ),
