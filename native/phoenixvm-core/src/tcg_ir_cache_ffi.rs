@@ -826,9 +826,10 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_worker_stats(
     0
 }
 
-/// Validate a block, publish it to resident L1 and enqueue L2 persistence.
-/// Returns 0 when queued, 1 when the bounded queue is full (the L1 entry is
-/// retained but no persistent write was accepted), and -1 on invalid input.
+/// Enqueue one owned block for worker-side validation, L2 persistence and
+/// subsequent resident-L1 publication.
+/// Returns 0 when queued, 1 when the bounded queue is full (no cache write was
+/// accepted), and -1 on invalid input or a disconnected worker.
 #[no_mangle]
 pub unsafe extern "C" fn phoenixvm_tcg_l2_store_block(
     handle: *mut PvTcgL2Handle,
