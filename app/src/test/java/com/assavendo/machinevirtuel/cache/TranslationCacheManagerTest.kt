@@ -179,6 +179,30 @@ class TranslationCacheManagerTest {
     }
 
     @Test
+    fun explicitCallerFlagCannotBypassDisabledGlobalLevel3Policy() {
+        val root = tempRoot()
+        try {
+            val disabledPolicy = policy(global = false)
+            val cacheA = TranslationCacheManager.forTesting(root, disabledPolicy)
+            val cacheB = TranslationCacheManager.forTesting(root, disabledPolicy)
+            val keyA = key(cacheA, "vm-a")
+            val keyB = key(cacheB, "vm-b")
+
+            cacheA.putArtifact(
+                keyA,
+                byteArrayOf(5, 4, 3),
+                relocationSafe = true,
+                allowGlobalLevel3 = true,
+            )
+
+            assertNull(cacheB.getArtifact(keyB, allowGlobalLevel3 = true))
+            assertEquals(0L, cacheB.stats().l3Hits)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun invalidatingOneVmPreservesSharedL3UntilExplicitGlobalInvalidation() {
         val root = tempRoot()
         try {
