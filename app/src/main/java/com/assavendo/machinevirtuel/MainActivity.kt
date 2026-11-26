@@ -414,6 +414,9 @@ class MainActivity : Activity() {
             "Supports : ISO personnalisée, disque existant et images kernel/initrd/DTB/system/vendor/userdata pour Android. Les fichiers sont copiés dans l'espace privé de la VM."
         ))
         content.addView(artifactRow)
+        val androidAdb = checkBox("Activer ADB réseau (Android invité uniquement)", base.androidAdbEnabled)
+        addLabel("Port hôte ADB")
+        val adbPort = edit(base.androidAdbHostPort.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
 
         section("C — Ressources de la machine")
         addLabel("RAM (MiB)")
@@ -603,10 +606,7 @@ class MainActivity : Activity() {
         artifactButton("Choisir Android vendor.img (facultatif)", "android-vendor", 712)
         artifactButton("Choisir Android userdata.img", "android-userdata", 713)
         artifactButton("Ajouter des fichiers ponctuels au dossier partagé", "shared-files", 714)
-        val androidAdb = checkBox("Activer ADB réseau (Android invité uniquement)", base.androidAdbEnabled)
-        addLabel("Port hôte ADB")
-        val adbPort = edit(base.androidAdbHostPort.toString(), android.text.InputType.TYPE_CLASS_NUMBER)
-        content.addView(cardText().apply {
+        stepPages[1].addView(cardText().apply {
             text = buildString {
                 append("ISO : ").append(base.isoPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "non sélectionnée").append('\n')
                 append("Disque existant : ").append(base.diskPath.takeIf { it.isNotBlank() }?.let { File(it).name } ?: "aucun").append('\n')
