@@ -2,6 +2,7 @@ package com.assavendo.machinevirtuel.performance
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class VmCpuThreadSchedulerTest {
     private fun decision() = VmScheduleDecision(
