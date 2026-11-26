@@ -93,6 +93,9 @@ class TranslationCacheManager private constructor(
     initialPolicy: TranslationCachePolicy,
     private val preferences: SharedPreferences?,
 ) {
+    private enum class ResidentKind { METADATA, ARTIFACT }
+    private data class ResidentKey(val id: String, val kind: ResidentKind)
+
     companion object {
         private const val FORMAT_VERSION = 3
         private const val METADATA_MAX_BYTES = 1_048_576
@@ -158,6 +161,10 @@ class TranslationCacheManager private constructor(
     private val memoryArtifactsL0 = object : LinkedHashMap<String, ByteArray>(policy.l0MaxEntries, 0.75f, true) {}
     private val processArtifactsL1 = object : LinkedHashMap<String, ByteArray>(policy.l1MaxEntries, 0.75f, true) {}
     private val localOwnerHashes = HashMap<String, String>()
+    // L0/L1 budgets are shared by metadata and artifacts, not duplicated per map.
+    private val l0AccessOrder = HashMap<ResidentKey, Long>()
+    private val l1AccessOrder = HashMap<ResidentKey, Long>()
+    private var accessSequence = 0L
     private val hitCount = AtomicLong(0)
     private val missCount = AtomicLong(0)
     private val l0HitCount = AtomicLong(0)
@@ -187,11 +194,7 @@ class TranslationCacheManager private constructor(
             ?.putInt("cleanupIntervalWrites", newPolicy.cleanupIntervalWrites)
             ?.putBoolean("globalLevel3Enabled", newPolicy.globalLevel3Enabled)
             ?.apply()
-        trimMetadata(memoryL0, newPolicy.l0MaxEntries, newPolicy.l0MaxBytes)
-        trimMetadata(processL1, newPolicy.l1MaxEntries, newPolicy.l1MaxBytes)
-        trimArtifacts(memoryArtifactsL0, newPolicy.l0MaxEntries, newPolicy.l0MaxBytes)
-        trimArtifacts(processArtifactsL1, newPolicy.l1MaxEntries, newPolicy.l1MaxBytes)
-        refreshLocalOwners()
+        trimMemoryCaches()
         cleanup(newPolicy.maxPersistentBytes)
     }
 
@@ -300,11 +303,13 @@ class TranslationCacheManager private constructor(
         val localId = keyId(key)
         val allowSharedLookup = allowGlobalLevel3 && policy.globalLevel3Enabled
         memoryArtifactsL0[localId]?.let {
+            recordL0Access(localId, ResidentKind.ARTIFACT)
             hitCount.incrementAndGet()
             l0HitCount.incrementAndGet()
             return it.copyOf()
         }
         processArtifactsL1[localId]?.let {
+            recordL1Access(localId, ResidentKind.ARTIFACT)
             cacheArtifactInMemory(localId, key.vmId, it)
             hitCount.incrementAndGet()
             l1HitCount.incrementAndGet()
@@ -348,21 +353,26 @@ class TranslationCacheManager private constructor(
         val allowSharedLookup = allowGlobalLevel3 && policy.globalLevel3Enabled
         memoryL0[localId]?.let {
             if (isValidMetadataEnvelope(it, key, localId, "VM")) {
+                recordL0Access(localId, ResidentKind.METADATA)
                 hitCount.incrementAndGet()
                 l0HitCount.incrementAndGet()
                 return extractMetadata(it)
             }
             memoryL0.remove(localId)
+            l0AccessOrder.remove(ResidentKey(localId, ResidentKind.METADATA))
         }
         processL1[localId]?.let {
             if (isValidMetadataEnvelope(it, key, localId, "VM")) {
+                recordL1Access(localId, ResidentKind.METADATA)
                 memoryL0[localId] = it
-                trimMetadata(memoryL0, policy.l0MaxEntries, policy.l0MaxBytes)
+                recordL0Access(localId, ResidentKind.METADATA)
+                trimMemoryCaches()
                 hitCount.incrementAndGet()
                 l1HitCount.incrementAndGet()
                 return extractMetadata(it)
             }
             processL1.remove(localId)
+            l1AccessOrder.remove(ResidentKey(localId, ResidentKind.METADATA))
         }
 
         val localFile = vmFile(key, localId)
@@ -489,6 +499,8 @@ class TranslationCacheManager private constructor(
         processL1.remove(id)
         memoryArtifactsL0.remove(id)
         processArtifactsL1.remove(id)
+        l0AccessOrder.keys.removeAll { it.id == id }
+        l1AccessOrder.keys.removeAll { it.id == id }
         localOwnerHashes.remove(id)
         vmFile(key, id).delete()
         vmArtifactFile(key, id).delete()
@@ -517,6 +529,8 @@ class TranslationCacheManager private constructor(
             processL1.remove(id)
             memoryArtifactsL0.remove(id)
             processArtifactsL1.remove(id)
+            l0AccessOrder.keys.removeAll { it.id == id }
+            l1AccessOrder.keys.removeAll { it.id == id }
             localOwnerHashes.remove(id)
         }
     }
@@ -537,6 +551,8 @@ class TranslationCacheManager private constructor(
         processL1.clear()
         memoryArtifactsL0.clear()
         processArtifactsL1.clear()
+        l0AccessOrder.clear()
+        l1AccessOrder.clear()
         localOwnerHashes.clear()
     }
 
@@ -609,6 +625,8 @@ class TranslationCacheManager private constructor(
             processL1.clear()
             memoryArtifactsL0.clear()
             processArtifactsL1.clear()
+            l0AccessOrder.clear()
+            l1AccessOrder.clear()
             localOwnerHashes.clear()
         } else {
             invalidateAll(vmId)
@@ -773,40 +791,86 @@ class TranslationCacheManager private constructor(
         localOwnerHashes[id] = fingerprint(vmId)
         memoryL0[id] = envelope
         processL1[id] = envelope
-        trimMetadata(memoryL0, policy.l0MaxEntries, policy.l0MaxBytes)
-        trimMetadata(processL1, policy.l1MaxEntries, policy.l1MaxBytes)
-        refreshLocalOwners()
+        recordL0Access(id, ResidentKind.METADATA)
+        recordL1Access(id, ResidentKind.METADATA)
+        trimMemoryCaches()
     }
 
     private fun cacheArtifactInMemory(id: String, vmId: String, payload: ByteArray) {
         localOwnerHashes[id] = fingerprint(vmId)
+        val residentKey = ResidentKey(id, ResidentKind.ARTIFACT)
         if (payload.size <= policy.l0MaxBytes) {
             memoryArtifactsL0[id] = payload.copyOf()
-            trimArtifacts(memoryArtifactsL0, policy.l0MaxEntries, policy.l0MaxBytes)
+            recordL0Access(id, ResidentKind.ARTIFACT)
         } else {
             memoryArtifactsL0.remove(id)
+            l0AccessOrder.remove(residentKey)
         }
         if (payload.size <= policy.l1MaxBytes) {
             processArtifactsL1[id] = payload.copyOf()
-            trimArtifacts(processArtifactsL1, policy.l1MaxEntries, policy.l1MaxBytes)
+            recordL1Access(id, ResidentKind.ARTIFACT)
         } else {
             processArtifactsL1.remove(id)
+            l1AccessOrder.remove(residentKey)
         }
+        trimMemoryCaches()
+    }
+
+    private fun recordL0Access(id: String, kind: ResidentKind) {
+        l0AccessOrder[ResidentKey(id, kind)] = ++accessSequence
+    }
+
+    private fun recordL1Access(id: String, kind: ResidentKind) {
+        l1AccessOrder[ResidentKey(id, kind)] = ++accessSequence
+    }
+
+    /**
+     * Enforce each tier's entry and byte budget across both metadata and artifact
+     * residents. Separate maps must not accidentally double the configured quota.
+     */
+    private fun trimMemoryCaches() {
+        trimTier(
+            metadata = memoryL0,
+            artifacts = memoryArtifactsL0,
+            accessOrder = l0AccessOrder,
+            maxEntries = policy.l0MaxEntries,
+            maxBytes = policy.l0MaxBytes,
+        )
+        trimTier(
+            metadata = processL1,
+            artifacts = processArtifactsL1,
+            accessOrder = l1AccessOrder,
+            maxEntries = policy.l1MaxEntries,
+            maxBytes = policy.l1MaxBytes,
+        )
         refreshLocalOwners()
     }
 
-    private fun trimMetadata(
-        map: LinkedHashMap<String, String>,
+    private fun trimTier(
+        metadata: LinkedHashMap<String, String>,
+        artifacts: LinkedHashMap<String, ByteArray>,
+        accessOrder: MutableMap<ResidentKey, Long>,
         maxEntries: Int,
         maxBytes: Long,
     ) {
-        fun byteCount(): Long = map.values.sumOf { it.toByteArray(Charsets.UTF_8).size.toLong() }
-        while (map.size > maxEntries || byteCount() > maxBytes) {
-            val iterator = map.entries.iterator()
-            if (!iterator.hasNext()) break
-            iterator.next()
-            iterator.remove()
+        fun byteCount(): Long =
+            metadata.values.sumOf { it.toByteArray(Charsets.UTF_8).size.toLong() } +
+                artifacts.values.sumOf { it.size.toLong() }
+
+        while (metadata.size + artifacts.size > maxEntries || byteCount() > maxBytes) {
+            val oldest = accessOrder.minByOrNull { it.value }?.key ?: break
+            when (oldest.kind) {
+                ResidentKind.METADATA -> metadata.remove(oldest.id)
+                ResidentKind.ARTIFACT -> artifacts.remove(oldest.id)
+            }
+            accessOrder.remove(oldest)
         }
+
+        val residentKeys = buildSet {
+            metadata.keys.forEach { add(ResidentKey(it, ResidentKind.METADATA)) }
+            artifacts.keys.forEach { add(ResidentKey(it, ResidentKind.ARTIFACT)) }
+        }
+        accessOrder.keys.retainAll(residentKeys)
     }
 
     /** Keep the invalidation index bounded by entries actually resident in memory. */
@@ -814,15 +878,6 @@ class TranslationCacheManager private constructor(
         val resident = memoryL0.keys + processL1.keys +
             memoryArtifactsL0.keys + processArtifactsL1.keys
         localOwnerHashes.keys.retainAll(resident.toSet())
-    }
-
-    private fun trimArtifacts(map: LinkedHashMap<String, ByteArray>, maxEntries: Int, maxBytes: Long) {
-        while (map.size > maxEntries || map.values.sumOf { it.size.toLong() } > maxBytes) {
-            val iterator = map.entries.iterator()
-            if (!iterator.hasNext()) break
-            iterator.next()
-            iterator.remove()
-        }
     }
 
     private fun vmDirectory(key: TranslationCacheKey): File =
