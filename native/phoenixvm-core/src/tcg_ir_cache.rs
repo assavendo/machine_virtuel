@@ -1004,8 +1004,8 @@ impl TcgIrL2Store {
     fn scan_entries(&self) -> Result<Vec<L2Entry>, TcgIrCacheError> {
         let mut entries = Vec::new();
         let now = SystemTime::now();
-        for vm_entry in fs::read_dir(&self.root)
-            .map_err(|error| TcgIrCacheError::Io(error.kind()))?
+        for vm_entry in
+            fs::read_dir(&self.root).map_err(|error| TcgIrCacheError::Io(error.kind()))?
         {
             let vm_entry = vm_entry.map_err(|error| TcgIrCacheError::Io(error.kind()))?;
             let vm_path = vm_entry.path();
@@ -1017,8 +1017,8 @@ impl TcgIrL2Store {
                 continue;
             }
 
-            for file_entry in fs::read_dir(&vm_path)
-                .map_err(|error| TcgIrCacheError::Io(error.kind()))?
+            for file_entry in
+                fs::read_dir(&vm_path).map_err(|error| TcgIrCacheError::Io(error.kind()))?
             {
                 let file_entry = file_entry.map_err(|error| TcgIrCacheError::Io(error.kind()))?;
                 let path = file_entry.path();
@@ -1057,14 +1057,12 @@ impl TcgIrL2Store {
 
     fn cleanup_locked(&self) -> Result<TcgIrL2Stats, TcgIrCacheError> {
         let mut entries = self.scan_entries()?;
-        let mut bytes = entries.iter().fold(0_u64, |total, entry| {
-            total.saturating_add(entry.bytes)
-        });
+        let mut bytes = entries
+            .iter()
+            .fold(0_u64, |total, entry| total.saturating_add(entry.bytes));
         entries.sort_by_key(|entry| entry.modified);
 
-        while (entries.len() > self.max_entries || bytes > self.max_bytes)
-            && !entries.is_empty()
-        {
+        while (entries.len() > self.max_entries || bytes > self.max_bytes) && !entries.is_empty() {
             let oldest = entries.remove(0);
             match fs::remove_file(&oldest.path) {
                 Ok(()) => bytes = bytes.saturating_sub(oldest.bytes),
@@ -1180,7 +1178,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn vm_l2_store_isolates_owners_and_invalidates_selectively() {
         let root = std::env::temp_dir().join(format!(
@@ -1252,10 +1249,7 @@ mod tests {
         encoded[last] ^= 0x20;
         fs::write(&path, encoded).unwrap();
 
-        assert_eq!(
-            store.load("vm-one", &block.compatibility).unwrap(),
-            None
-        );
+        assert_eq!(store.load("vm-one", &block.compatibility).unwrap(), None);
         assert!(!path.exists());
         fs::remove_dir_all(root).unwrap();
     }
