@@ -828,11 +828,7 @@ impl TcgIrL2Store {
 
     /// Persist one VM-owned entry; the guest-code fingerprint must already reflect
     /// the current translated bytes. The caller supplies the fresh context.
-    pub fn store(
-        &self,
-        vm_id: &str,
-        block: &TcgIrBlock,
-    ) -> Result<(), TcgIrCacheError> {
+    pub fn store(&self, vm_id: &str, block: &TcgIrBlock) -> Result<(), TcgIrCacheError> {
         validate_vm_id(vm_id)?;
         let encoded = block.encode()?;
         if encoded.len() as u64 > self.max_bytes {
@@ -882,21 +878,17 @@ impl TcgIrL2Store {
 
         match TcgIrBlock::read_file(&path) {
             Ok(block) if block.is_compatible_with(expected) => {
-                let _ = fs::File::open(&path)
-                    .and_then(|file| file.set_modified(SystemTime::now()));
+                let _ = fs::File::open(&path).and_then(|file| file.set_modified(SystemTime::now()));
                 Ok(Some(block))
             }
-            Ok(_) | Err(TcgIrCacheError::Corrupt)
+            Ok(_)
+            | Err(TcgIrCacheError::Corrupt)
             | Err(TcgIrCacheError::UnsupportedVersion)
             | Err(TcgIrCacheError::TooLarge) => {
                 let _ = fs::remove_file(&path);
                 Ok(None)
             }
-            Err(TcgIrCacheError::Io(kind))
-                if kind == std::io::ErrorKind::NotFound =>
-            {
-                Ok(None)
-            }
+            Err(TcgIrCacheError::Io(kind)) if kind == std::io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
         }
     }
