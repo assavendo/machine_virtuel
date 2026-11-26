@@ -107,6 +107,14 @@ class MainActivity : Activity() {
         projectActions.addView(space(8))
         projectActions.addView(actionButton("Licence", teal) { showLicenses() })
         content.addView(projectActions)
+        val cacheActions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        cacheActions.addView(actionButton("Configurer le cache traduction", teal) {
+            showTranslationCacheSettings()
+        })
+        content.addView(cacheActions)
 
         content.addView(sectionTitle("Machines virtuelles"))
         vmContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -169,7 +177,21 @@ class MainActivity : Activity() {
                 .append(" • validation : ").append(profile.validation.name)
         }
         val stats = manager.cacheStats()
-        cacheLabel.text = "Fichiers : " + stats.files + " • Taille : " + (stats.bytes / 1024) + " KiB"
+        val cachePolicy = manager.translationCachePolicy()
+        cacheLabel.text = buildString {
+            append("Fichiers : ").append(stats.files)
+            append(" • Taille : ").append(stats.bytes / 1024).append(" KiB")
+            append(" / quota ").append(cachePolicy.maxPersistentBytes / (1024 * 1024)).append(" MiB")
+            append("\nHits : ").append(stats.hits)
+            append(" • Miss : ").append(stats.misses)
+            append(" • L0/L1/L2/L3 : ")
+                .append(stats.l0Hits).append("/")
+                .append(stats.l1Hits).append("/")
+                .append(stats.l2Hits).append("/")
+                .append(stats.l3Hits)
+            append("\nPartage L3 : ").append(if (cachePolicy.globalLevel3Enabled) "activé" else "désactivé")
+            append(" • Nettoyage auto : ").append(cachePolicy.cleanupIntervalWrites).append(" écriture(s)")
+        }
         statusLabel.text = "Runtime : " + if (manager.runtimeReady()) "prêt" else "non installé / incomplet"
         renderVms()
     }
@@ -994,6 +1016,78 @@ class MainActivity : Activity() {
             )
             .setPositiveButton("Fermer", null)
             .show()
+    }
+
+    private fun showTranslationCacheSettings() {
+        val current = manager.translationCachePolicy()
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(28, 12, 28, 8)
+        }
+        body.addView(TextView(this).apply {
+            text = "Quota maximal du cache persistant"
+            setTextColor(textColor)
+            textSize = 14f
+        })
+        val quotaOptions = listOf(64, 128, 256, 512, 1024, 2048)
+        val quota = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                quotaOptions.map { "$it MiB" },
+            )
+            val currentMiB = (current.maxPersistentBytes / (1024 * 1024)).toInt()
+            setSelection(quotaOptions.indices.minByOrNull {
+                kotlin.math.abs(quotaOptions[it] - currentMiB)
+            } ?: 2)
+        }
+        body.addView(quota)
+        val global = CheckBox(this).apply {
+            text = "Autoriser le partage global L3 entre VM compatibles"
+            setTextColor(textColor)
+            isChecked = current.globalLevel3Enabled
+        }
+        body.addView(global)
+        body.addView(TextView(this).apply {
+            text = "Le L3 n'est utilisé que si l'empreinte du code invité, le build invité, la version du traducteur, l'architecture hôte et les fonctionnalités CPU correspondent exactement. Les profils d'exécution restent propres à chaque VM. Le cache ne sérialise pas les Translation Blocks opaques de QEMU TCG."
+            setTextColor(muted)
+            textSize = 12f
+            setPadding(0, 10, 0, 8)
+        })
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Cache de traduction")
+            .setView(body)
+            .setNegativeButton("Annuler", null)
+            .setNeutralButton("Nettoyer maintenant", null)
+            .setPositiveButton("Enregistrer", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                runCatching { manager.cleanTranslationCache() }
+                    .onSuccess {
+                        toast("Nettoyage du cache effectué.")
+                        refresh()
+                    }
+                    .onFailure { toast("Nettoyage : " + (it.message ?: "échec")) }
+            }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val selectedMiB = quotaOptions[quota.selectedItemPosition]
+                runCatching {
+                    manager.configureTranslationCache(
+                        current.copy(
+                            maxPersistentBytes = selectedMiB.toLong() * 1024L * 1024L,
+                            globalLevel3Enabled = global.isChecked,
+                        )
+                    )
+                }.onSuccess {
+                    toast("Politique du cache enregistrée.")
+                    dialog.dismiss()
+                    refresh()
+                }.onFailure { toast("Configuration du cache : " + (it.message ?: "échec")) }
+            }
+        }
+        dialog.show()
     }
 
     private fun showMetrics(vm: VmConfig) {
