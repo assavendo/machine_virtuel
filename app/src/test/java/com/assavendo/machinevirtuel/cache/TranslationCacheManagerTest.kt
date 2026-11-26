@@ -499,20 +499,22 @@ class TranslationCacheManagerTest {
         try {
             val cache = TranslationCacheManager.forTesting(
                 root,
-                policy(l0Entries = 1, l1Entries = 2, l0Bytes = 4096, l1Bytes = 4096),
+                policy(l0Entries = 2, l1Entries = 3, l0Bytes = 4096, l1Bytes = 4096),
             )
-            val olderManifest = key(cache, "vm-artifact-lru", code = byteArrayOf(1))
-            val activeArtifact = key(cache, "vm-artifact-lru", code = byteArrayOf(2))
+            val activeArtifact = key(cache, "vm-artifact-lru", code = byteArrayOf(1))
+            val olderManifest = key(cache, "vm-artifact-lru", code = byteArrayOf(2))
             val newerManifest = key(cache, "vm-artifact-lru", code = byteArrayOf(3))
+            val newestManifest = key(cache, "vm-artifact-lru", code = byteArrayOf(4))
             val artifact = ByteArray(24) { (it + 7).toByte() }
 
-            cache.putManifest(olderManifest, "older")
             cache.putArtifact(activeArtifact, artifact, relocationSafe = true)
+            cache.putManifest(olderManifest, "older")
             assertContentEquals(artifact, cache.getArtifact(activeArtifact))
             cache.putManifest(newerManifest, "newer")
+            cache.putManifest(newestManifest, "newest")
 
-            // L0 has only the newer manifest; the artifact must still be present in L1
-            // because its L0 read refreshed the corresponding L1 recency.
+            // The active artifact has left L0 under pressure, but the L0 read must
+            // have refreshed it in L1 so the newest manifest insertion evicts colder metadata.
             assertContentEquals(artifact, cache.getArtifact(activeArtifact))
             assertEquals(1L, cache.stats().l1Hits)
             assertEquals(0L, cache.stats().l2Hits)
