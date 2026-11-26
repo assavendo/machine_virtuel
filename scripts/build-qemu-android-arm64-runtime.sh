@@ -38,8 +38,8 @@ if sys.version_info < (3, 9):
     raise SystemExit("QEMU ARM64 build requires Python 3.9 or newer.")
 PY
 
-pkg-config --exists glib-2.0 pixman-1 || {
-  echo "Install GLib and Pixman development packages for the Android/Termux build environment." >&2
+pkg-config --exists glib-2.0 pixman-1 zlib || {
+  echo "Install GLib, Pixman and zlib development packages for the Android/Termux build environment." >&2
   exit 1
 }
 pkg-config --exists slirp || {
@@ -62,6 +62,7 @@ cd "$SRC/build"
 
 ../configure \
   --prefix="$PREFIX" \
+  --python=python3 \
   --target-list="$QEMU_TARGETS" \
   --enable-tcg \
   --disable-guest-agent \
