@@ -101,13 +101,5 @@ class TranslationEngine(private val cache: TranslationCacheManager) {
     }
 
     private fun cacheIdentity(key: TranslationCacheKey): String =
-        cache.fingerprint(
-            key.vmId,
-            key.codeFingerprint,
-            key.guestFingerprint,
-            key.translatorVersion,
-            key.hostArch,
-            key.hostFeatures,
-            key.level.toString(),
-        )
+        cache.compatibilityFingerprint(key)
 }
