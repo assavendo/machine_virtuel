@@ -300,6 +300,8 @@ class MainActivity : Activity() {
             }
         }
         var buildStep = 0
+        var activeStep = initialStep.coerceIn(0, stepPages.lastIndex)
+        pendingVmCreationStep = activeStep
         var content = stepPages[0]
         fun section(label: String) {
             buildStep = when {
@@ -614,8 +616,6 @@ class MainActivity : Activity() {
             }
         })
 
-        var activeStep = initialStep.coerceIn(0, stepPages.lastIndex)
-        pendingVmCreationStep = activeStep
         val stepTitles = listOf(
             "Architecture",
             "Système invité et médias",
@@ -652,7 +652,7 @@ class MainActivity : Activity() {
             "name", "arch" -> 0
             "guestOs", "guestVersion", "isoPath", "diskPath", "kernelPath",
             "initrdPath", "dtbPath", "androidSystemPath", "androidVendorPath",
-            "androidUserdataPath" -> 1
+            "androidUserdataPath", "androidArtifacts" -> 1
             "ramMb", "vCpu", "diskSizeGiB", "diskFormat" -> 2
             "gpuBackend", "displayWidth", "displayHeight" -> 3
             "network", "networkMode", "tapName", "androidAdbEnabled" -> 4
@@ -715,7 +715,7 @@ class MainActivity : Activity() {
                     activeStep = stepForField(issues.first().field)
                     renderStep()
                     updateNavigation()
-                    toast(issues.joinToString("\\n") { it.field + " : " + it.message })
+                    toast(issues.joinToString("\n") { it.field + " : " + it.message })
                     return@setOnClickListener
                 }
 
