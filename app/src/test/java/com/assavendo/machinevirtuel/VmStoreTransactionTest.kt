@@ -198,4 +198,22 @@ class VmStoreTransactionTest {
             }
         } as SharedPreferences
     }
+
+    @Test
+    fun optionalGuestAgentSettingRoundTripsThroughVmStoreSchema() {
+        val store = VmStore(inMemoryPreferences())
+        val vm = VmConfig(
+            name = "linux-agent-store",
+            guestOs = "Linux ARM64",
+            guestAgentEnabled = true,
+        )
+
+        store.insertUnique(vm)
+
+        val restored = store.list().single()
+        assertEquals(vm.id, restored.id)
+        assertEquals("Linux ARM64", restored.guestOs)
+        assertTrue(restored.guestAgentEnabled)
+    }
+
 }
