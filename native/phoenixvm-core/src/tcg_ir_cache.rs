@@ -4,7 +4,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -1236,6 +1236,82 @@ impl TcgIrL2Store {
                 .fold(0_u64, |total, entry| total.saturating_add(entry.bytes)),
         })
     }
+
+    /// Load the most recently used entries for one VM for a memory-resident L1.
+    ///
+    /// This method performs filesystem I/O and MUST run on a cache worker, never
+    /// from a vCPU thread. Corrupt records are deleted as safe misses.
+    pub fn preload_vm(
+        &self,
+        vm_id: &str,
+        max_entries: usize,
+        max_bytes: u64,
+    ) -> Result<Vec<TcgIrBlock>, TcgIrCacheError> {
+        validate_vm_id(vm_id)?;
+        if max_entries == 0 || max_bytes == 0 {
+            return Err(TcgIrCacheError::Invalid("invalid L1 preload quota"));
+        }
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        let _process_guard = ProcessFileLock::acquire(&self.root)?;
+        let directory = self.vm_directory(vm_id);
+        match fs::symlink_metadata(&directory) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(TcgIrCacheError::Invalid("VM cache path must be a real directory"));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(TcgIrCacheError::Io(error.kind())),
+        }
+
+        let mut candidates = Vec::new();
+        for entry in fs::read_dir(&directory).map_err(|error| TcgIrCacheError::Io(error.kind()))? {
+            let entry = entry.map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+            let path = entry.path();
+            let metadata = match fs::symlink_metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+            if metadata.file_type().is_symlink()
+                || !metadata.is_file()
+                || path.extension().and_then(|value| value.to_str()) != Some("pvir")
+            {
+                continue;
+            }
+            candidates.push(L2Entry {
+                path,
+                bytes: metadata.len(),
+                modified: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+            });
+        }
+        candidates.sort_by_key(|entry| std::cmp::Reverse(entry.modified));
+
+        let mut loaded = Vec::new();
+        let mut total_bytes = 0_u64;
+        for entry in candidates {
+            if loaded.len() >= max_entries || total_bytes.saturating_add(entry.bytes) > max_bytes {
+                continue;
+            }
+            match TcgIrBlock::read_file(&entry.path) {
+                Ok(block) => {
+                    total_bytes = total_bytes.saturating_add(entry.bytes);
+                    loaded.push(block);
+                }
+                Err(TcgIrCacheError::Corrupt)
+                | Err(TcgIrCacheError::UnsupportedVersion)
+                | Err(TcgIrCacheError::TooLarge)
+                | Err(TcgIrCacheError::Invalid(_)) => {
+                    let _ = fs::remove_file(&entry.path);
+                }
+                Err(TcgIrCacheError::Io(std::io::ErrorKind::NotFound)) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(loaded)
+    }
+
 
     fn vm_directory(&self, vm_id: &str) -> PathBuf {
         let digest = Sha256::digest(vm_id.as_bytes());
