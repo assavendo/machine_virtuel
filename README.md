@@ -32,4 +32,5 @@ See:
 - docs/IMPLEMENTATION_STATUS.md — source-specification status matrix.
 - docs/FULL_SYSTEM_BACKEND.md — backend architecture.
 - docs/X86_FULL_SYSTEM_RUNTIME.md — x86 runtime provisioning.
+- docs/ARM64_QEMU_RUNTIME_BUILD.md — reproducible Android ARM64 QEMU source build.
 - THIRD_PARTY/DroidVM-Prebuilts.txt — runtime provenance/licensing.
