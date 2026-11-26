@@ -199,7 +199,7 @@ class TranslationCacheManagerTest {
         assertEquals(1, remainingGlobalEntries.size)
         assertTrue(
             remainingGlobalEntries.single().readText(Charsets.UTF_8).contains(
-                "\\\"vm_id_hash\\\":\\\"" + manager.fingerprint("vm-beta") + "\\\""
+                "\"vm_id_hash\":\"" + manager.fingerprint("vm-beta") + "\""
             )
         )
 
