@@ -50,6 +50,11 @@ int check_tcg_ir_builder_abi(PvTcgL2Handle *handle,
     }
     phoenixvm_tcg_ir_block_free(block);
 
+    /* Explicit barrier is for non-vCPU worker/shutdown paths only. */
+    if (phoenixvm_tcg_l2_flush(handle) != 0) {
+        return -1;
+    }
+
     if (phoenixvm_tcg_l2_load_block(handle, compatibility, &block) != 1) {
         return -1;
     }
