@@ -24,7 +24,7 @@ import java.util.UUID
 class VmManager(private val context: Context) {
     private val store = VmStore(context)
     private val scanner = HostCapabilityScanner(context)
-    private val cache = TranslationCacheManager(context)
+    private val cache = TranslationCacheManager.get(context)
     private val orchestrator = VmOrchestrator()
     private val metrics = HostMetricsCollector(context)
     private val advisor = PerformanceAdvisor()
