@@ -861,7 +861,7 @@ mod tests {
     #[test]
     fn rejects_non_symbolic_names_and_oversized_input() {
         let mut block = sample_block();
-        block.operations[0].opcode = "0x7fffdead".into();
+        block.operations[0].opcode = "bad opcode!".into();
         assert!(matches!(block.encode(), Err(TcgIrCacheError::Invalid(_))));
 
         assert_eq!(
