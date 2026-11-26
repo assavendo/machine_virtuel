@@ -306,6 +306,11 @@ class TranslationCacheManager private constructor(
         val allowSharedLookup = allowGlobalLevel3 && policy.globalLevel3Enabled
         memoryArtifactsL0[localId]?.let {
             recordL0Access(localId, ResidentKind.ARTIFACT)
+            // An L0 hit is also recent use of the same resident in L1, when present.
+            // Keep both tier-specific LRU orders coherent across cross-kind pressure.
+            if (processArtifactsL1.containsKey(localId)) {
+                recordL1Access(localId, ResidentKind.ARTIFACT)
+            }
             hitCount.incrementAndGet()
             l0HitCount.incrementAndGet()
             return it.copyOf()
@@ -356,6 +361,11 @@ class TranslationCacheManager private constructor(
         memoryL0[localId]?.let {
             if (isValidMetadataEnvelope(it, key, localId, "VM")) {
                 recordL0Access(localId, ResidentKind.METADATA)
+                // Refresh the matching L1 resident as well; otherwise a later insertion
+                // can evict an actively used manifest while retaining colder artifacts.
+                if (processL1.containsKey(localId)) {
+                    recordL1Access(localId, ResidentKind.METADATA)
+                }
                 hitCount.incrementAndGet()
                 l0HitCount.incrementAndGet()
                 return extractMetadata(it)
