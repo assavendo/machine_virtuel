@@ -434,4 +434,62 @@ class TranslationCacheManagerTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun aggregateReadsCountersFromPersistedProfileMetadata() {
+        val root = tempRoot()
+        try {
+            val writer = TranslationCacheManager.forTesting(root, policy())
+            val key = key(writer, "vm-profile")
+            val profile = TranslationProfile(
+                state = "HOT",
+                hotBlocks = 12,
+                coldBlocks = 4,
+                executionCount = 16,
+                cacheHits = 10,
+                cacheMisses = 6,
+                totalTranslationMs = 40.0,
+                lastSeenMs = 1_900_000_000_000L,
+                compatibilityFingerprint = writer.compatibilityFingerprint(key),
+            )
+
+            writer.putProfile(key, profile)
+
+            // Aggregate through a newly created manager, as a later process session would.
+            val aggregate = TranslationCacheManager.forTesting(root, policy()).aggregate("vm-profile")
+            assertEquals(16L, aggregate.executions)
+            assertEquals(10L, aggregate.cacheHits)
+            assertEquals(6L, aggregate.cacheMisses)
+            assertEquals(0.625, aggregate.cacheHitRate!!, absoluteTolerance = 1e-12)
+            assertEquals(2.5, aggregate.averageTranslationMs!!, absoluteTolerance = 1e-12)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun profileCounterAdditionRejectsLongOverflow() {
+        val root = tempRoot()
+        try {
+            val cache = TranslationCacheManager.forTesting(root, policy())
+            val key = key(cache, "vm-overflow")
+            val profile = TranslationProfile(
+                state = "HOT",
+                hotBlocks = 1,
+                coldBlocks = 0,
+                executionCount = Long.MAX_VALUE,
+                cacheHits = Long.MAX_VALUE,
+                cacheMisses = 1,
+                totalTranslationMs = 1.0,
+                lastSeenMs = 1L,
+                compatibilityFingerprint = cache.compatibilityFingerprint(key),
+            )
+            assertFailsWith<IllegalArgumentException> {
+                cache.putProfile(key, profile)
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
 }
