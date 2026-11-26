@@ -15,7 +15,7 @@ data class VmScheduleDecision(
     val reason: String,
     /** One online, process-allowed logical CPU per guest vCPU, when topology is known. */
     val assignedCpuIds: List<Int> = emptyList(),
-    /** Android/Linux nice priority mapped conservatively to the range -4..10. */
+    /** Android/Linux thread priority mapped conservatively to non-privileged values 0..10. */
     val threadPriority: Int = 0,
 )
 
