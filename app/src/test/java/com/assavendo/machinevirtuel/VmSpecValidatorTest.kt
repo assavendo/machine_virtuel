@@ -5,6 +5,14 @@ import kotlin.test.Test
 import kotlin.test.assertTrue
 
 class VmSpecValidatorTest {
+    @Test
+    fun vmNameMustRespectThePersistedEightyCharacterLimit() {
+        val tooLong = VmConfig(name = "x".repeat(81))
+        assertTrue(VmSpecValidator.validate(tooLong).any {
+            it.field == "name" && it.fatal
+        })
+    }
+
     @Test fun invalidRamIsFatal() {
         val vm = VmConfig(name = "bad", ramMb = 128)
         assertTrue(VmSpecValidator.validate(vm).any { it.field == "ramMb" && it.fatal })
