@@ -412,7 +412,7 @@ fn validate_operation_schema(
             // old process's tcg_splitwx_to_rx(TB) address.
             if operation.param1 != 0
                 || operation.param2 != 0
-                || !matches!(operands, [TcgOperand::Immediate(index)] if (0..=2).contains(index))
+                || !matches!(operands, [TcgOperand::Immediate(index)] if matches!(*index, 0 | 1 | 3))
             {
                 return Err(invalid());
             }
@@ -1556,9 +1556,18 @@ mod tests {
             opcode: "exit_tb".into(),
             param1: 0,
             param2: 0,
-            operands: vec![TcgOperand::Immediate(1)],
+            operands: vec![TcgOperand::Immediate(3)],
         });
         assert!(block.validate().is_ok());
+
+        let mut block = sample_block();
+        block.operations.push(TcgIrOperation {
+            opcode: "exit_tb".into(),
+            param1: 0,
+            param2: 0,
+            operands: vec![TcgOperand::Immediate(2)],
+        });
+        assert!(block.validate().is_err());
     }
 
     #[test]
