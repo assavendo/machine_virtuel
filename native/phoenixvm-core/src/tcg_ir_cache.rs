@@ -276,7 +276,9 @@ impl TcgIrBlock {
                     || base.kind != temp.kind
                     || u32::from(temp.id) != u32::from(temp.base_id) + u32::from(temp.subindex)
                 {
-                    return Err(TcgIrCacheError::Invalid("inconsistent multi-slot temporary group"));
+                    return Err(TcgIrCacheError::Invalid(
+                        "inconsistent multi-slot temporary group",
+                    ));
                 }
             }
         }
@@ -424,8 +426,7 @@ impl TcgIrBlock {
                 .map_err(|error| TcgIrCacheError::Io(error.kind()))?;
             drop(file);
 
-            fs::rename(&temporary_path, path)
-                .map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+            fs::rename(&temporary_path, path).map_err(|error| TcgIrCacheError::Io(error.kind()))?;
             File::open(parent)
                 .and_then(|directory| directory.sync_all())
                 .map_err(|error| TcgIrCacheError::Io(error.kind()))?;
@@ -973,10 +974,8 @@ mod tests {
     fn atomic_file_round_trip_rejects_corruption() {
         let block = sample_block();
         let unique = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let directory = std::env::temp_dir().join(format!(
-            "phoenixvm-tcg-ir-{}-{unique}",
-            std::process::id()
-        ));
+        let directory =
+            std::env::temp_dir().join(format!("phoenixvm-tcg-ir-{}-{unique}", std::process::id()));
         let path = directory.join("block.pvir");
         block.write_atomic(&path).unwrap();
         assert_eq!(TcgIrBlock::read_file(&path).unwrap(), block);
@@ -1002,5 +1001,4 @@ mod tests {
         });
         assert!(matches!(block.encode(), Err(TcgIrCacheError::Invalid(_))));
     }
-
 }
