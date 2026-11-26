@@ -533,7 +533,7 @@ class VmRuntimeService : Service() {
                     audioUnderruns = audioUnderruns,
                     audioLatencyConfiguredMs = vm.audioBufferMs.toDouble().takeIf { vm.audioEnabled },
                     guestCpuMetrics = cachedGuestCpuMetrics,
-                    qemuTcgStats = cachedQemuTcgStats,
+                    qemuTcgStats = qemuTcgStats,
                 )
                 val host = cachedHost ?: error("Host capability cache unavailable.")
                 val topology = cachedTopology ?: error("CPU topology cache unavailable.")
