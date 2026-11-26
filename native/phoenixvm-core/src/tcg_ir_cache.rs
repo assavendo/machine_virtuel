@@ -1251,10 +1251,32 @@ mod tests {
         });
 
         // The second independent open must block until the first guard releases LOCK_EX.
-        assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
+        assert!(matches!(
+            receiver.recv_timeout(Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
         drop(first);
         receiver.recv_timeout(Duration::from_secs(2)).unwrap();
         worker.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn process_lock_rejects_symlink_redirection() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "phoenixvm-tcg-process-lock-symlink-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let target = root.join("untrusted-target");
+        File::create(&target).unwrap();
+        symlink(&target, root.join(".tcg-ir-l2.lock")).unwrap();
+
+        assert!(ProcessFileLock::acquire(&root).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 
