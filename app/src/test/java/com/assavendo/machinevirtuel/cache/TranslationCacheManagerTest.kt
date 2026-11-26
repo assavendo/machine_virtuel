@@ -144,6 +144,40 @@ class TranslationCacheManagerTest {
     }
 
     @Test
+    fun sharedLruRefreshesMetadataAcrossArtifactInsertions() {
+        val root = tempRoot()
+        try {
+            val cache = TranslationCacheManager.forTesting(
+                root,
+                policy(l0Entries = 2, l1Entries = 2, l0Bytes = 4096, l1Bytes = 4096),
+            )
+            val metadataKey = key(cache, "vm-shared-lru", code = byteArrayOf(1))
+            val olderArtifactKey = key(cache, "vm-shared-lru", code = byteArrayOf(2))
+            val newerArtifactKey = key(cache, "vm-shared-lru", code = byteArrayOf(3))
+            val olderArtifact = ByteArray(32) { (it + 1).toByte() }
+            val newerArtifact = ByteArray(32) { (it + 33).toByte() }
+
+            cache.putManifest(metadataKey, "recent manifest")
+            cache.putArtifact(olderArtifactKey, olderArtifact, relocationSafe = true)
+
+            // A read refreshes metadata recency in both memory tiers.
+            assertEquals("recent manifest", cache.getManifest(metadataKey))
+            cache.putArtifact(newerArtifactKey, newerArtifact, relocationSafe = true)
+
+            // The older artifact is now the LRU victim, while the recently read
+            // manifest remains resident in L0 rather than being reloaded from L2.
+            assertEquals("recent manifest", cache.getManifest(metadataKey))
+            assertEquals(2L, cache.stats().l0Hits)
+            assertContentEquals(olderArtifact, cache.getArtifact(olderArtifactKey))
+            assertEquals(1L, cache.stats().l2Hits)
+            assertContentEquals(newerArtifact, cache.getArtifact(newerArtifactKey))
+            assertEquals(1L, cache.stats().l0Hits + cache.stats().l1Hits)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun l0AndL1ByteBudgetsAreSharedBetweenMetadataAndArtifacts() {
         val root = tempRoot()
         try {
