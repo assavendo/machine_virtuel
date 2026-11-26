@@ -69,4 +69,28 @@ class DeviceTopologyTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun malformedOnlineOrAllowedMasksFailClosedInsteadOfWideningCpuAccess() {
+        val root = createTempDir(prefix = "phoenix-cpu-invalid-mask-")
+        try {
+            (0..1).forEach { id -> File(root, "cpu$id").mkdirs() }
+            File(root, "online").writeText("bad-mask")
+            val status = File(root, "status").apply {
+                writeText("Cpus_allowed_list:\\t0-1")
+            }
+            val malformedOnline = DeviceTopology.read(root, status, emptyList())
+            assertTrue(malformedOnline.allowedCpuIds.isEmpty())
+            assertTrue(malformedOnline.cores.isEmpty())
+
+            File(root, "online").writeText("0-1")
+            status.writeText("Cpus_allowed_list:\\tinvalid")
+            val malformedAllowed = DeviceTopology.read(root, status, emptyList())
+            assertTrue(malformedAllowed.allowedCpuIds.isEmpty())
+            assertTrue(malformedAllowed.cores.isEmpty())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
 }
