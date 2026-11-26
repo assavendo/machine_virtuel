@@ -16,6 +16,16 @@ L'audit a identifié pourquoi une copie brute des structures TCG serait incorrec
 
 **Nature de cette avancée : audit de source et spécification de l'intégration, pas patch TCG.** Aucun sérialiseur/réhydrateur n'est encore implémenté, aucun runtime QEMU modifié n'a été construit et aucun hit L2 après redémarrage du processus n'est démontré. La section 9 reste **PARTIELLE**.
 
+## Précisions d'intégration TCG — opérations, unwind, temporaires et helpers
+
+L'audit du tag QEMU 11.1.3 a approfondi le contrat de reconstruction. La liste `include/tcg/tcg-opc.h` décrit chaque opcode avec `oargs/iargs/cargs/flags` et QEMU publie les définitions `TCGOpDef` via `tcg_op_defs[]` ; la future adaptation devra valider exactement le nom et le nombre/classe de chaque argument. Les opérations `insn_start` doivent rester présentes : `tcg_gen_code()` les utilise pour reconstruire `gen_insn_data` et `gen_insn_end_off`, qui alimentent `encode_search()` et la restauration d'état invité lors d'une exception. Les offsets hôte sont recalculés, jamais importés.
+
+Les opérandes temporaires sont des pointeurs `TCGTemp *` contenus dans `TCGArg` ; le pont devra réallouer des temporaires du contexte courant via `tcg_temp_new_internal()`, remapper les identifiants et valider les groupes multi-slots. Les globals déjà présents dans `tcg_ctx->temps[0..nb_globals)` doivent être retrouvés puis validés par signature complète (type, kind, index logique, registre ou base/offset mémoire), jamais recréés ni trouvés par nom seul.
+
+Les objets `TCGHelperInfo` générés par `helper-info.c.inc` contiennent un nom et une fonction, ainsi que les signatures d'appel. Aucun lookup générique nom→info n'a été trouvé dans la source amont vérifiée ; les helpers internes manuels peuvent ne pas avoir de nom. Une table de résolution dédiée au binaire/à la cible est requise, avec validation de `nr_in/nr_out/typemask/flags`. Toute opération spéciale, helper absent ou donnée d'unwind non validable devra provoquer un cache miss sûr. Les labels, sorties TB et accès mémoire seront reconstruits par les APIs TCG, tandis que QEMU conserve ses passes habituelles d'optimisation, génération de code hôte, finalisation et invalidation.
+
+Ces points sont des résultats d'audit source et un contrat d'implémentation, pas un patch QEMU déjà compilé ; aucun TB persistant n'est encore réinjecté dans le moteur.
+
 ## Latest Section 9 increment — shared LRU and persistent profile aggregate corrections
 
 The L0 read path now refreshes the recency of the matching resident in L1 for both metadata and artifacts. Without this propagation, an active L0 manifest could remain the oldest L1 item and be evicted by a later artifact insertion even though the shared LRU policy was intended to account for its recent use. The existing cross-kind LRU regression test now exercises this precise sequence.
