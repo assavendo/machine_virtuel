@@ -1087,6 +1087,7 @@ mod tests {
         );
         assert_eq!(unsafe { phoenixvm_tcg_l2_store_block(handle, builder) }, 0);
         unsafe { phoenixvm_tcg_ir_block_free(builder) };
+        assert_eq!(unsafe { phoenixvm_tcg_l2_flush(handle) }, 0);
 
         // Close the writer, open a fresh handle, then hydrate L1 from the
         // persistent L2 before the simulated vCPU path begins.
