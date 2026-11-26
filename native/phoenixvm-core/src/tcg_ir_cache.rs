@@ -1314,7 +1314,6 @@ impl TcgIrL2Store {
         Ok(loaded)
     }
 
-
     fn vm_directory(&self, vm_id: &str) -> PathBuf {
         let digest = Sha256::digest(vm_id.as_bytes());
         self.root.join(hex_digest(&digest))
