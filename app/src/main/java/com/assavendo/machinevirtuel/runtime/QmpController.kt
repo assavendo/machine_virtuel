@@ -29,17 +29,27 @@ object QmpController {
         executeForResponse(socketFile, """{"execute":"query-status"}""")
 
     fun queryVcpuThreadIds(socketFile: File): List<Long> =
+        queryThreadIds(socketFile, "query-cpus-fast")
+
+    /** Returns the host TIDs of QEMU's named I/O threads when the build exposes them. */
+    fun queryIoThreadIds(socketFile: File): List<Long> =
+        queryThreadIds(socketFile, "query-iothreads")
+
+    private fun queryThreadIds(socketFile: File, command: String): List<Long> =
         runCatching {
-            val response = executeForResponse(socketFile, """{"execute":"query-cpus-fast"}""") ?: return@runCatching emptyList()
-            val json = org.json.JSONObject(response)
-            val values = json.optJSONArray("return") ?: return@runCatching emptyList()
+            val response = executeForResponse(
+                socketFile,
+                """{"execute":"$command"}"""
+            ) ?: return@runCatching emptyList()
+            val values = org.json.JSONObject(response).optJSONArray("return")
+                ?: return@runCatching emptyList()
             buildList {
                 for (index in 0 until values.length()) {
                     val item = values.optJSONObject(index) ?: continue
                     val threadId = item.optLong("thread-id", -1L)
                     if (threadId > 0L) add(threadId)
                 }
-            }
+            }.distinct()
         }.getOrDefault(emptyList())
 
     fun setBalloonTarget(socketFile: File, targetBytes: Long): Boolean {
