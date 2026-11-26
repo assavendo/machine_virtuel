@@ -261,4 +261,28 @@ class TranslationCacheManagerTest {
             TranslationCachePolicy(maxArtifactBytes = 128 * 1024 * 1024)
         }
     }
-}
+
+    @Test
+    fun artifactsAboveMemoryBudgetsFallBackToPersistentVmTier() {
+        val root = tempRoot()
+        try {
+            val limits = policy(
+                l0Entries = 4,
+                l1Entries = 8,
+                l0Bytes = 2,
+                l1Bytes = 4,
+            )
+            val cache = TranslationCacheManager.forTesting(root, limits)
+            val key = key(cache, "vm-large-artifact")
+            val payload = ByteArray(16) { it.toByte() }
+
+            cache.putArtifact(key, payload)
+            assertContentEquals(payload, cache.getArtifact(key))
+            assertEquals(1L, cache.stats().l2Hits)
+            assertEquals(0L, cache.stats().l0Hits)
+            assertEquals(0L, cache.stats().l1Hits)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+\n}
