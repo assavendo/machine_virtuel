@@ -60,6 +60,14 @@ int check_tcg_ir_builder_abi(PvTcgL2Handle *handle,
         return -1;
     }
     phoenixvm_tcg_ir_block_free(block);
+
+    if (phoenixvm_tcg_l2_preload(handle, 8, 1024 * 1024) != 0) {
+        return -1;
+    }
+    if (phoenixvm_tcg_l1_lookup(handle, compatibility, &block) != 1) {
+        return -1;
+    }
+    phoenixvm_tcg_ir_block_free(block);
     return guest_size == 4 && instruction_count == 1
         && temp_count == 0 && label_count == 0 && operation_count == 1 ? 0 : -1;
 }
