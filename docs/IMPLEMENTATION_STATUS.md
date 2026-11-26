@@ -1,5 +1,13 @@
 # PhoenixVM — implementation status against the source cahier
 
+## Dernière avancée section 9 — audit du hook TCG exact de QEMU 11.1.3
+
+L'audit du tag amont `v11.1.3` a maintenant suivi le chemin de création du TB dans les sources : `tb_gen_code()` initialise le contexte et les pages, `setjmp_gen_code()` réinitialise le contexte avec `tcg_func_start()`, appelle `translate_code()`, puis passe les opérations à `tcg_gen_code()` avant l'enregistrement/publication habituels du TB. Les fichiers exacts examinés et les points de code sont consignés dans `docs/TCG_PERSISTENT_CACHE_QEMU_11_1_3.md`.
+
+L'audit a identifié pourquoi une copie brute des structures TCG serait incorrecte : `TCGOp` porte des listes intrusives et données de passe, `TCGTemp` contient des pointeurs et états du processus, les opérations d'appel contiennent des pointeurs de fonctions/helpers et `exit_tb` encode l'adresse du TB courant. Le contrat du patch est donc de reconstruire un graphe IR versionné avec identifiants logiques, de rétablir les temporaires/labels/helpers/TB dans le processus courant, puis de laisser la génération de code, le chaînage et l'invalidation normaux de QEMU fonctionner.
+
+**Nature de cette avancée : audit de source et spécification de l'intégration, pas patch TCG.** Aucun sérialiseur/réhydrateur n'est encore implémenté, aucun runtime QEMU modifié n'a été construit et aucun hit L2 après redémarrage du processus n'est démontré. La section 9 reste **PARTIELLE**.
+
 ## Latest Section 9 increment — shared LRU and persistent profile aggregate corrections
 
 The L0 read path now refreshes the recency of the matching resident in L1 for both metadata and artifacts. Without this propagation, an active L0 manifest could remain the oldest L1 item and be evicted by a later artifact insertion even though the shared LRU policy was intended to account for its recent use. The existing cross-kind LRU regression test now exercises this precise sequence.
