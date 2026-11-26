@@ -100,6 +100,15 @@ class TranslationCacheManager private constructor(
         private const val ARTIFACT_MAGIC = 0x50564d54 // "PVMT"
         private const val PREFS_NAME = "phoenixvm_translation_cache"
         private val VALID_STATES = setOf("COLD", "WARM", "HOT", "VERY_HOT")
+        @Volatile
+        private var applicationInstance: TranslationCacheManager? = null
+
+        /** One process-wide cache manager shared by activities, services and VM monitors. */
+        fun get(context: Context): TranslationCacheManager = synchronized(this) {
+            applicationInstance ?: TranslationCacheManager(context.applicationContext).also {
+                applicationInstance = it
+            }
+        }
 
         internal fun forTesting(
             cacheRoot: File,
