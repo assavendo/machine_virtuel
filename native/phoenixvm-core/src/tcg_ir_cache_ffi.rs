@@ -279,6 +279,9 @@ mod tests {
     use super::*;
     use crate::tcg_ir_cache::{TcgIrOperation, TcgOperand};
     use std::ffi::CString;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     fn compatibility() -> PvTcgCompatibility {
         static QEMU: &[u8] = b"qemu-11.1.3-phoenixvm-pcache-abi1\0";
@@ -339,7 +342,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!(
             "phoenixvm-tcg-ffi-{}-{}",
             std::process::id(),
-            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+            TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         let root_c = CString::new(root.to_string_lossy().as_bytes()).unwrap();
         let vm = CString::new("ffi-vm-one").unwrap();
@@ -388,6 +391,6 @@ mod tests {
         assert_eq!(unsafe { phoenixvm_tcg_l2_invalidate(handle, &key) }, 0);
         // SAFETY: close the only handle created by this test.
         unsafe { phoenixvm_tcg_l2_close(handle) };
-        fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 }
