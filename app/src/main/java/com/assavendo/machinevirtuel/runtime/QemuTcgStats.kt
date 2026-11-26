@@ -29,7 +29,7 @@ object QemuTcgStatsParser {
         fun capture(pattern: Regex): Long? =
             pattern.find(text)?.groupValues?.getOrNull(1)?.replace(",", "")?.toLongOrNull()
 
-        val codeSize = Regex("""(?m)^\s*gen code size\s+$N\s*/\s+$N\s*$""").find(text)
+        val codeSize = Regex("""(?m)^\s*gen code size\s+$N\s*/\s*$N\s*$""").find(text)
         val codeBytes = codeSize?.groupValues?.getOrNull(1)?.replace(",", "")?.toLongOrNull()
         val capacityBytes = codeSize?.groupValues?.getOrNull(2)?.replace(",", "")?.toLongOrNull()
 
