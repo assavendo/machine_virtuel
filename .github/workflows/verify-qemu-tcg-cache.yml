@@ -78,8 +78,8 @@ jobs:
         run: bash patches/qemu/11.1.3/apply.sh "$RUNNER_TEMP/qemu-src"
 
       - name: Configure QEMU system emulator
-        working-directory: \${{ runner.temp }}/qemu-src
         run: |
+          cd "$RUNNER_TEMP/qemu-src"
           ./configure \
             --target-list=x86_64-softmmu \
             --disable-werror \
@@ -98,12 +98,13 @@ jobs:
             --disable-curl
 
       - name: Compile patched QEMU TCG core
-        working-directory: \${{ runner.temp }}/qemu-src
-        run: ninja -C build qemu-system-x86_64
+        run: |
+          cd "$RUNNER_TEMP/qemu-src"
+          ninja -C build qemu-system-x86_64
 
       - name: Verify QEMU binary and linked TCG adapter
-        working-directory: \${{ runner.temp }}/qemu-src
         run: |
+          cd "$RUNNER_TEMP/qemu-src"
           test -x build/qemu-system-x86_64
           build/qemu-system-x86_64 --version
           nm build/qemu-system-x86_64 | grep -E 'phoenixvm_tcg_cache_(start|try_restore|store)'
