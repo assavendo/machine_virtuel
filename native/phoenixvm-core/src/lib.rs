@@ -15,7 +15,7 @@ struct CpuSet {
 
 impl Default for CpuSet {
     fn default() -> Self {
-        Self { bits: [0; 16] }
+        Self { bits: [0; 64] }
     }
 }
 
