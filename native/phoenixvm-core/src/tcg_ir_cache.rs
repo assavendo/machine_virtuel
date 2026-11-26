@@ -890,5 +890,5 @@ mod tests {
                 .operands
                 .contains(&TcgOperand::Helper("helper_cpuid".into()))
         }));
-    }}
+    }
 }
