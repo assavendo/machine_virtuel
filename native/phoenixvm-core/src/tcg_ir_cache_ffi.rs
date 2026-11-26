@@ -102,7 +102,7 @@ impl ResidentL1 {
             self.bytes = self.bytes.saturating_sub(old.bytes);
         }
         while self.entries.len() >= self.max_entries
-            || self.bytes.saturating_add(encoded_len) > self.max_bytes
+            || self.bytes.saturating_add(resident_bytes) > self.max_bytes
         {
             let Some(oldest_key) = self
                 .entries
