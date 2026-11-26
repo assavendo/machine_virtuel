@@ -10,7 +10,7 @@ use std::mem::size_of;
 #[derive(Clone)]
 #[repr(C)]
 struct CpuSet {
-    bits: [u64; 16],
+    bits: [u64; 64],
 }
 
 impl Default for CpuSet {
@@ -20,7 +20,7 @@ impl Default for CpuSet {
 }
 
 fn build_cpu_set(cpu_ids: &[i32]) -> Option<CpuSet> {
-    if cpu_ids.is_empty() || cpu_ids.iter().any(|cpu| !(0..1024).contains(cpu)) {
+    if cpu_ids.is_empty() || cpu_ids.iter().any(|cpu| !(0..4096).contains(cpu)) {
         return None;
     }
     let mut mask = CpuSet::default();
@@ -130,7 +130,7 @@ pub extern "system" fn Java_com_assavendo_machinevirtuel_engine_NativeEngine_nat
     }
 
     let length = match env.get_array_length(&cpu_ids) {
-        Ok(value) if value > 0 && value <= 1024 => value as usize,
+        Ok(value) if value > 0 && value <= 4096 => value as usize,
         _ => return -22,
     };
     let mut ids = vec![0_i32; length];
@@ -174,18 +174,18 @@ mod cpu_affinity_tests {
 
     #[test]
     fn builds_cpu_masks_across_machine_word_boundaries() {
-        let mask = build_cpu_set(&[0, 1, 63, 64, 127, 1023]).unwrap();
+        let mask = build_cpu_set(&[0, 1, 63, 64, 127, 1023, 4095]).unwrap();
         assert_eq!(mask.bits[0] & 1, 1);
         assert_eq!(mask.bits[0] & (1_u64 << 63), 1_u64 << 63);
         assert_eq!(mask.bits[1] & 1, 1);
         assert_eq!(mask.bits[1] & (1_u64 << 63), 1_u64 << 63);
-        assert_eq!(mask.bits[15] & (1_u64 << 63), 1_u64 << 63);
+        assert_eq!(mask.bits[63] & (1_u64 << 63), 1_u64 << 63);
     }
 
     #[test]
     fn rejects_empty_and_out_of_range_cpu_masks() {
         assert!(build_cpu_set(&[]).is_none());
         assert!(build_cpu_set(&[-1]).is_none());
-        assert!(build_cpu_set(&[1024]).is_none());
+        assert!(build_cpu_set(&[4096]).is_none());
     }
 }
