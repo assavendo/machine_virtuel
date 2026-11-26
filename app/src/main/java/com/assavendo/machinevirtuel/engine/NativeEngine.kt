@@ -86,7 +86,7 @@ object NativeEngine {
             return ThreadAffinityDecision(false, errorCode = 22, reason = "Invalid thread ID")
         }
         val normalized = cpuIds.distinct().sorted()
-        if (normalized.isEmpty() || normalized.any { it !in 0..1023 }) {
+        if (normalized.isEmpty() || normalized.any { it !in 0..4095 }) {
             return ThreadAffinityDecision(false, errorCode = 22, reason = "Invalid CPU set")
         }
         val status = runCatching {
