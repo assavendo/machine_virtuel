@@ -919,7 +919,9 @@ impl TcgIrL2Store {
             Err(error) => return Err(TcgIrCacheError::Io(error.kind())),
         };
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            return Err(TcgIrCacheError::Invalid("VM cache path must be a real directory"));
+            return Err(TcgIrCacheError::Invalid(
+                "VM cache path must be a real directory",
+            ));
         }
         let path = self.entry_path(vm_id, compatibility)?;
         match fs::remove_file(path) {
@@ -938,11 +940,11 @@ impl TcgIrL2Store {
         let directory = self.vm_directory(vm_id);
         match fs::symlink_metadata(&directory) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
-                fs::remove_file(directory)
-                    .map_err(|error| TcgIrCacheError::Io(error.kind()))
+                fs::remove_file(directory).map_err(|error| TcgIrCacheError::Io(error.kind()))
             }
-            Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(directory)
-                .map_err(|error| TcgIrCacheError::Io(error.kind())),
+            Ok(metadata) if metadata.is_dir() => {
+                fs::remove_dir_all(directory).map_err(|error| TcgIrCacheError::Io(error.kind()))
+            }
             Ok(_) => {
                 let _ = fs::remove_file(directory);
                 Ok(())
@@ -965,13 +967,11 @@ impl TcgIrL2Store {
             .lock
             .lock()
             .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
-        self.scan_entries().map(|entries| {
-            TcgIrL2Stats {
-                entries: entries.len(),
-                bytes: entries.iter().fold(0_u64, |total, entry| {
-                    total.saturating_add(entry.bytes)
-                }),
-            }
+        self.scan_entries().map(|entries| TcgIrL2Stats {
+            entries: entries.len(),
+            bytes: entries
+                .iter()
+                .fold(0_u64, |total, entry| total.saturating_add(entry.bytes)),
         })
     }
 
