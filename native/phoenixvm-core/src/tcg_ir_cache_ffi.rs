@@ -889,6 +889,48 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_load_block(
     }
 }
 
+/// Return the stored guest-code digest and physical-page identity.
+///
+/// QEMU must compare these fields with fresh guest RAM bytes and current page
+/// mappings before importing any operation from this candidate block.
+#[no_mangle]
+pub unsafe extern "C" fn phoenixvm_tcg_ir_block_get_validation(
+    block: *const PvTcgIrBlockHandle,
+    guest_size: *mut u32,
+    guest_code_sha256: *mut u8,
+    physical_pages: *mut u64,
+    physical_pages_len: *mut usize,
+) -> i32 {
+    if block.is_null()
+        || guest_size.is_null()
+        || guest_code_sha256.is_null()
+        || physical_pages.is_null()
+        || physical_pages_len.is_null()
+    {
+        return -1;
+    }
+    let block = unsafe { &*block };
+    let compatibility = &block.block.compatibility;
+    if compatibility.physical_pages.len() > 2 {
+        return -1;
+    }
+    unsafe {
+        *guest_size = block.block.guest_size;
+        ptr::copy_nonoverlapping(
+            compatibility.guest_code_sha256.as_ptr(),
+            guest_code_sha256,
+            32,
+        );
+        let pages = slice::from_raw_parts_mut(physical_pages, 2);
+        pages.fill(0);
+        for (index, page) in compatibility.physical_pages.iter().enumerate() {
+            pages[index] = *page;
+        }
+        *physical_pages_len = compatibility.physical_pages.len();
+    }
+    0
+}
+
 /// Read block counts and guest metadata from a decoded block.
 #[no_mangle]
 pub unsafe extern "C" fn phoenixvm_tcg_ir_block_get_summary(
@@ -1174,6 +1216,35 @@ mod tests {
             unsafe { phoenixvm_tcg_l2_preload(handle, 8, 1024 * 1024) },
             0
         );
+
+        let mut probe = compatibility();
+        let probe_hash = [0_u8; 32];
+        probe.guest_code_sha256 = probe_hash.as_ptr();
+        let mut candidate = ptr::null_mut();
+        assert_eq!(
+            unsafe { phoenixvm_tcg_l1_lookup_probe(handle, &probe, &mut candidate) },
+            1
+        );
+        let (mut candidate_size, mut page_count) = (0, 0);
+        let mut candidate_hash = [0_u8; 32];
+        let mut candidate_pages = [0_u64; 2];
+        assert_eq!(
+            unsafe {
+                phoenixvm_tcg_ir_block_get_validation(
+                    candidate,
+                    &mut candidate_size,
+                    candidate_hash.as_mut_ptr(),
+                    candidate_pages.as_mut_ptr(),
+                    &mut page_count,
+                )
+            },
+            0
+        );
+        assert_eq!(candidate_size, 4);
+        assert_eq!(candidate_hash, [0x11; 32]);
+        assert_eq!(page_count, 1);
+        assert_eq!(candidate_pages[0], 0x8000);
+        unsafe { phoenixvm_tcg_ir_block_free(candidate) };
 
         // Make the backing directory unavailable after preload. A valid L1
         // lookup must still succeed, proving that the lookup path is memory-only.
