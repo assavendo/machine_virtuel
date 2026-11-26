@@ -84,3 +84,26 @@ int check_tcg_ir_builder_abi(PvTcgL2Handle *handle,
     return guest_size == 4 && instruction_count == 1
         && temp_count == 0 && label_count == 0 && operation_count == 1 ? 0 : -1;
 }
+
+int check_tcg_candidate_probe_abi(PvTcgL2Handle *handle,
+                                  const PvTcgCompatibility *probe)
+{
+    PvTcgIrBlockHandle *block = NULL;
+    uint32_t guest_size = 0;
+    uint8_t code_hash[32] = {0};
+    uint64_t physical_pages[2] = {0};
+    size_t physical_pages_len = 0;
+    int32_t status = phoenixvm_tcg_l1_lookup_probe(handle, probe, &block);
+
+    if (status != 1) {
+        return status;
+    }
+    status = phoenixvm_tcg_ir_block_get_validation(
+        block, &guest_size, code_hash, physical_pages, &physical_pages_len);
+    phoenixvm_tcg_ir_block_free(block);
+    if (status != 0 || guest_size == 0
+        || physical_pages_len == 0 || physical_pages_len > 2) {
+        return -1;
+    }
+    return 1;
+}
