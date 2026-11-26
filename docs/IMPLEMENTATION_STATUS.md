@@ -31,6 +31,10 @@ Les objets `TCGHelperInfo` générés par `helper-info.c.inc` contiennent un nom
 
 Ces points sont des résultats d'audit source et un contrat d'implémentation, pas un patch QEMU déjà compilé ; aucun TB persistant n'est encore réinjecté dans le moteur.
 
+## Dernier contrôle du codec v2 — cohérence unwind et labels
+
+Le codec impose désormais un nombre exact de marqueurs `insn_start` correspondant à `instruction_count` et une correspondance univoque entre chaque label et son opération `set_label`. Les tests couvrent les omissions, les définitions mal indexées, les identifiants erronés et le round-trip ordonné des adresses d'instruction. La CI native du commit `d50ac449513549cc1b8d0089b63274a8ed6df95d` passe formatage et tests Rust. Cela fiabilise la représentation IR mais ne constitue toujours pas une reconstitution du `TCGContext` par QEMU.
+
 ## Latest Section 9 increment — shared LRU and persistent profile aggregate corrections
 
 The L0 read path now refreshes the recency of the matching resident in L1 for both metadata and artifacts. Without this propagation, an active L0 manifest could remain the oldest L1 item and be evicted by a later artifact insertion even though the shared LRU policy was intended to account for its recent use. The existing cross-kind LRU regression test now exercises this precise sequence.
