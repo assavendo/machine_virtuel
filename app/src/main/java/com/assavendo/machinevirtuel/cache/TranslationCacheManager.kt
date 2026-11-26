@@ -396,7 +396,7 @@ class TranslationCacheManager private constructor(
     fun putProfile(
         key: TranslationCacheKey,
         profile: TranslationProfile,
-        allowGlobalLevel3: Boolean = policy.globalLevel3Enabled,
+        @Suppress("UNUSED_PARAMETER") allowGlobalLevel3: Boolean = false,
     ) {
         validateKey(key)
         require(profile.state in VALID_STATES) { "Invalid translation profile state." }
@@ -419,15 +419,17 @@ class TranslationCacheManager private constructor(
             .put("total_translation_ms", profile.totalTranslationMs)
             .put("last_seen_ms", profile.lastSeenMs)
             .put("compatibility_fingerprint", profile.compatibilityFingerprint)
-        putManifest(key, json.toString(), allowGlobalLevel3)
+        // Profile counters belong to one VM. They must never be inherited from L3.
+        putManifest(key, json.toString(), allowGlobalLevel3 = false)
     }
 
     @Synchronized
     fun getProfile(
         key: TranslationCacheKey,
-        allowGlobalLevel3: Boolean = policy.globalLevel3Enabled,
+        @Suppress("UNUSED_PARAMETER") allowGlobalLevel3: Boolean = false,
     ): TranslationProfile? {
-        val metadata = getManifest(key, allowGlobalLevel3) ?: return null
+        // Profiles are VM-local; only code artifacts and neutral manifests can use L3.
+        val metadata = getManifest(key, allowGlobalLevel3 = false) ?: return null
         return runCatching {
             val json = JSONObject(metadata)
             val profile = TranslationProfile(
