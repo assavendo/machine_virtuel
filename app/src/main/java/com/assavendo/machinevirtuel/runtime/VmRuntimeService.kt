@@ -517,8 +517,7 @@ class VmRuntimeService : Service() {
                     .firstOrNull { it.vmId == id }
                 val processId = backendProcessId
                 if (threadDecision != null && processId != null &&
-                    (cachedVcpuThreadIds.isNotEmpty() || cachedIoThreadIds.isNotEmpty() ||
-                        handle.controlSocket != null)
+                    (handle.qmp != null || handle.controlSocket != null)
                 ) {
                     val thermalPriority = if (sample.isThrottling) 2 else 0
                     val effectiveDecision = threadDecision.copy(
