@@ -275,9 +275,17 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_open(
                             let resident_inserted = persisted.and_then(|()| {
                                 worker_resident
                                     .write()
-                                    .map_err(|_| crate::tcg_ir_cache::TcgIrCacheError::Invalid("L1 lock poisoned"))?
+                                    .map_err(|_| {
+                                        crate::tcg_ir_cache::TcgIrCacheError::Invalid(
+                                            "L1 lock poisoned",
+                                        )
+                                    })?
                                     .insert_arc(block, &worker_clock)
-                                    .map_err(|_| crate::tcg_ir_cache::TcgIrCacheError::Invalid("L1 insert failed"))
+                                    .map_err(|_| {
+                                        crate::tcg_ir_cache::TcgIrCacheError::Invalid(
+                                            "L1 insert failed",
+                                        )
+                                    })
                             });
                             if resident_inserted.is_err() {
                                 worker_errors_thread.fetch_add(1, Ordering::Relaxed);
