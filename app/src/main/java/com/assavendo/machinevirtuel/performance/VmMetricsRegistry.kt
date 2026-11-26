@@ -26,6 +26,7 @@ object VmMetricsRegistry {
                 guestCpuInterruptPercent = guestCpuMetrics?.interruptPercent,
                 guestCpuTimeDeltaMs = guestCpuMetrics?.guestCpuTimeDeltaMs,
                 guestCpuIntervalMs = guestCpuMetrics?.intervalMs,
+                guestCpuCoreCount = guestCpuMetrics?.coreCount,
                 cpuHostPercent = host.processCpuPercent,
                 vCpuUtilization = vCpuUtilization,
                 ramGuestMb = null,
