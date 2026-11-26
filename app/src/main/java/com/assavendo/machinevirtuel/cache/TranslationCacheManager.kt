@@ -100,6 +100,8 @@ class TranslationCacheManager private constructor(
         private const val FORMAT_VERSION = 3
         private const val METADATA_MAX_BYTES = 1_048_576
         private const val ARTIFACT_HEADER_MAX_BYTES = 64 * 1024
+        // The payload cap excludes the JSON envelope fields and compatibility metadata.
+        private const val METADATA_ENVELOPE_MAX_BYTES = METADATA_MAX_BYTES + ARTIFACT_HEADER_MAX_BYTES
         private const val ARTIFACT_MAGIC = 0x50564d54 // "PVMT"
         private const val PREFS_NAME = "phoenixvm_translation_cache"
         private val VALID_STATES = setOf("COLD", "WARM", "HOT", "VERY_HOT")
@@ -567,7 +569,7 @@ class TranslationCacheManager private constructor(
         var misses = 0L
         var translationMs = 0.0
         base.walkTopDown()
-            .filter { it.isFile && it.name.endsWith(".meta") && it.length() in 1..METADATA_MAX_BYTES }
+            .filter { it.isFile && it.name.endsWith(".meta") && it.length() in 1..METADATA_ENVELOPE_MAX_BYTES }
             .forEach { file ->
                 runCatching {
                     val json = JSONObject(file.readText(Charsets.UTF_8))
@@ -714,7 +716,7 @@ class TranslationCacheManager private constructor(
     }.getOrDefault(false)
 
     private fun readMetadataEnvelope(file: File, key: TranslationCacheKey, id: String, scope: String): String? {
-        if (!file.isFile || file.length() !in 1..METADATA_MAX_BYTES.toLong()) return null
+        if (!file.isFile || file.length() !in 1..METADATA_ENVELOPE_MAX_BYTES.toLong()) return null
         val value = runCatching { file.readText(Charsets.UTF_8) }.getOrNull() ?: return null
         return value.takeIf { isValidMetadataEnvelope(it, key, id, scope) }
     }
