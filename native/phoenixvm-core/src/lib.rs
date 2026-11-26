@@ -118,7 +118,6 @@ pub extern "system" fn Java_com_assavendo_machinevirtuel_engine_NativeEngine_nat
     }
 }
 
-
 #[no_mangle]
 pub extern "system" fn Java_com_assavendo_machinevirtuel_engine_NativeEngine_nativeSetThreadAffinity(
     mut env: JNIEnv,
@@ -146,7 +145,11 @@ pub extern "system" fn Java_com_assavendo_machinevirtuel_engine_NativeEngine_nat
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let status = unsafe {
-            sched_setaffinity(thread_id as i32, size_of::<CpuSet>(), &mask as *const CpuSet)
+            sched_setaffinity(
+                thread_id as i32,
+                size_of::<CpuSet>(),
+                &mask as *const CpuSet,
+            )
         };
         if status == 0 {
             0
