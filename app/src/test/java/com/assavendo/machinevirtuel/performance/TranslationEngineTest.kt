@@ -63,7 +63,7 @@ class TranslationEngineTest {
             val engine = TranslationEngine(cache)
             val artifact = byteArrayOf(0x7f, 0x45, 0x4c, 0x46, 0x00)
 
-            engine.storeArtifact(key, artifact)
+            engine.storeArtifact(key, artifact, relocationSafe = true)
             val returned = requireNotNull(engine.cachedArtifact(key))
             assertContentEquals(artifact, returned)
             returned[0] = 0
