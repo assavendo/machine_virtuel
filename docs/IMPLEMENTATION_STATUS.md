@@ -1,5 +1,12 @@
 # PhoenixVM — implementation status against the source cahier
 
+## Section 9 — QEMU TCG persistent-cache integration spike
+
+The source-level audit of QEMU 11.1.3 has identified the integration seam in `accel/tcg/translate-all.c`: attempt a compatible TCG-IR restore after `tcg_func_start()` and before the guest translator, then use the normal `tcg_gen_code()` pipeline to regenerate host code. Raw TB/JIT code and raw `TCGOp` structures are not safe persistence formats because they contain process-local code addresses, temporary/label references, helper pointers and TB jump/invalidation state. The integration contract, conservative first scope, fail-closed rules and cold/warm acceptance matrix are documented in [QEMU_TCG_PERSISTENT_CACHE_INTEGRATION.md](QEMU_TCG_PERSISTENT_CACHE_INTEGRATION.md).
+
+**Status remains PARTIEL:** this commit documents the upstream source audit and acceptance contract only. It does not add the QEMU patch, change the shipped runtime or claim a compiled TCG cache hit. No cross-process replay test or performance benchmark has passed yet.
+
+
 ## Latest implementation increment — persistent translation cache foundation
 
 Section 9 now has a content-addressed cache API for translator-provided, relocation-safe artifacts and metadata. `TranslationCacheKey` includes SHA-256 of the exact guest code bytes, guest-build fingerprint, translator version, host architecture, CPU features and level. The VM-local key also includes the VM ID; the optional global key deliberately excludes it so compatible VMs can reuse an L3 entry without sharing per-VM execution counters.
