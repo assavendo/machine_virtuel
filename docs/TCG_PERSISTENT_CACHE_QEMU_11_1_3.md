@@ -76,13 +76,14 @@ La sérialisation doit inclure les compteurs et métadonnées de traduction néc
 
 Cette inspection **ne constitue pas une implémentation du sérialiseur**. Elle précise le contrat nécessaire pour qu’un patch réel soit sûr et évite explicitement trois fausses solutions : sérialiser les structures C brutes, restaurer du code machine hôte depuis un autre processus, ou réutiliser les pointeurs de helpers/TB de l’ancien processus.
 
-## Brique native v2 implémentée — codec IR et magasin L2, sans raccord TCG
+## Brique native v3 — schéma IR fermé et magasin L2, sans raccord TCG
 
 Un premier composant natif indépendant de QEMU est maintenant codé dans `native/phoenixvm-core/src/tcg_ir_cache.rs` :
 
-- Format binaire déterministe `PVTCGIR`, version 2, avec longueur bornée à 2 Mio, SHA-256 du contenu et rejet des versions, longueurs, références et enregistrements invalides.
+- Format binaire déterministe `PVTCGIR`, version 3, avec longueur bornée à 2 Mio, SHA-256 du contenu et rejet des versions, longueurs, références et enregistrements invalides.
 - Identité de compatibilité qui transporte le build QEMU exact, architecture et modèle CPU invités, build invité, architecture/ABI/endianness hôte, taille de page, liste canonique des CPU features, PC/base CS, flags TB/cflags, MMU index, pages physiques, empreinte des octets de code et digest du contexte spécifique TB.
-- Opérations représentées par nom d'opcode stable, deux octets bruts `param1`/`param2` conservés sans réinterprétation, et opérandes symboliques (temporaires, globals nommés, immédiats, labels et helpers nommés). Aucun variant ne stocke de pointeur de processus.
+- Schéma fermé par liste blanche : `insn_start`, `mov`, `add`, `sub`, `and`, `or`, `xor`, `mul`, `br`, `set_label`, `goto_tb` et `exit_tb`. Seules les formes scalaires I32/I64 expressément décrites sont admises ; toute opération, helper ou forme d'opérande non prise en charge est rejetée. Les trois mots de données d'`insn_start` sont obligatoires. `exit_tb` stocke un indice abstrait (0, 1 ou 3), jamais une ancienne adresse TB ; `goto_tb` accepte uniquement les indices 0 ou 1.
+- Les globals sont référencés par index numérique dans `TCGContext.temps`, jamais par nom uniquement. Le contrat impose que `tb_context_sha256` couvre la disposition complète de tous les globals/fixed temps ; le futur adaptateur QEMU devra calculer et comparer ce digest (index, types, kind, registre ou base/offset, flags et relations indirectes). Cette comparaison n'est pas encore exécutée dans le cœur QEMU.
 - Enregistrement des temporaires borné et vérification des groupes multi-emplacements ; index de labels et références d'opérandes validés avant acceptation.
 - `TcgIrBlock::write_atomic/read_file` fournit l'écriture temporaire, `sync_all`, renommage atomique, synchronisation du répertoire parent et lecture plafonnée.
 - `TcgIrL2Store` isole les entrées par VM sous un répertoire dérivé d'un SHA-256 de l'identifiant VM, et par identité de compatibilité pour le nom de fichier. Il vérifie le contexte complet à la relecture, transforme la corruption/version inconnue en cache miss sûr, propose invalidation ciblée/VM, quotas d'entrées et d'octets et éviction LRU par date d'accès. Les lectures/écritures disque sont réservées à un worker, jamais au thread vCPU.
@@ -98,7 +99,7 @@ La CI native sur le commit `7a77b698e23bdc68af13aa8314e6c74f1f0c1cc2` a réussi 
 
 `include/tcg/tcg-opc.h` est la liste canonique des opérations génériques : chaque `DEF(name, oargs, iargs, cargs, flags)` décrit le nombre d'outputs, d'inputs, de constantes et les flags. Le contrat exposé par `TCGOpDef` dans `include/tcg/tcg.h` ajoute `nb_args`. L'adaptateur doit retrouver une opération par son nom stable dans `tcg_op_defs[]`, puis vérifier que le nombre et la classe de tous ses arguments correspondent exactement à cette définition. Un nom d'opcode inconnu, non présent ou spécial non pris en charge doit être un cache miss ; le codec Rust ne suffit pas à autoriser l'émission d'un opcode arbitraire.
 
-La version 2 du format conserve les deux octets bruts `param1` et `param2` de `TCGOp`, sans supposer une signification commune : selon l'opcode ils décrivent notamment le type, la taille vectorielle ou l'arité d'un appel (`TCGOP_CALLI`/`TCGOP_CALLO`). La reconstruction doit appliquer l'interprétation de QEMU pour l'opcode résolu et vérifier les valeurs autorisées.
+La version 3 conserve les octets bruts `param1` et `param2`, mais le schéma fermé ne permet que les valeurs validées pour les opérations scalaires déclarées. Toute extension doit documenter le sens des paramètres pour l'opcode QEMU exact et ajouter des tests de fidélité avant d'être admise.
 
 ### Schéma typé des arguments d'opération
 
@@ -148,7 +149,7 @@ Les `TEMP_CONST` ne doivent pas être restaurés comme adresses temporaires : le
 
 Enfin, les opérations `qemu_ld/qemu_st` dépendent du contexte `guest_mo`, des chemins ldst différés et de la finalisation des labels de slow path. Elles ne sont pas équivalentes à des opérations arithmétiques ordinaires, même si leurs formes figurent dans `tcg_op_defs[]`.
 
-## Tests structurels ajoutés au codec v2
+## Tests structurels du codec IR v3
 
 Le codec vérifie maintenant que le nombre d'opérations `insn_start` est exactement égal à `instruction_count`, et que chaque entrée de table de labels pointe vers un unique `set_label` portant le même identifiant. Les tests de régression vérifient le rejet d'un compteur incomplet, d'un index de définition erroné et d'une opération de définition absente, ainsi que l'aller-retour ordonné des adresses d'instruction et du label. Le commit natif `d50ac449513549cc1b8d0089b63274a8ed6df95d` passe `cargo fmt --check` et `cargo test`; cette validation porte toujours sur le codec/store Rust, sans intégration C au TCG.
 
