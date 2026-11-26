@@ -165,6 +165,8 @@ class TranslationCacheManager private constructor(
     private val l2HitCount = AtomicLong(0)
     private val l3HitCount = AtomicLong(0)
     private var writesSinceCleanup = 0
+    private var globalStorageSnapshot: Pair<Int, Long>? = null
+    private var globalStorageSnapshotAtMs = 0L
 
     init {
         check(root.mkdirs() || root.isDirectory) { "Unable to create translation cache root." }
@@ -482,6 +484,7 @@ class TranslationCacheManager private constructor(
         localOwnerHashes.remove(id)
         vmFile(key, id).delete()
         vmArtifactFile(key, id).delete()
+        invalidateStorageStats()
     }
 
     @Synchronized
@@ -490,6 +493,7 @@ class TranslationCacheManager private constructor(
         val id = globalKeyId(key)
         globalFile(id).delete()
         globalArtifactFile(id).delete()
+        invalidateStorageStats()
     }
 
     /** Removes the VM-scoped L2 and local indexes without deleting shared global L3 data. */
@@ -498,6 +502,7 @@ class TranslationCacheManager private constructor(
         require(vmId.isNotBlank())
         val ownerHash = fingerprint(vmId)
         File(root, ownerHash).deleteRecursively()
+        invalidateStorageStats()
         val localIds = localOwnerHashes.filterValues { it == ownerHash }.keys.toList()
         localIds.forEach { id ->
             memoryL0.remove(id)
@@ -519,6 +524,7 @@ class TranslationCacheManager private constructor(
             val size = file.length()
             if (file.delete()) total -= size
         }
+        invalidateStorageStats()
         memoryL0.clear()
         processL1.clear()
         memoryArtifactsL0.clear()
@@ -556,11 +562,26 @@ class TranslationCacheManager private constructor(
 
     @Synchronized
     fun stats(vmId: String? = null): TranslationCacheStats {
-        val base = if (vmId == null) root else File(root, fingerprint(vmId))
-        val files = if (!base.exists()) emptyList() else base.walkTopDown().filter { it.isFile }.toList()
+        val (fileCount, byteCount) = if (vmId == null) {
+            val now = System.currentTimeMillis()
+            val cached = globalStorageSnapshot
+            if (cached == null || now - globalStorageSnapshotAtMs >= 5_000L) {
+                val files = root.walkTopDown().filter { it.isFile }.toList()
+                val fresh = files.size to files.sumOf { it.length() }
+                globalStorageSnapshot = fresh
+                globalStorageSnapshotAtMs = now
+                fresh
+            } else {
+                cached
+            }
+        } else {
+            val base = File(root, fingerprint(vmId))
+            val files = if (!base.exists()) emptyList() else base.walkTopDown().filter { it.isFile }.toList()
+            files.size to files.sumOf { it.length() }
+        }
         return TranslationCacheStats(
-            files = files.size,
-            bytes = files.sumOf { it.length() },
+            files = fileCount,
+            bytes = byteCount,
             hits = hitCount.get(),
             misses = missCount.get(),
             l0Hits = l0HitCount.get(),
@@ -575,6 +596,7 @@ class TranslationCacheManager private constructor(
     fun clear(vmId: String? = null) {
         if (vmId == null) {
             root.listFiles()?.forEach { it.deleteRecursively() }
+            invalidateStorageStats()
             memoryL0.clear()
             processL1.clear()
             memoryArtifactsL0.clear()
@@ -822,12 +844,18 @@ class TranslationCacheManager private constructor(
             FileOutputStream(temporary).use { output ->
                 output.write(bytes)
                 output.flush()
-                output.fd.sync()
+                    output.fd.sync()
             }
             check(temporary.renameTo(file)) { "Could not atomically persist translation-cache data." }
+            invalidateStorageStats()
         } finally {
             temporary.delete()
         }
+    }
+
+    private fun invalidateStorageStats() {
+        globalStorageSnapshot = null
+        globalStorageSnapshotAtMs = 0L
     }
 
     private fun touch(file: File) {
