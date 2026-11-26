@@ -11,7 +11,7 @@ class VmCpuThreadSchedulerTest {
         priority = 90,
         reason = "test",
         assignedCpuIds = listOf(4, 6),
-        threadPriority = -2,
+        threadPriority = 2,
     )
 
     @Test
@@ -26,9 +26,9 @@ class VmCpuThreadSchedulerTest {
         assertEquals(
             listOf(
                 CpuThreadPlacement(100L, listOf(4, 6), null),
-                CpuThreadPlacement(101L, listOf(4), -2),
-                CpuThreadPlacement(102L, listOf(4, 6), 1),
-                CpuThreadPlacement(103L, listOf(4, 6), 1),
+                CpuThreadPlacement(101L, listOf(4), 2),
+                CpuThreadPlacement(102L, listOf(4, 6), 5),
+                CpuThreadPlacement(103L, listOf(4, 6), 5),
             ),
             plan,
         )
