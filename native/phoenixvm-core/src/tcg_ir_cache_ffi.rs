@@ -69,6 +69,14 @@ impl ResidentL1 {
     }
 
     fn insert(&mut self, block: TcgIrBlock, access_clock: &AtomicU64) -> Result<(), ()> {
+        self.insert_arc(Arc::new(block), access_clock)
+    }
+
+    fn insert_arc(
+        &mut self,
+        block: Arc<TcgIrBlock>,
+        access_clock: &AtomicU64,
+    ) -> Result<(), ()> {
         let encoded_len = block.encode().map_err(|_| ())?.len() as u64;
         if encoded_len > self.max_bytes {
             return Ok(());
@@ -98,7 +106,7 @@ impl ResidentL1 {
         self.entries.insert(
             key,
             ResidentEntry {
-                block: Arc::new(block),
+                block,
                 bytes: encoded_len,
                 last_access: AtomicU64::new(last_access),
             },
@@ -437,7 +445,7 @@ pub unsafe extern "C" fn phoenixvm_tcg_l1_lookup(
         Ok(Ok(Some(block))) => {
             unsafe {
                 *out_block = Box::into_raw(Box::new(PvTcgIrBlockHandle {
-                    block: (*block).clone(),
+                    block,
                 }))
             };
             1
@@ -449,7 +457,7 @@ pub unsafe extern "C" fn phoenixvm_tcg_l1_lookup(
 
 /// Opaque, decoded or incrementally constructed TCG IR block.
 pub struct PvTcgIrBlockHandle {
-    block: TcgIrBlock,
+    block: Arc<TcgIrBlock>,
 }
 
 const MAX_FFI_TEMPS: usize = 512;
@@ -471,14 +479,14 @@ pub unsafe extern "C" fn phoenixvm_tcg_ir_block_create(
     let result = catch_unwind(AssertUnwindSafe(|| {
         let compatibility = unsafe { copy_compatibility(compatibility) }.map_err(|_| ())?;
         Ok::<_, ()>(Box::into_raw(Box::new(PvTcgIrBlockHandle {
-            block: TcgIrBlock {
+            block: Arc::new(TcgIrBlock {
                 compatibility,
                 guest_size,
                 instruction_count,
                 temporaries: Vec::new(),
                 labels: Vec::new(),
                 operations: Vec::new(),
-            },
+            }),
         })))
     }));
     match result {
@@ -536,13 +544,13 @@ pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_temp(
         _ => return -1,
     };
     let block = unsafe { &mut *block };
-    if block.block.temporaries.len() >= MAX_FFI_TEMPS {
+    let Some(block) = Arc::get_mut(&mut block.block) else {
+        return -1;
+    };
+    if block.temporaries.len() >= MAX_FFI_TEMPS {
         return -1;
     }
-    block
-        .block
-        .temporaries
-        .push(crate::tcg_ir_cache::TcgTempRecord {
+    block.temporaries.push(crate::tcg_ir_cache::TcgTempRecord {
             id,
             base_id,
             subindex,
@@ -564,13 +572,13 @@ pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_label(
         return -1;
     }
     let block = unsafe { &mut *block };
-    if block.block.labels.len() >= MAX_FFI_LABELS {
+    let Some(block) = Arc::get_mut(&mut block.block) else {
+        return -1;
+    };
+    if block.labels.len() >= MAX_FFI_LABELS {
         return -1;
     }
-    block
-        .block
-        .labels
-        .push(crate::tcg_ir_cache::TcgLabelRecord {
+    block.labels.push(crate::tcg_ir_cache::TcgLabelRecord {
             id,
             operation_index,
         });
@@ -593,14 +601,14 @@ pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_operation(
         _ => return -1,
     };
     let block = unsafe { &mut *block };
-    if block.block.operations.len() >= MAX_FFI_OPERATIONS {
+    let Some(block) = Arc::get_mut(&mut block.block) else {
+        return -1;
+    };
+    if block.operations.len() >= MAX_FFI_OPERATIONS {
         return -1;
     }
-    let index = block.block.operations.len();
-    block
-        .block
-        .operations
-        .push(crate::tcg_ir_cache::TcgIrOperation {
+    let index = block.operations.len();
+    block.operations.push(crate::tcg_ir_cache::TcgIrOperation {
             opcode,
             param1,
             param2,
@@ -638,7 +646,10 @@ pub unsafe extern "C" fn phoenixvm_tcg_ir_block_add_operand(
         _ => return -1,
     };
     let block = unsafe { &mut *block };
-    let Some(operation) = block.block.operations.get_mut(operation_index as usize) else {
+    let Some(block) = Arc::get_mut(&mut block.block) else {
+        return -1;
+    };
+    let Some(operation) = block.operations.get_mut(operation_index as usize) else {
         return -1;
     };
     if operation.operands.len() >= MAX_FFI_OPERANDS {
@@ -662,13 +673,13 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_store_block(
         let block = unsafe { &*block };
         handle
             .store
-            .store(&handle.vm_id, &block.block)
+            .store(&handle.vm_id, block.block.as_ref())
             .map_err(|_| ())?;
         handle
             .resident
             .write()
             .map_err(|_| ())?
-            .insert(block.block.clone(), &handle.resident_clock)
+            .insert_arc(Arc::clone(&block.block), &handle.resident_clock)
     }));
     if matches!(result, Ok(Ok(()))) {
         0
@@ -692,14 +703,17 @@ pub unsafe extern "C" fn phoenixvm_tcg_l2_load_block(
         let handle = unsafe { &*handle };
         let key = unsafe { copy_compatibility(compatibility) }.map_err(|_| ())?;
         let block = handle.store.load(&handle.vm_id, &key).map_err(|_| ())?;
-        if let Some(block) = &block {
+        if let Some(block) = block {
+            let block = Arc::new(block);
             handle
                 .resident
                 .write()
                 .map_err(|_| ())?
-                .insert(block.clone(), &handle.resident_clock)?;
+                .insert_arc(Arc::clone(&block), &handle.resident_clock)?;
+            Ok::<_, ()>(Some(block))
+        } else {
+            Ok(None)
         }
-        Ok::<_, ()>(block)
     }));
     match result {
         Ok(Ok(Some(block))) => {
