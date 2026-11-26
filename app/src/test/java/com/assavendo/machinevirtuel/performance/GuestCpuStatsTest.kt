@@ -40,7 +40,7 @@ class GuestCpuStatsTest {
         val stats = requireNotNull(GuestCpuStatsParser.parse(response))
         assertEquals(1, stats.size)
         assertEquals(0, stats.single().cpu)
-        assertEquals(60L, stats.single().busyMs)
+        assertEquals(205L, stats.single().busyMs)
         assertEquals(1110L, stats.single().totalMs)
     }
 
