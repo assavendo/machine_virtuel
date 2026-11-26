@@ -168,10 +168,10 @@ class TranslationCacheManagerTest {
             // manifest remains resident in L0 rather than being reloaded from L2.
             assertEquals("recent manifest", cache.getManifest(metadataKey))
             assertEquals(2L, cache.stats().l0Hits)
+            assertContentEquals(newerArtifact, cache.getArtifact(newerArtifactKey))
+            assertEquals(3L, cache.stats().l0Hits)
             assertContentEquals(olderArtifact, cache.getArtifact(olderArtifactKey))
             assertEquals(1L, cache.stats().l2Hits)
-            assertContentEquals(newerArtifact, cache.getArtifact(newerArtifactKey))
-            assertEquals(1L, cache.stats().l0Hits + cache.stats().l1Hits)
         } finally {
             root.deleteRecursively()
         }
