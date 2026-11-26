@@ -45,4 +45,45 @@ class VmMetricsRegistryTest {
             VmMetricsRegistry.clearAll()
         }
     }
+
+    @Test
+    fun recordsOnlyRealGuestAgentCpuWaitAndInterruptSamples() {
+        VmMetricsRegistry.clearAll()
+        try {
+            VmMetricsRegistry.record(
+                vmId = "vm-linux-agent",
+                host = HostMetrics(
+                    timestampMs = System.currentTimeMillis(),
+                    processCpuPercent = 12.0,
+                    systemCpuPercent = 20.0,
+                    processRssMb = 512,
+                    availableMemoryMb = 4096,
+                    thermalStatus = 0,
+                    skinTemperatureC = null,
+                    isThrottling = false,
+                ),
+                guestCpuMetrics = GuestCpuMetrics(
+                    cpuBusyPercent = 52.17,
+                    ioWaitPercent = 8.69,
+                    interruptPercent = 4.34,
+                    guestCpuTimeDeltaMs = 60,
+                    intervalMs = 1000,
+                ),
+            )
+
+            val sample = VmMetricsRegistry.last("vm-linux-agent").single()
+            assertEquals(52.17, sample.cpuGuestPercent)
+            assertEquals(8.69, sample.guestCpuIoWaitPercent)
+            assertEquals(4.34, sample.guestCpuInterruptPercent)
+            assertEquals(60L, sample.guestCpuTimeDeltaMs)
+
+            val window = VmMetricsRegistry.windows("vm-linux-agent").first()
+            assertEquals(8.69, window.guestCpuIoWaitAvgPercent)
+            assertEquals(4.34, window.guestCpuInterruptAvgPercent)
+            assertEquals(60.0, window.guestCpuTimeDeltaAvgMs)
+        } finally {
+            VmMetricsRegistry.clearAll()
+        }
+    }
+
 }
