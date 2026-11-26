@@ -443,16 +443,6 @@ fn validate_operation_schema(
                 return Err(invalid());
             }
         }
-        "movi" => {
-            let ty = validate_operation_type(operation)?;
-            if operands.len() != 2
-                || !is_writable_operand(&operands[0])
-                || !matches!(operands[1], TcgOperand::Immediate(_))
-            {
-                return Err(invalid());
-            }
-            validate_value_type(&operands[0], ty, temporaries)?;
-        }
         "mov" => {
             let ty = validate_operation_type(operation)?;
             if operands.len() != 2
@@ -1705,20 +1695,24 @@ mod tests {
     }
 
     #[test]
-    fn codec_accepts_typed_movi_and_rejects_global_output_mismatch() {
+    fn codec_accepts_scalar_mov_with_symbolic_immediate_source() {
         let mut block = sample_block();
         block.operations[1] = TcgIrOperation {
-            opcode: "movi".into(),
+            opcode: "mov".into(),
             param1: TcgValueType::I64 as u8,
             param2: 0,
             operands: vec![TcgOperand::Temp(0), TcgOperand::Immediate(0x1234)],
         };
         assert!(block.validate().is_ok());
 
-        block.operations[1].operands[0] = TcgOperand::Global(0);
-        // The destination global must have been declared and typed in the
-        // QEMU context; this codec-level shape check only accepts the tag.
-        assert!(block.validate().is_ok());
+        let mut incompatible = sample_block();
+        incompatible.operations[1] = TcgIrOperation {
+            opcode: "mov".into(),
+            param1: TcgValueType::I32 as u8,
+            param2: 0,
+            operands: vec![TcgOperand::Temp(0), TcgOperand::Immediate(0x1234)],
+        };
+        assert!(incompatible.validate().is_err());
     }
 
     #[test]
