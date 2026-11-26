@@ -7,6 +7,86 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
+extern "C" {
+    fn flock(fd: i32, operation: i32) -> i32;
+}
+
+/// Kernel-managed advisory lock shared by every PhoenixVM process using this L2 root.
+///
+/// The lock file is permanent: unlinking it while another process holds an open file
+/// descriptor would allow a third process to lock a different inode and bypass mutual
+/// exclusion. flock is released by the kernel when the owning process exits.
+struct ProcessFileLock {
+    _file: File,
+}
+
+impl ProcessFileLock {
+    fn acquire(root: &Path) -> Result<Self, TcgIrCacheError> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::fs::OpenOptionsExt;
+
+            // Linux and Android both define O_NOFOLLOW as 0x20000. This prevents
+            // an attacker-controlled symlink from redirecting the lock-file open.
+            const O_NOFOLLOW: i32 = 0x20000;
+            const LOCK_EX: i32 = 2;
+
+            let path = root.join(".tcg-ir-l2.lock");
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .mode(0o600)
+                .custom_flags(O_NOFOLLOW)
+                .open(path)
+                .map_err(|error| TcgIrCacheError::Io(error.kind()))?;
+            if !file
+                .metadata()
+                .map_err(|error| TcgIrCacheError::Io(error.kind()))?
+                .is_file()
+            {
+                return Err(TcgIrCacheError::Invalid(
+                    "L2 process lock must be a regular file",
+                ));
+            }
+
+            loop {
+                // SAFETY: the descriptor remains owned by file until the guard
+                // drops; flock does not retain or dereference caller memory.
+                if unsafe { flock(file.as_raw_fd(), LOCK_EX) } == 0 {
+                    return Ok(Self { _file: file });
+                }
+                let error = std::io::Error::last_os_error();
+                if error.kind() != std::io::ErrorKind::Interrupted {
+                    return Err(TcgIrCacheError::Io(error.kind()));
+                }
+            }
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        {
+            let _ = root;
+            Err(TcgIrCacheError::Invalid(
+                "cross-process L2 locking is supported only on Linux and Android",
+            ))
+        }
+    }
+}
+
+impl Drop for ProcessFileLock {
+    fn drop(&mut self) {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            use std::os::fd::AsRawFd;
+            const LOCK_UN: i32 = 8;
+            // SAFETY: the descriptor is valid for the lifetime of this guard.
+            let _ = unsafe { flock(self._file.as_raw_fd(), LOCK_UN) };
+        }
+    }
+}
+
 const MAGIC: &[u8; 8] = b"PVTCGIR\0";
 const FORMAT_VERSION: u16 = 2;
 const HEADER_BYTES: usize = 14;
@@ -889,6 +969,7 @@ impl TcgIrL2Store {
             .lock
             .lock()
             .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        let _process_guard = ProcessFileLock::acquire(&self.root)?;
         let directory = self.vm_directory(vm_id);
         self.ensure_real_directory(&directory)?;
         block.write_atomic(self.entry_path(vm_id, &block.compatibility)?)?;
@@ -910,6 +991,7 @@ impl TcgIrL2Store {
             .lock
             .lock()
             .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        let _process_guard = ProcessFileLock::acquire(&self.root)?;
         let directory = self.vm_directory(vm_id);
         if !directory.exists() {
             return Ok(None);
@@ -954,6 +1036,7 @@ impl TcgIrL2Store {
             .lock
             .lock()
             .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        let _process_guard = ProcessFileLock::acquire(&self.root)?;
         let directory = self.vm_directory(vm_id);
         let metadata = match fs::symlink_metadata(&directory) {
             Ok(value) => value,
@@ -979,6 +1062,7 @@ impl TcgIrL2Store {
             .lock
             .lock()
             .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        let _process_guard = ProcessFileLock::acquire(&self.root)?;
         let directory = self.vm_directory(vm_id);
         match fs::symlink_metadata(&directory) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -1001,6 +1085,7 @@ impl TcgIrL2Store {
             .lock
             .lock()
             .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        let _process_guard = ProcessFileLock::acquire(&self.root)?;
         self.cleanup_locked()
     }
 
@@ -1009,6 +1094,7 @@ impl TcgIrL2Store {
             .lock
             .lock()
             .map_err(|_| TcgIrCacheError::Invalid("L2 cache lock poisoned"))?;
+        let _process_guard = ProcessFileLock::acquire(&self.root)?;
         self.scan_entries().map(|entries| TcgIrL2Stats {
             entries: entries.len(),
             bytes: entries
@@ -1145,6 +1231,32 @@ fn hex_digest(digest: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn process_lock_serializes_independent_open_file_descriptions() {
+        let root = std::env::temp_dir().join(format!(
+            "phoenixvm-tcg-process-lock-{}-{}",
+            std::process::id(),
+            TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+
+        let first = ProcessFileLock::acquire(&root).unwrap();
+        let worker_root = root.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _second = ProcessFileLock::acquire(&worker_root).unwrap();
+            sender.send(()).unwrap();
+        });
+
+        // The second independent open must block until the first guard releases LOCK_EX.
+        assert!(receiver.recv_timeout(Duration::from_millis(100)).is_err());
+        drop(first);
+        receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn compatibility() -> TcgIrCompatibility {
         TcgIrCompatibility {
