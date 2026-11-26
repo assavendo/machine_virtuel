@@ -1667,15 +1667,20 @@ mod tests {
     }
 
     #[test]
-    fn raw_operation_parameters_round_trip_without_reinterpretation() {
-        let mut block = sample_block();
-        block.operations[1].param1 = 0xa5;
-        block.operations[1].param2 = 0xff;
-
+    fn strict_schema_accepts_only_defined_operation_parameters() {
+        let block = sample_block();
         let decoded = TcgIrBlock::decode(&block.encode().unwrap()).unwrap();
-        assert_eq!(decoded.operations[1].param1, 0xa5);
-        assert_eq!(decoded.operations[1].param2, 0xff);
+        assert_eq!(decoded.operations[1].param1, TcgValueType::I64 as u8);
+        assert_eq!(decoded.operations[1].param2, 0);
         assert_eq!(decoded, block);
+
+        let mut invalid = sample_block();
+        invalid.operations[1].param2 = 0xff;
+        assert!(matches!(invalid.encode(), Err(TcgIrCacheError::Invalid(_))));
+
+        invalid = sample_block();
+        invalid.operations[1].param1 = 0xa5;
+        assert!(matches!(invalid.encode(), Err(TcgIrCacheError::Invalid(_))));
     }
 
     #[test]
@@ -1763,7 +1768,7 @@ mod tests {
             .iter()
             .filter(|operation| operation.opcode == "insn_start")
             .filter_map(|operation| match operation.operands.as_slice() {
-                [TcgOperand::Immediate(value)] => Some(*value),
+                [TcgOperand::Immediate(value), _, _] => Some(*value),
                 _ => None,
             })
             .collect();
@@ -1795,7 +1800,7 @@ mod tests {
     }
 
     #[test]
-    fn helper_operands_round_trip_as_stable_symbols() {
+    fn helper_calls_are_rejected_without_target_specific_registry() {
         let mut block = sample_block();
         block.operations.push(TcgIrOperation {
             opcode: "call".into(),
@@ -1807,16 +1812,7 @@ mod tests {
             ],
         });
 
-        let decoded = TcgIrBlock::decode(&block.encode().unwrap()).unwrap();
-        assert_eq!(decoded, block);
-        let call = decoded.operations.last().unwrap();
-        assert_eq!(call.param1, 1); // TCGOP_CALLI: one input argument
-        assert_eq!(call.param2, 0); // TCGOP_CALLO: no output arguments
-        assert!(decoded.operations.iter().any(|operation| {
-            operation
-                .operands
-                .contains(&TcgOperand::Helper("helper_cpuid".into()))
-        }));
+        assert!(matches!(block.encode(), Err(TcgIrCacheError::Invalid(_))));
     }
     #[test]
     fn atomic_file_round_trip_rejects_corruption() {
