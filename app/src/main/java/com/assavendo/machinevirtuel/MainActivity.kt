@@ -1031,6 +1031,9 @@ class MainActivity : Activity() {
                 append("échantillons=").append(window.samples)
                 append(", FPS=").append(value(window.fpsAvg))
                 append(", CPU host=").append(value(window.cpuHostAvg, " %"))
+                append(", CPU guest=").append(value(window.cpuGuestAvg, " %"))
+                append(", attente I/O guest=").append(value(window.guestCpuIoWaitAvgPercent, " %"))
+                append(", IRQ guest=").append(value(window.guestCpuInterruptAvgPercent, " %"))
                 append(", vCPU=").append(value(window.vCpuUtilizationAvg, " %"))
                 append(", cache=").append(
                     window.cacheHitRateAvg?.let { "%.1f".format(it * 100.0) + " %" } ?: "indisponible"
