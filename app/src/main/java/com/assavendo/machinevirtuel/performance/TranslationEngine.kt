@@ -86,8 +86,9 @@ class TranslationEngine(private val cache: TranslationCacheManager) {
     fun storeArtifact(
         key: TranslationCacheKey,
         artifact: ByteArray,
+        relocationSafe: Boolean,
         allowGlobalLevel3: Boolean = false,
-    ) = cache.putArtifact(key, artifact, allowGlobalLevel3)
+    ) = cache.putArtifact(key, artifact, relocationSafe, allowGlobalLevel3)
 
     @Synchronized
     fun invalidate(key: TranslationCacheKey) {
