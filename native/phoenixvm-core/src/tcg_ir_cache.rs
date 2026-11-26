@@ -358,7 +358,11 @@ impl TcgIrBlock {
             }
         }
 
-        let payload_len = writer.bytes.len().checked_sub(HEADER_BYTES).ok_or(TcgIrCacheError::Corrupt)?;
+        let payload_len = writer
+            .bytes
+            .len()
+            .checked_sub(HEADER_BYTES)
+            .ok_or(TcgIrCacheError::Corrupt)?;
         let payload_len = u32::try_from(payload_len).map_err(|_| TcgIrCacheError::TooLarge)?;
         writer.bytes[10..14].copy_from_slice(&payload_len.to_be_bytes());
 
@@ -532,9 +536,7 @@ fn write_compatibility(
     Ok(())
 }
 
-fn read_compatibility(
-    reader: &mut Reader<'_>,
-) -> Result<TcgIrCompatibility, TcgIrCacheError> {
+fn read_compatibility(reader: &mut Reader<'_>) -> Result<TcgIrCompatibility, TcgIrCacheError> {
     let qemu_build_id = reader.string(MAX_STRING_BYTES)?;
     let guest_arch = reader.string(MAX_STRING_BYTES)?;
     let guest_cpu_model = reader.string(MAX_STRING_BYTES)?;
@@ -634,8 +636,14 @@ impl<'a> Reader<'a> {
         Self { bytes, offset: 0 }
     }
     fn take(&mut self, length: usize) -> Result<&'a [u8], TcgIrCacheError> {
-        let end = self.offset.checked_add(length).ok_or(TcgIrCacheError::Corrupt)?;
-        let value = self.bytes.get(self.offset..end).ok_or(TcgIrCacheError::Corrupt)?;
+        let end = self
+            .offset
+            .checked_add(length)
+            .ok_or(TcgIrCacheError::Corrupt)?;
+        let value = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or(TcgIrCacheError::Corrupt)?;
         self.offset = end;
         Ok(value)
     }
@@ -643,16 +651,32 @@ impl<'a> Reader<'a> {
         Ok(self.take(1)?[0])
     }
     fn u16(&mut self) -> Result<u16, TcgIrCacheError> {
-        Ok(u16::from_be_bytes(self.take(2)?.try_into().map_err(|_| TcgIrCacheError::Corrupt)?))
+        Ok(u16::from_be_bytes(
+            self.take(2)?
+                .try_into()
+                .map_err(|_| TcgIrCacheError::Corrupt)?,
+        ))
     }
     fn u32(&mut self) -> Result<u32, TcgIrCacheError> {
-        Ok(u32::from_be_bytes(self.take(4)?.try_into().map_err(|_| TcgIrCacheError::Corrupt)?))
+        Ok(u32::from_be_bytes(
+            self.take(4)?
+                .try_into()
+                .map_err(|_| TcgIrCacheError::Corrupt)?,
+        ))
     }
     fn u64(&mut self) -> Result<u64, TcgIrCacheError> {
-        Ok(u64::from_be_bytes(self.take(8)?.try_into().map_err(|_| TcgIrCacheError::Corrupt)?))
+        Ok(u64::from_be_bytes(
+            self.take(8)?
+                .try_into()
+                .map_err(|_| TcgIrCacheError::Corrupt)?,
+        ))
     }
     fn i64(&mut self) -> Result<i64, TcgIrCacheError> {
-        Ok(i64::from_be_bytes(self.take(8)?.try_into().map_err(|_| TcgIrCacheError::Corrupt)?))
+        Ok(i64::from_be_bytes(
+            self.take(8)?
+                .try_into()
+                .map_err(|_| TcgIrCacheError::Corrupt)?,
+        ))
     }
     fn string(&mut self, maximum: usize) -> Result<String, TcgIrCacheError> {
         let length = usize::from(self.u16()?);
@@ -847,11 +871,24 @@ mod tests {
     }
 
     #[test]
-    fn raw_process_pointers_are_not_a_supported_operand_kind() {
-        // TcgOperand is an explicit symbolic enum: callers can persist only a
-        // temporary, named global, immediate, label, or stable helper symbol.
-        assert_eq!(std::mem::size_of::<TcgOperand>(), std::mem::size_of::<TcgOperand>());
-        let helper = TcgOperand::Helper("helper_cpuid".into());
-        assert_eq!(helper, TcgOperand::Helper("helper_cpuid".into()));
-    }
+    fn helper_operands_round_trip_as_stable_symbols() {
+        let mut block = sample_block();
+        block.operations.push(TcgIrOperation {
+            opcode: "call".into(),
+            value_type: TcgValueType::I64,
+            flags: 0,
+            operands: vec![
+                TcgOperand::Temp(1),
+                TcgOperand::Helper("helper_cpuid".into()),
+            ],
+        });
+
+        let decoded = TcgIrBlock::decode(&block.encode().unwrap()).unwrap();
+        assert_eq!(decoded, block);
+        assert!(decoded.operations.iter().any(|operation| {
+            operation
+                .operands
+                .contains(&TcgOperand::Helper("helper_cpuid".into()))
+        }));
+    }}
 }
