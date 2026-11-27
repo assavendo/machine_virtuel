@@ -362,7 +362,17 @@ static bool pv_global_layout_digest(uint8_t digest[32])
     gsize digest_len = 32;
 
     if (sum == NULL) {
+        if (g_strcmp0(g_getenv("PHOENIXVM_TCG_CACHE_TRACE"), "1") == 0) {
+            g_printerr("PVTCG: global-layout digest allocation failed\n");
+        }
         return false;
+    }
+
+    if (g_strcmp0(g_getenv("PHOENIXVM_TCG_CACHE_TRACE"), "1") == 0) {
+        g_printerr("PVTCG: global-layout begin globals=%d temps=%d frame_temp=%p temp_base=%p temp_size=%zu\n",
+                   tcg_ctx->nb_globals, tcg_ctx->nb_temps,
+                   (void *)tcg_ctx->frame_temp, (void *)tcg_ctx->temps,
+                   sizeof(TCGTemp));
     }
 
     pv_checksum_u64(sum, tcg_ctx->nb_globals);
@@ -381,6 +391,11 @@ static bool pv_global_layout_digest(uint8_t digest[32])
 
         if (ptr < base || ptr >= end ||
             ((ptr - base) % sizeof(TCGTemp)) != 0) {
+            if (g_strcmp0(g_getenv("PHOENIXVM_TCG_CACHE_TRACE"), "1") == 0) {
+                g_printerr("PVTCG: invalid frame_temp pointer=%p range=[%p,%p) delta=%" PRIuPTR " struct_size=%zu\n",
+                           (void *)ptr, (void *)base, (void *)end,
+                           ptr >= base ? ptr - base : 0, sizeof(TCGTemp));
+            }
             g_checksum_free(sum);
             return false;
         }
@@ -400,6 +415,12 @@ static bool pv_global_layout_digest(uint8_t digest[32])
 
             if (ptr < base || ptr >= end ||
                 ((ptr - base) % sizeof(TCGTemp)) != 0) {
+                if (g_strcmp0(g_getenv("PHOENIXVM_TCG_CACHE_TRACE"), "1") == 0) {
+                    g_printerr("PVTCG: invalid mem_base global=%d name=%s pointer=%p range=[%p,%p) delta=%" PRIuPTR " struct_size=%zu\n",
+                               i, ts->name != NULL ? ts->name : "<unnamed>",
+                               (void *)ptr, (void *)base, (void *)end,
+                               ptr >= base ? ptr - base : 0, sizeof(TCGTemp));
+                }
                 g_checksum_free(sum);
                 return false;
             }
@@ -425,6 +446,9 @@ static bool pv_global_layout_digest(uint8_t digest[32])
 
     g_checksum_get_digest(sum, digest, &digest_len);
     g_checksum_free(sum);
+    if (g_strcmp0(g_getenv("PHOENIXVM_TCG_CACHE_TRACE"), "1") == 0) {
+        g_printerr("PVTCG: global-layout complete digest_len=%zu\n", digest_len);
+    }
     return digest_len == 32;
 }
 
@@ -462,8 +486,16 @@ static bool pv_fill_compatibility(PvTcgCacheState *state,
     int host_page_size = 4096;
 #endif
 
-    if (host_page_size <= 0 ||
-        !pv_global_layout_digest(context_hash)) {
+    if (host_page_size <= 0) {
+        if (state->trace) {
+            g_printerr("PVTCG: invalid host page size=%d\n", host_page_size);
+        }
+        return false;
+    }
+    if (!pv_global_layout_digest(context_hash)) {
+        if (state->trace) {
+            g_printerr("PVTCG: global-layout digest rejected\n");
+        }
         return false;
     }
 
