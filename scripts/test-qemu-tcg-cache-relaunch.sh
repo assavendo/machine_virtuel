@@ -83,8 +83,10 @@ run_guest() {
 # Cold start: the cache starts empty, so this run must translate and enqueue.
 run_guest "$COLD_LOG"
 if ! grep -q "PVTCG: queued" "$COLD_LOG"; then
+  echo "Cold run did not persist an eligible TCG block. QEMU output follows:" >&2
   cat "$COLD_LOG" >&2
-  echo "Cold run did not persist an eligible TCG block." >&2
+  echo "Cache files:" >&2
+  find "$CACHE" -maxdepth 4 -type f -printf '%p %s bytes\\n' >&2 || true
   exit 1
 fi
 if grep -q "PVTCG: hit" "$COLD_LOG"; then
