@@ -16,6 +16,10 @@ on:
     paths:
       - "patches/qemu/11.1.3/**"
       - "native/phoenixvm-core/**"
+      - "scripts/build-qemu-android-arm64-runtime.sh"
+      - "scripts/build-qemu-android-x86-runtime.sh"
+      - "scripts/build-phoenixvm-native-cache-android-arm64.sh"
+      - "scripts/test-qemu-tcg-cache-relaunch.sh"
       - ".github/workflows/verify-qemu-tcg-cache.yml"
   workflow_dispatch:
 
@@ -28,7 +32,7 @@ concurrency:
 
 jobs:
   build-qemu:
-    name: Build patched QEMU 11.1.3 (x86_64-softmmu)
+    name: Build patched QEMU 11.1.3 (x86_64 + aarch64 softmmu)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
