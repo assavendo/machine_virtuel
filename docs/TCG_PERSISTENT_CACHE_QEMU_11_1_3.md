@@ -242,3 +242,11 @@ Le rapport doit conserver : commit QEMU et PhoenixVM, hash du binaire, modèle d
 ## Décision de statut
 
 À ce stade, seuls le cache de métadonnées PhoenixVM et le dimensionnement du cache TCG en mémoire sont présents. Aucun code TCG/IR n’est réinjecté après redémarrage et aucun benchmark de réutilisation inter-processus n’a été exécuté. La section 9 reste donc **PARTIELLE** jusqu’à l’implémentation du patch QEMU 11.1.3, à la compilation du runtime Android modifié et à la réussite de tous les critères de validation ci-dessus.
+
+## État d'implémentation au 27 novembre 2026
+
+Le travail a dépassé la phase d'audit : un adaptateur C QEMU 11.1.3, un pont C ABI vers le magasin Rust et le hook de restauration dans setjmp_gen_code() sont présents. Le patch a été compilé pour x86_64-softmmu et aarch64-softmmu et les symboles d'entrée vérifiés. Le runtime Android peut recevoir les variables nécessaires uniquement lorsque le marqueur et la bibliothèque native patchée sont présents.
+
+Le premier test de relance complète a néanmoins échoué : après le démarrage froid, le journal n'a montré aucun bloc queued et le L2 ne contenait que son fichier de verrouillage. Une nouvelle exécution ajoute des traces explicites pour distinguer l'initialisation, le hook de restauration et le hook de sérialisation. Jusqu'à son résultat positif, le mécanisme TCG persistant ne peut pas être considéré comme fonctionnel.
+
+Le schéma v3 ne prend actuellement en charge qu'un sous-ensemble étroit d'opérations. Les tests de code invité modifié, contexte CPU/MMU, build QEMU/features hôte, corruption, isolation, MTTCG, relances répétées et mesures de traduction restent obligatoires. Le build APK CI ne prouve pas l'installation du runtime QEMU ARM64 modifié sur appareil ; le builder produit un paquet qui n'est pas encore sélectionné par le runtime standard de l'application. La section 9 reste **PARTIELLE**.
