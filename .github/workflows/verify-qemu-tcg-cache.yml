@@ -100,3 +100,9 @@ jobs:
           test -x build/qemu-system-x86_64
           build/qemu-system-x86_64 --version
           nm build/qemu-system-x86_64 | grep -E 'phoenixvm_tcg_cache_(start|try_restore|store)'
+
+      - name: Verify cold/warm persistent-cache reuse across full QEMU process exits
+        run: |
+          bash scripts/test-qemu-tcg-cache-relaunch.sh \
+            "$RUNNER_TEMP/qemu-src/build/qemu-system-x86_64" \
+            "$GITHUB_WORKSPACE/native/phoenixvm-core/target/release/libphoenixvm_core.so"
