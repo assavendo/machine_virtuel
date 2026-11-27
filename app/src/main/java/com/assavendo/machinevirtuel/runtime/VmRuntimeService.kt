@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.IBinder
 import com.assavendo.machinevirtuel.host.HostCapabilityScanner
 import com.assavendo.machinevirtuel.hypervisor.BackendLaunchSpec
@@ -255,13 +256,25 @@ class VmRuntimeService : Service() {
                         tpmHandle = TpmManager.start(paths, vm, dir, log)
                     }
 
-                    val spec = backend.launchSpec(
+                    val launchVm = vm.copy(backend = backend.kind)
+                    val baseSpec = backend.launchSpec(
                         paths,
-                        vm.copy(backend = backend.kind),
+                        launchVm,
                         qmp,
                         serial,
                         log,
                         usbPassthrough = usbAttachments,
+                    )
+                    val persistentTcgEnvironment = PersistentTcgCacheEnvironment.build(
+                        paths = paths,
+                        vm = launchVm,
+                        apiLevel = Build.VERSION.SDK_INT,
+                        supportedAbis = Build.SUPPORTED_ABIS.toList(),
+                        cpuInfo = runCatching { File("/proc/cpuinfo").readText() }
+                            .getOrDefault(""),
+                    )
+                    val spec = baseSpec.copy(
+                        environment = baseSpec.environment + persistentTcgEnvironment,
                     )
                     val controlSocket = spec.controlSocket
                     val guestAgentSocket = spec.guestAgentSocket
