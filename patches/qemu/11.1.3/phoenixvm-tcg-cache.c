@@ -385,21 +385,46 @@ static bool pv_global_layout_digest(uint8_t digest[32])
     pv_checksum_u64(sum, (uint64_t)tcg_ctx->frame_end);
 
     if (tcg_ctx->frame_temp != NULL) {
-        uintptr_t base = (uintptr_t)tcg_ctx->temps;
-        uintptr_t ptr = (uintptr_t)tcg_ctx->frame_temp;
-        uintptr_t end = base + sizeof(TCGTemp) * TCG_MAX_TEMPS;
+        const TCGTemp *frame = tcg_ctx->frame_temp;
 
-        if (ptr < base || ptr >= end ||
-            ((ptr - base) % sizeof(TCGTemp)) != 0) {
+        /*
+         * QEMU 11.1.3 system-mode tcg_register_thread() copies tcg_init_ctx
+         * into each vCPU TCGContext and explicitly relinks mem_base, but does
+         * not relink frame_temp. Thus frame_temp intentionally still points
+         * into the process-global initialization context, not tcg_ctx->temps.
+         * Fingerprint its complete stable semantic signature; never hash its
+         * process address or require it to belong to the current TCGContext.
+         *
+         * The configured frame temp is a fixed register temp. Refuse any
+         * future layout that turns it indirect or memory-backed until that
+         * layout has an explicit canonical representation here.
+         */
+        if (frame->kind != TEMP_FIXED || frame->mem_base != NULL ||
+            frame->indirect_reg || frame->indirect_base ||
+            frame->temp_subindex != 0) {
             if (g_strcmp0(g_getenv("PHOENIXVM_TCG_CACHE_TRACE"), "1") == 0) {
-                g_printerr("PVTCG: invalid frame_temp pointer=%p range=[%p,%p) delta=%" PRIuPTR " struct_size=%zu\n",
-                           (void *)ptr, (void *)base, (void *)end,
-                           ptr >= base ? ptr - base : 0, sizeof(TCGTemp));
+                g_printerr("PVTCG: unsupported frame_temp signature kind=%u mem_base=%p indirect_reg=%u indirect_base=%u subindex=%u\n",
+                           (unsigned)frame->kind, (void *)frame->mem_base,
+                           frame->indirect_reg, frame->indirect_base,
+                           frame->temp_subindex);
             }
             g_checksum_free(sum);
             return false;
         }
-        pv_checksum_u64(sum, (ptr - base) / sizeof(TCGTemp));
+        pv_checksum_u64(sum, frame->reg);
+        pv_checksum_u64(sum, frame->val_type);
+        pv_checksum_u64(sum, frame->base_type);
+        pv_checksum_u64(sum, frame->type);
+        pv_checksum_u64(sum, frame->kind);
+        pv_checksum_u64(sum, frame->indirect_reg);
+        pv_checksum_u64(sum, frame->indirect_base);
+        pv_checksum_u64(sum, frame->mem_coherent);
+        pv_checksum_u64(sum, frame->mem_allocated);
+        pv_checksum_u64(sum, frame->temp_allocated);
+        pv_checksum_u64(sum, frame->temp_subindex);
+        pv_checksum_u64(sum, (uint64_t)frame->val);
+        pv_checksum_u64(sum, (uint64_t)frame->mem_offset);
+        pv_checksum_string(sum, frame->name);
     } else {
         pv_checksum_u64(sum, UINT64_MAX);
     }
