@@ -190,6 +190,7 @@ static gpointer pv_cache_init_worker(gpointer unused)
     guint feature_count = 0;
     uint64_t max_entries, max_bytes;
     bool ok = false;
+    const char *failure = "unknown initialization failure";
 
     (void)unused;
 
@@ -209,6 +210,7 @@ static gpointer pv_cache_init_worker(gpointer unused)
     feature_list = g_strsplit(features, ",", PV_MAX_FEATURES + 1);
     feature_count = g_strv_length(feature_list);
     if (feature_count == 0 || feature_count > PV_MAX_FEATURES) {
+        failure = "host CPU feature list is empty or exceeds its limit";
         goto out;
     }
     g_qsort_with_data(feature_list, feature_count, sizeof(char *),
@@ -216,6 +218,7 @@ static gpointer pv_cache_init_worker(gpointer unused)
     for (guint i = 0; i < feature_count; i++) {
         if (feature_list[i] == NULL || *feature_list[i] == '\0' ||
             (i > 0 && g_str_equal(feature_list[i - 1], feature_list[i]))) {
+            failure = "host CPU feature list contains an empty or duplicate value";
             goto out;
         }
     }
@@ -226,6 +229,7 @@ static gpointer pv_cache_init_worker(gpointer unused)
 
     state->api.module = dlopen(library, RTLD_NOW | RTLD_LOCAL);
     if (state->api.module == NULL) {
+        failure = dlerror();
         goto out;
     }
 
@@ -249,6 +253,7 @@ static gpointer pv_cache_init_worker(gpointer unused)
     PV_LOAD(&state->api, l2_store_block, "phoenixvm_tcg_l2_store_block");
 
     if (!pv_api_complete(&state->api)) {
+        failure = "native cache library is missing one or more required C ABI symbols";
         goto out;
     }
 
@@ -261,10 +266,12 @@ static gpointer pv_cache_init_worker(gpointer unused)
     state->api.handle = state->api.l2_open(root, vm_id,
                                            (size_t)max_entries, max_bytes);
     if (state->api.handle == NULL) {
+        failure = "native L2 cache store could not be opened";
         goto out;
     }
     if (state->api.l2_preload(state->api.handle, (size_t)max_entries,
                               max_bytes) != 0) {
+        failure = "native L2 preload failed";
         goto out;
     }
 
@@ -273,6 +280,10 @@ static gpointer pv_cache_init_worker(gpointer unused)
 out:
     g_strfreev(feature_list);
     if (!ok) {
+        if (state->trace) {
+            g_printerr("PVTCG: initialization disabled: %s\\n",
+                       failure != NULL ? failure : "unknown");
+        }
         if (state->api.handle != NULL && state->api.l2_close != NULL) {
             state->api.l2_close(state->api.handle);
             state->api.handle = NULL;
@@ -821,6 +832,13 @@ bool phoenixvm_tcg_cache_try_restore(CPUState *cpu,
     bool restored = false;
 
     if (state == NULL || !pv_tb_eligible(tb, pc, host_pc)) {
+        if (state != NULL && state->trace) {
+            g_printerr("PVTCG: ineligible TB pc=0x%" PRIx64
+                       " phys0=0x%" PRIx64 " phys1=0x%" PRIx64
+                       " cflags=0x%x\\n",
+                       (uint64_t)pc, (uint64_t)tb_page_addr0(tb),
+                       (uint64_t)tb_page_addr1(tb), tb_cflags(tb));
+        }
         g_atomic_int_inc(&pv_misses);
         return false;
     }
@@ -1079,6 +1097,14 @@ static bool pv_serialize_translation(PvTcgCacheState *state,
         const TCGOpDef *def;
 
         if (!pv_supported_operation(op, &def)) {
+            if (state->trace) {
+                const char *op_name = op->opc < tcg_op_defs_max
+                    ? tcg_op_defs[op->opc].name : NULL;
+                g_printerr("PVTCG: serialize reject pc=0x%" PRIx64
+                           " unsupported opcode=%s opc=%u\\n",
+                           (uint64_t)pc, op_name != NULL ? op_name : "<invalid>",
+                           (unsigned)op->opc);
+            }
             goto out;
         }
         if (strcmp(def->name, "br") == 0 ||
@@ -1247,6 +1273,8 @@ void phoenixvm_tcg_cache_store(CPUState *cpu,
 
     if (state != NULL) {
         pv_serialize_translation(state, cpu, tb, pc, host_pc);
+    } else if (g_strcmp0(g_getenv("PHOENIXVM_TCG_CACHE_TRACE"), "1") == 0) {
+        g_printerr("PVTCG: cache adapter was not initialized before TB store\\n");
     }
 }
 
