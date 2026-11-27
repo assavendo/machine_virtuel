@@ -1077,20 +1077,27 @@ static bool pv_serialize_translation(PvTcgCacheState *state,
     size_t label_count = 0;
     uint32_t operation_count = 0;
     uint64_t physical_page;
+    const char *failure = "unclassified-validation-failure";
+    int32_t store_status = -999;
     bool ok = false;
 
     if (!pv_tb_eligible(tb, pc, host_pc) ||
         tb->size == 0 || tb->icount == 0 ||
         tb->size > TARGET_PAGE_SIZE - (pc & (TARGET_PAGE_SIZE - 1))) {
-        return false;
+        failure = "tb-ineligible-or-crosses-code-page";
+        goto out;
     }
 
     physical_page = tb_page_addr0(tb) & TARGET_PAGE_MASK;
-    if (!pv_hash_guest_code(host_pc, tb->size, code_hash) ||
-        !pv_fill_compatibility(state, cpu, tb, pc, physical_page,
+    if (!pv_hash_guest_code(host_pc, tb->size, code_hash)) {
+        failure = "guest-code-hash-failed";
+        goto out;
+    }
+    if (!pv_fill_compatibility(state, cpu, tb, pc, physical_page,
                                code_hash, context_hash, &page_storage,
                                &key)) {
-        return false;
+        failure = "compatibility-context-build-failed";
+        goto out;
     }
 
     temp_map = g_new(uint16_t, MAX(tcg_ctx->nb_temps, 1));
@@ -1109,6 +1116,7 @@ static bool pv_serialize_translation(PvTcgCacheState *state,
         const TCGOpDef *def;
 
         if (!pv_supported_operation(op, &def)) {
+            failure = "unsupported-tcg-opcode";
             if (state->trace) {
                 const char *op_name = op->opc < tcg_op_defs_max
                     ? tcg_op_defs[op->opc].name : NULL;
@@ -1253,19 +1261,29 @@ static bool pv_serialize_translation(PvTcgCacheState *state,
         }
     }
 
-    if (state->api.l2_store_block(state->api.handle, block) == 0) {
+    store_status = state->api.l2_store_block(state->api.handle, block);
+    if (store_status == 0) {
         g_atomic_int_inc(&pv_stores);
+        ok = true;
         if (state->trace) {
             g_printerr("PVTCG: queued pc=0x%" PRIx64
-                       " size=%u insns=%u ops=%u\n",
+                       " size=%u insns=%u ops=%u\\n",
                        (uint64_t)pc, tb->size, tb->icount, operation_count);
         }
+    } else {
+        failure = store_status > 0
+            ? "native-l2-worker-queue-full"
+            : "native-l2-store-rejected-record";
     }
-    ok = true;
 
 out:
     if (!ok) {
         g_atomic_int_inc(&pv_rejections);
+        if (state->trace) {
+            g_printerr("PVTCG: serialize failed pc=0x%" PRIx64
+                       " reason=%s store_status=%d\\n",
+                       (uint64_t)pc, failure, store_status);
+        }
     }
     if (block != NULL) {
         state->api.block_free(block);
