@@ -223,3 +223,22 @@ The translation-cache foundation remains policy/metadata plus an artifact API ar
 ## Validation boundary
 
 GitHub CI can validate source, unit tests, formatting, APK assembly and packaging. It cannot prove vendor hypervisor access, GPU driver behavior, audio behavior, guest boot, thermal sustainability or Android permission behavior without a real device.
+
+## Mise à jour du 27 novembre 2026 — adaptateur QEMU et lancement Android
+
+### Avancées réelles
+
+- Le format TCG IR natif est en version 3 et applique un schéma fermé par opcode ; les formes inconnues sont rejetées.
+- Le magasin L2 natif utilise un verrou noyau inter-processus Linux/Android par flock, sur un fichier permanent ouvert avec O_NOFOLLOW.
+- Un pont C ABI expose le L2 par VM, le préchargement worker vers un L1 résident non bloquant, le lookup candidat par contexte et les fonctions de construction/lecture des blocs IR.
+- Un patch QEMU 11.1.3 est présent dans patches/qemu/11.1.3. Le hook intervient dans setjmp_gen_code() après tcg_func_start() ; à un hit il reconstruit les opérations dans le TCGContext courant et laisse QEMU générer normalement le code hôte. En cas de miss/rejet, il réinitialise le contexte et rappelle le traducteur upstream. Les TB one-shot/page-less/MMIO, icount/single-step, breakpoints et contextes plugin sont exclus.
+- Sur le commit 1fea0440b8a8bc46ad0ae1a9116fc3e61cebd408, la CI a compilé QEMU 11.1.3 pour x86_64-softmmu et aarch64-softmmu, puis vérifié les symboles phoenixvm_tcg_cache_start/try_restore/store. La CI Android a passé le build natif Android, les tests unitaires, le lint, les contrôles de scripts/SBOM et l'assemblage APK debug.
+- L'application ne transmet les variables de cache que si le runtime contient simultanément le marqueur patché et la bibliothèque native. Le répertoire L2 est séparé par VM. Les builders de runtime Android ajoutent ces artefacts et leurs sommes SHA-256.
+
+### Résultat froid/chaud : échec actuel
+
+Le test utilise un BIOS x86 déterministe, arrête complètement QEMU via isa-debug-exit puis relance un nouveau processus avec le même L2. Le run sur le commit 1fea044 a compilé les deux binaires et vérifié les symboles, mais le test a échoué à l'étape froide : aucun message de bloc mis en cache, aucun fichier IR persistant et seul le fichier .tcg-ir-l2.lock était présent. Il ne démontre donc ni hit après relance, ni gain de traduction. Le patch C contient désormais des marqueurs explicites d'initialisation et d'entrée des hooks ; la nouvelle exécution de diagnostic est en cours et son résultat n'est pas encore établi.
+
+La compilation Android et l'APK réussis ne prouvent pas que le runtime modifié a été installé sur appareil. Le runtime ARM64 produit par le builder n'est pas encore sélectionné par l'installation standard de l'application ; la bibliothèque Android du CI ne remplace pas à elle seule le QEMU système préinstallé. Les validations de code invité modifié, contexte CPU/MMU, build QEMU/features hôte, corruption, isolation réelle entre processus, MTTCG, relances répétées et mesures de traduction restent à effectuer. Les compteurs de hits L2 propres à l'adaptateur ne sont pas encore exposés via QMP/UI.
+
+**Décision :** la section 9 reste **PARTIELLE** et la PR #14 reste en brouillon. Aucun taux de hits persistants ni gain de performance n'est revendiqué avant réussite du test froid/chaud, de la matrice d'incompatibilité et des mesures répétées.
