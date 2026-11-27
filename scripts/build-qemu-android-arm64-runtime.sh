@@ -38,6 +38,9 @@ if sys.version_info < (3, 9):
     raise SystemExit("QEMU ARM64 build requires Python 3.9 or newer.")
 PY
 
+# Build the cache bridge for Android Bionic before patching QEMU with its C ABI.
+bash "$SCRIPT_DIR/build-phoenixvm-native-cache-android-arm64.sh"
+
 pkg-config --exists glib-2.0 pixman-1 zlib || {
   echo "Install GLib, Pixman and zlib development packages for the Android/Termux build environment." >&2
   exit 1
@@ -56,6 +59,8 @@ echo "$QEMU_SHA256  $ARCHIVE" | sha256sum -c -
 rm -rf "$SRC" "$PREFIX"
 tar -xf "$ARCHIVE"
 mv "qemu-$QEMU_VERSION" "$SRC"
+
+bash "$SCRIPT_DIR/../patches/qemu/11.1.3/apply.sh" "$SRC"
 
 mkdir -p "$SRC/build"
 cd "$SRC/build"
@@ -104,6 +109,12 @@ fi
 if [[ -d "$PREFIX/share/qemu" ]]; then
   cp -a "$PREFIX/share/qemu/." "$RUNTIME_PACK/usr/share/qemu/"
 fi
+
+CACHE_LIBRARY="$PROJECT_ROOT/native/phoenixvm-core/target/aarch64-linux-android/release/libphoenixvm_core.so"
+test -s "$CACHE_LIBRARY"
+install -m 0755 "$CACHE_LIBRARY" "$RUNTIME_PACK/usr/lib/libphoenixvm_core.so"
+printf 'format=1\\nqemu=%s\\nabi=%s\\n' "$QEMU_VERSION" "$TARGET" \
+  > "$RUNTIME_PACK/usr/share/qemu/phoenixvm-tcg-cache-v1"
 
 mkdir -p "$RUNTIME_PACK/usr/share/licenses/qemu"
 for license in COPYING COPYING.LIB LICENSE; do
