@@ -312,6 +312,9 @@ out:
 
 void phoenixvm_tcg_cache_start(void)
 {
+    g_printerr("PVTCG: start hook reached trace=%s\\n",
+               g_getenv("PHOENIXVM_TCG_CACHE_TRACE") != NULL
+                   ? g_getenv("PHOENIXVM_TCG_CACHE_TRACE") : "<unset>");
     if (g_once_init_enter(&pv_sync_once)) {
         g_mutex_init(&pv_init_lock);
         g_cond_init(&pv_init_cond);
@@ -330,6 +333,11 @@ void phoenixvm_tcg_cache_start(void)
         g_cond_wait(&pv_init_cond, &pv_init_lock);
     }
     g_mutex_unlock(&pv_init_lock);
+    {
+        PvTcgCacheState *state = g_atomic_pointer_get(&pv_cache);
+        g_printerr("PVTCG: init complete enabled=%d trace=%d\\n",
+                   state != NULL, state != NULL && state->trace);
+    }
 }
 
 static void pv_checksum_u64(GChecksum *sum, uint64_t value)
@@ -831,6 +839,10 @@ bool phoenixvm_tcg_cache_try_restore(CPUState *cpu,
     uint64_t physical_page;
     bool restored = false;
 
+    if (state != NULL && state->trace) {
+        g_printerr("PVTCG: restore hook pc=0x%" PRIx64 " state=ready\\n",
+                   (uint64_t)pc);
+    }
     if (state == NULL || !pv_tb_eligible(tb, pc, host_pc)) {
         if (state != NULL && state->trace) {
             g_printerr("PVTCG: ineligible TB pc=0x%" PRIx64
@@ -1272,6 +1284,10 @@ void phoenixvm_tcg_cache_store(CPUState *cpu,
     PvTcgCacheState *state = g_atomic_pointer_get(&pv_cache);
 
     if (state != NULL) {
+        if (state->trace) {
+            g_printerr("PVTCG: store hook pc=0x%" PRIx64 " state=ready size=%u insns=%u\\n",
+                       (uint64_t)pc, tb->size, tb->icount);
+        }
         pv_serialize_translation(state, cpu, tb, pc, host_pc);
     } else if (g_strcmp0(g_getenv("PHOENIXVM_TCG_CACHE_TRACE"), "1") == 0) {
         g_printerr("PVTCG: cache adapter was not initialized before TB store\\n");
