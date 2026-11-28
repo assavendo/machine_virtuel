@@ -698,6 +698,8 @@ static TCGTemp *pv_restore_value(PvTcgCacheApi *api,
     }
 }
 
+static bool pv_supported_scalar_operation(const char *name);
+
 static bool pv_restore_block(PvTcgCacheApi *api,
                              const PvTcgIrBlockHandle *block,
                              TranslationBlock *tb,
