@@ -828,22 +828,16 @@ static bool pv_restore_block(PvTcgCacheApi *api,
                 goto out;
             }
 
-            if (pv_name_is(name, name_len, "mov") ||
-                pv_name_is(name, name_len, "add") ||
-                pv_name_is(name, name_len, "sub") ||
-                pv_name_is(name, name_len, "and") ||
-                pv_name_is(name, name_len, "or") ||
-                pv_name_is(name, name_len, "xor") ||
-                pv_name_is(name, name_len, "mul")) {
-                TCGArg args[3];
+            if (pv_supported_scalar_operation(name)) {
+                TCGArg args[16];
 
-                if (def->nb_oargs != 1 || def->nb_cargs != 0 ||
-                    def->nb_args != expected || expected > ARRAY_SIZE(args) ||
-                    (pv_name_is(name, name_len, "mov") && def->nb_iargs != 1) ||
-                    (!pv_name_is(name, name_len, "mov") && def->nb_iargs != 2)) {
+                if (def->nb_args != expected ||
+                    expected > ARRAY_SIZE(args) ||
+                    def->nb_cargs > 2) {
                     goto out;
                 }
-                for (size_t j = 0; j < expected; j++) {
+
+                for (size_t j = 0; j < def->nb_oargs + def->nb_iargs; j++) {
                     TCGTemp *value = pv_restore_value(api, block, i, j, type,
                                                       temps, temp_count,
                                                       j < def->nb_oargs);
@@ -852,6 +846,18 @@ static bool pv_restore_block(PvTcgCacheApi *api,
                     }
                     args[j] = temp_arg(value);
                 }
+                for (size_t j = 0; j < def->nb_cargs; j++) {
+                    uint8_t tag;
+                    int64_t value;
+                    size_t operand_index = def->nb_oargs + def->nb_iargs + j;
+                    if (!pv_read_operand(api, block, i, operand_index,
+                                         &tag, &value) ||
+                        tag != PV_OPERAND_IMMEDIATE) {
+                        goto out;
+                    }
+                    args[operand_index] = (TCGArg)value;
+                }
+
                 op = tcg_emit_op(opcode, def->nb_args);
                 TCGOP_TYPE(op) = type;
                 TCGOP_FLAGS(op) = param2;
@@ -968,6 +974,27 @@ bool phoenixvm_tcg_cache_try_restore(CPUState *cpu,
     return true;
 }
 
+static bool pv_supported_scalar_operation(const char *name)
+{
+    static const char *const names[] = {
+        "mov", "movi",
+        "add", "sub", "and", "or", "xor", "mul",
+        "neg", "not",
+        "shl", "shr", "sar", "rotl", "rotr",
+        "ext8s", "ext16s", "ext32s", "ext8u", "ext16u", "ext32u",
+        "ext_i32_i64", "extu_i32_i64", "trunc_i64_i32",
+        "ld", "ld8s", "ld8u", "ld16s", "ld16u", "ld32s", "ld32u",
+        "st", "st8", "st16", "st32",
+    };
+
+    for (size_t i = 0; i < G_N_ELEMENTS(names); i++) {
+        if (g_strcmp0(name, names[i]) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool pv_supported_operation(const TCGOp *op, const TCGOpDef **out_def)
 {
     const TCGOpDef *def;
@@ -986,21 +1013,11 @@ static bool pv_supported_operation(const TCGOp *op, const TCGOpDef **out_def)
             op->param1 != 0 || op->param2 != 0) {
             return false;
         }
-    } else if (strcmp(def->name, "mov") == 0) {
-        if (def->nb_oargs != 1 || def->nb_iargs != 1 ||
-            def->nb_cargs != 0 ||
-            (op->param1 != TCG_TYPE_I32 && op->param1 != TCG_TYPE_I64) ||
-            op->param2 != 0) {
-            return false;
-        }
-    } else if (strcmp(def->name, "add") == 0 ||
-               strcmp(def->name, "sub") == 0 ||
-               strcmp(def->name, "and") == 0 ||
-               strcmp(def->name, "or") == 0 ||
-               strcmp(def->name, "xor") == 0 ||
-               strcmp(def->name, "mul") == 0) {
-        if (def->nb_oargs != 1 || def->nb_iargs != 2 ||
-            def->nb_cargs != 0 ||
+    } else if (strcmp(def->name, "mov") == 0 ||
+               strcmp(def->name, "movi") == 0) {
+        if (def->nb_oargs != 1 ||
+            def->nb_iargs != (strcmp(def->name, "mov") == 0 ? 1 : 0) ||
+            def->nb_cargs != (strcmp(def->name, "movi") == 0 ? 1 : 0) ||
             (op->param1 != TCG_TYPE_I32 && op->param1 != TCG_TYPE_I64) ||
             op->param2 != 0) {
             return false;
@@ -1015,6 +1032,13 @@ static bool pv_supported_operation(const TCGOp *op, const TCGOpDef **out_def)
                strcmp(def->name, "exit_tb") == 0) {
         if (def->nb_oargs != 0 || def->nb_iargs != 0 ||
             def->nb_cargs != 1 || op->param1 != 0 || op->param2 != 0) {
+            return false;
+        }
+    } else if (pv_supported_scalar_operation(def->name)) {
+        if (def->nb_oargs > 1 ||
+            def->nb_iargs > 3 ||
+            def->nb_cargs > 2 ||
+            (op->param1 != TCG_TYPE_I32 && op->param1 != TCG_TYPE_I64)) {
             return false;
         }
     } else {
@@ -1304,6 +1328,15 @@ static bool pv_serialize_translation(PvTcgCacheState *state,
                 if (!pv_add_temp_operand(&state->api, block, this_op,
                                           arg_temp(op->args[i]),
                                           i < def->nb_oargs, temp_map)) {
+                    goto out;
+                }
+            }
+            for (unsigned i = 0; i < def->nb_cargs; i++) {
+                if (!pv_add_immediate(
+                        &state->api,
+                        block,
+                        this_op,
+                        (int64_t)op->args[def->nb_oargs + def->nb_iargs + i])) {
                     goto out;
                 }
             }
