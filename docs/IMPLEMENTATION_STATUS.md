@@ -1,5 +1,70 @@
 # PhoenixVM — implementation status against the source cahier
 
+## Dernière avancée section 9 — codec IR v3 à schéma fermé
+
+Le codec PVTCGIR est passé en version 3. La validation est désormais fail-closed : seuls les opcodes et formes d'opérandes explicitement décrits (marqueurs insn_start, opérations scalaires I32/I64 de la petite liste blanche, branches simples, goto_tb et exit_tb) sont acceptés. Les marqueurs insn_start doivent contenir exactement trois mots ; les sorties TB sont représentées par un indice abstrait QEMU autorisé, jamais par l'adresse TB de l'ancien processus. Les opérations non décrites, helpers et paramètres non pris en charge sont des rejets sûrs.
+
+Les globals sont sérialisés par index numérique dans TCGContext.temps ; le digest tb_context_sha256 doit inclure la disposition canonique complète des globals/fixed temps. Le codec vérifie les bornes d'index, mais le calcul et la comparaison de ce digest appartiendront encore à l'adaptateur C QEMU, qui n'est pas implémenté. Le codec v3 reste donc une brique de format/stockage, pas un importeur TCG opérationnel.
+
+## Exclusion explicite des Translation Blocks one-shot
+
+L'audit de `tb_gen_code()` confirme que QEMU crée un TB temporaire d'une instruction lorsque `phys_pc == -1` et qu'un TB sans page physique associée doit être exécuté au plus une fois, car les lectures I/O peuvent changer. Le futur cache L2 rejettera donc explicitement tout TB sans page(s) RAM validée(s), tout TB MMIO/one-shot et toute page/mapping non revalidable.
+
+## Vérification des données d'unwind et du contexte TB
+
+L'inspection de `tcg_gen_code()` confirme que `INDEX_op_insn_start` fournit les métadonnées requises pour reconstruire `gen_insn_data` et `gen_insn_end_off`, puis le bloc d'unwind de `encode_search()`. Le pont QEMU devra préserver et compter ces opérations, vérifier leur cohérence avec `tb->icount` et laisser QEMU recalculer les offsets hôte. Le contexte de compatibilité devra aussi couvrir `guest_mo`, MTTCG, icount/replay, single-step et plugins ; `TCGOp.nargs` ne sera pas sérialisé comme taille logique, car QEMU peut réutiliser des capacités d'opérations supérieures à leur nombre d'arguments courant.
+
+
+
+Le composant `native/phoenixvm-core/src/tcg_ir_cache.rs` contient maintenant un format IR binaire versionné v2 : il sérialise les noms d'opcode et les deux paramètres bruts TCG `param1`/`param2`, des opérandes symboliques, des temporaires/labels bornés et un contexte de compatibilité incluant build QEMU, code invité, CPU/MMU, ABI hôte et CPU features. Les enregistrements sont plafonnés à 2 Mio, protégés par SHA-256 et refusés en cas de corruption ou de structure incohérente.
+
+Le magasin `TcgIrL2Store` ajoute une séparation par VM, des clés de fichier dérivées de l'empreinte complète, lecture/écriture atomiques via worker, invalidation ciblée/VM et éviction LRU sous quotas d'entrées et d'octets. La CI native du commit `7a77b698e23bdc68af13aa8314e6c74f1f0c1cc2` passe `cargo fmt --check` et `cargo test` : 20 tests, 0 échec. Les workflows Android/JVM et APK de ce commit doivent encore être contrôlés séparément.
+
+**Périmètre réel :** la brique native v2 n'est pas raccordée au cœur C de QEMU, au chemin `setjmp_gen_code()/tcg_gen_code()`, au gestionnaire Kotlin ni au runtime packagé. Aucun `TCGContext` n'est reconstruit, aucun TB QEMU n'est restauré, et aucun test froid/chaud inter-processus ni gain de traduction n'est établi. Le magasin L2 natif possède maintenant un verrou noyau `flock` partagé entre les processus Linux/Android et des tests vérifiant la sérialisation et le rejet des liens symboliques. Cette protection couvre le magasin Rust, pas encore les opérations d'un hypothétique adaptateur QEMU C qui n'est pas raccordé. La section 9 reste **PARTIELLE**.
+
+## Dernière avancée section 9 — audit du hook TCG exact de QEMU 11.1.3
+
+L'audit du tag amont `v11.1.3` a maintenant suivi le chemin de création du TB dans les sources : `tb_gen_code()` initialise le contexte et les pages, `setjmp_gen_code()` réinitialise le contexte avec `tcg_func_start()`, appelle `translate_code()`, puis passe les opérations à `tcg_gen_code()` avant l'enregistrement/publication habituels du TB. Les fichiers exacts examinés et les points de code sont consignés dans `docs/TCG_PERSISTENT_CACHE_QEMU_11_1_3.md`.
+
+L'audit a identifié pourquoi une copie brute des structures TCG serait incorrecte : `TCGOp` porte des listes intrusives et données de passe, `TCGTemp` contient des pointeurs et états du processus, les opérations d'appel contiennent des pointeurs de fonctions/helpers et `exit_tb` encode l'adresse du TB courant. Le contrat du patch est donc de reconstruire un graphe IR versionné avec identifiants logiques, de rétablir les temporaires/labels/helpers/TB dans le processus courant, puis de laisser la génération de code, le chaînage et l'invalidation normaux de QEMU fonctionner.
+
+**Nature de cette avancée : audit de source et spécification de l'intégration, pas patch TCG.** Aucun sérialiseur/réhydrateur n'est encore implémenté, aucun runtime QEMU modifié n'a été construit et aucun hit L2 après redémarrage du processus n'est démontré. La section 9 reste **PARTIELLE**.
+
+## Précisions d'intégration TCG — opérations, unwind, temporaires et helpers
+
+L'audit du tag QEMU 11.1.3 a approfondi le contrat de reconstruction. La liste `include/tcg/tcg-opc.h` décrit chaque opcode avec `oargs/iargs/cargs/flags` et QEMU publie les définitions `TCGOpDef` via `tcg_op_defs[]` ; la future adaptation devra valider exactement le nom et le nombre/classe de chaque argument. Les opérations `insn_start` doivent rester présentes : `tcg_gen_code()` les utilise pour reconstruire `gen_insn_data` et `gen_insn_end_off`, qui alimentent `encode_search()` et la restauration d'état invité lors d'une exception. Les offsets hôte sont recalculés, jamais importés.
+
+Les opérandes temporaires sont des pointeurs `TCGTemp *` contenus dans `TCGArg` ; le pont devra réallouer des temporaires du contexte courant via `tcg_temp_new_internal()`, remapper les identifiants et valider les groupes multi-slots. Les globals déjà présents dans `tcg_ctx->temps[0..nb_globals)` doivent être retrouvés puis validés par signature complète (type, kind, index logique, registre ou base/offset mémoire), jamais recréés ni trouvés par nom seul.
+
+Les objets `TCGHelperInfo` générés par `helper-info.c.inc` contiennent un nom et une fonction, ainsi que les signatures d'appel. Aucun lookup générique nom→info n'a été trouvé dans la source amont vérifiée ; les helpers internes manuels peuvent ne pas avoir de nom. Une table de résolution dédiée au binaire/à la cible est requise, avec validation de `nr_in/nr_out/typemask/flags`. Toute opération spéciale, helper absent ou donnée d'unwind non validable devra provoquer un cache miss sûr. Les labels, sorties TB et accès mémoire seront reconstruits par les APIs TCG, tandis que QEMU conserve ses passes habituelles d'optimisation, génération de code hôte, finalisation et invalidation.
+
+Ces points sont des résultats d'audit source et un contrat d'implémentation, pas un patch QEMU déjà compilé ; aucun TB persistant n'est encore réinjecté dans le moteur.
+
+## Dernier contrôle du codec IR v3 — schéma, unwind et labels
+
+Le codec impose désormais un nombre exact de marqueurs `insn_start` correspondant à `instruction_count` et une correspondance univoque entre chaque label et son opération `set_label`. Les tests couvrent les omissions, les définitions mal indexées, les identifiants erronés et le round-trip ordonné des adresses d'instruction. La CI native du commit `d50ac449513549cc1b8d0089b63274a8ed6df95d` passe formatage et tests Rust. Cela fiabilise la représentation IR mais ne constitue toujours pas une reconstitution du `TCGContext` par QEMU.
+
+## Latest Section 9 increment — shared LRU and persistent profile aggregate corrections
+
+The L0 read path now refreshes the recency of the matching resident in L1 for both metadata and artifacts. Without this propagation, an active L0 manifest could remain the oldest L1 item and be evicted by a later artifact insertion even though the shared LRU policy was intended to account for its recent use. The existing cross-kind LRU regression test now exercises this precise sequence.
+
+The profile aggregate reader now parses the nested JSON string stored in the versioned metadata envelope, verifies that the profile compatibility fingerprint matches the envelope key, validates non-negative hit/miss/execution counters and their sum, and protects aggregate counters against integer overflow. putProfile() also rejects hit/miss additions that would overflow. New tests verify aggregate recovery from persisted profiles through a recreated manager and reject invalid overflow counters.
+
+These corrections improve the metadata/artifact cache foundation and its telemetry only. They do not connect the artifact API to QEMU's internal TCG translator and do not demonstrate persistent TCG Translation Block reuse. Section 9 therefore remains PARTIEL until the QEMU 11.1.3 core integration and cold/warm process-relaunch acceptance tests pass.
+
+
+## Latest implementation increment — persistent translation cache foundation
+
+Section 9 now has a content-addressed cache API for translator-provided, relocation-safe artifacts and metadata. `TranslationCacheKey` includes SHA-256 of the exact guest code bytes, guest-build fingerprint, translator version, host architecture, CPU features and level. The VM-local key also includes the VM ID; the optional global key deliberately excludes it so compatible VMs can reuse an L3 entry without sharing per-VM execution counters.
+
+L0 and L1 hold bounded in-memory metadata/artifact entries through one application-wide `TranslationCacheManager` instance. L2 persists versioned VM-scoped manifests and artifact payloads using temporary files, fsync and atomic rename. Optional L3 (disabled by default) shares only compatible level-3 manifests/artifacts; artifact writes require an explicit translator `relocationSafe=true` declaration, and each envelope validates its format, scope, compatibility fields, payload length and SHA-256 before returning bytes. VM invalidation removes only that VM's L2/local state; global L3 deletion is explicit. Cache hit tiers are counted separately.
+
+Entry and byte budgets are configurable for L0/L1, as is the persistent L2/L3 quota and the maximum artifact size. Metadata and artifact residents now share each L0/L1 tier's entry and byte budget through one combined LRU order; regression tests cover mixed metadata/artifact pressure. Writes trigger periodic size checks and LRU cleanup; reducing the quota prunes immediately. The main UI exposes persistent quota, global L3 opt-in, current size/hit statistics and manual cleanup. Translation profiles/counters are deliberately VM-local and never imported from a global cache. `TranslationEngine` now uses the manager's canonical compatibility fingerprint and provides explicit cached-artifact lookup/store methods for a translator that can produce relocation-safe payloads. For observability, the QEMU TCG backend now polls its existing unstable QMP `x-query-jit` command every five seconds and retains live TB count, generated-code size/capacity, TB flushes, invalidations and direct-jump count in the VM metrics history/UI. This is a genuine view of QEMU's in-memory translation cache, but those counters are not persistent L2/L3 cache hits.
+
+**Important technical boundary:** this cache API is not yet wired to QEMU TCG's opaque live Translation Blocks. QEMU still owns its internal TB code generation, chaining and invalidation; PhoenixVM cannot safely persist/reload those internal TBs without a QEMU/TCG-side integration that exports a versioned, relocation-safe representation and matching invalidation events. The source-build route now has checksum-verified recipes for both Android ARM64-hosted target families: the x86 builder targets `x86_64-softmmu,i386-softmmu`, and `scripts/build-qemu-android-arm64-runtime.sh` targets `aarch64-softmmu`; both pin QEMU 11.1.3 and verify SHA-256 `5a8289c7940dc77d3873c81a6c29ba3afe1446fc9d36e77fa1658cdbecb84b22`. These are source-provenance-controlled build recipes, not yet bit-for-bit reproducible builds, because the host compiler/toolchain and external dependency versions are not pinned. The ARM64 archive is currently only a build/provenance output: the Android app does not yet import or select it, and the pinned DroidVM-Prebuilts runtime remains the shipped default. This increment completes additional cache quota enforcement and adds a checksum-verified ARM64 source-build recipe, but section 9 remains PARTIEL: no translator in the current QEMU runtime calls the artifact API, and QEMU's internal TCG Translation Blocks are not persisted/reloaded across launches. The checklist item “Cache de traduction fonctionnel” is not marked complete.
+
+Automated coverage includes exact code fingerprints, compatibility mismatches, L0/L1/L2 hits, cross-VM L3 reuse, unified mixed metadata/artifact L0/L1 entry and byte budgets, VM-local profile isolation, selective/global invalidation, corrupt artifact rejection, maximum-size metadata payload reopening and automatic/configuration-triggered quota cleanup. Physical performance comparisons remain for the final on-device validation phase.
+
 ## Latest implementation increment — CPU topology, runtime affinity and telemetry
 
 Section 8 software work now filters CPU topology to online CPUs intersected with the calling process's effective cpuset (`/proc/self/status`, with cgroup fallbacks). P/E classification uses heterogeneous `cpu_capacity` when available, then maximum frequency; homogeneous or unavailable topology remains `UNKNOWN` rather than being guessed. The scheduler allocates at least one vCPU per active VM, distributes remaining physical slots by VM priority/profile, balances thread assignments and prefers performance or efficiency cores accordingly. At VM startup the selected effective vCPU count is bounded by the user-requested count, current CPU slots across active VMs and thermal policy; the original requested count remains persisted unchanged. Once the guest is running, scheduler refreshes only change thread affinity and do not attempt QMP vCPU hotplug/unplug. Every QMP-discovered vCPU TID is round-robin constrained to the assigned allowed CPU set even when there are more vCPU threads than scheduler slots. An empty/untrustworthy allowed CPU mask yields no scheduler recommendation, preserving the validated runtime fallback rather than forcing one vCPU. The policy maps VM priority into Android/Linux nice values 0..10, avoiding requests for privileged negative nice values on ordinary non-root app processes. It emits the actual permitted CPU IDs.
@@ -153,8 +218,27 @@ The native boundary is fail-safe:
 
 The application must not report hardware acceleration, native Surface presentation, TPM, VirtIO-FS, x86 support or performance gains unless the corresponding real runtime component has started successfully. Software-side capability detection is not proof of physical availability.
 
-The x86 translation tier and persistent-cache work in this app is policy/metadata around QEMU TCG; it does not claim to replace QEMU's internal translator with a new native JIT. QEMU TCG remains authoritative for executable translation blocks; PhoenixVM only classifies activity, persists compatible metadata and tunes the QEMU TB cache size.
+The translation-cache foundation remains policy/metadata plus an artifact API around QEMU TCG; no translator in the shipped runtime currently consumes those artifact APIs. QEMU TCG remains authoritative for executable Translation Blocks, and PhoenixVM does not claim that those blocks are persisted or reloaded across launches.
 
 ## Validation boundary
 
 GitHub CI can validate source, unit tests, formatting, APK assembly and packaging. It cannot prove vendor hypervisor access, GPU driver behavior, audio behavior, guest boot, thermal sustainability or Android permission behavior without a real device.
+
+## Mise à jour du 27 novembre 2026 — adaptateur QEMU et lancement Android
+
+### Avancées réelles
+
+- Le format TCG IR natif est en version 3 et applique un schéma fermé par opcode ; les formes inconnues sont rejetées.
+- Le magasin L2 natif utilise un verrou noyau inter-processus Linux/Android par flock, sur un fichier permanent ouvert avec O_NOFOLLOW.
+- Un pont C ABI expose le L2 par VM, le préchargement worker vers un L1 résident non bloquant, le lookup candidat par contexte et les fonctions de construction/lecture des blocs IR.
+- Un patch QEMU 11.1.3 est présent dans patches/qemu/11.1.3. Le hook intervient dans setjmp_gen_code() après tcg_func_start() ; à un hit il reconstruit les opérations dans le TCGContext courant et laisse QEMU générer normalement le code hôte. En cas de miss/rejet, il réinitialise le contexte et rappelle le traducteur upstream. Les TB one-shot/page-less/MMIO, icount/single-step, breakpoints et contextes plugin sont exclus.
+- Sur le commit 1fea0440b8a8bc46ad0ae1a9116fc3e61cebd408, la CI a compilé QEMU 11.1.3 pour x86_64-softmmu et aarch64-softmmu, puis vérifié les symboles phoenixvm_tcg_cache_start/try_restore/store. La CI Android a passé le build natif Android, les tests unitaires, le lint, les contrôles de scripts/SBOM et l'assemblage APK debug.
+- L'application ne transmet les variables de cache que si le runtime contient simultanément le marqueur patché et la bibliothèque native. Le répertoire L2 est séparé par VM. Les builders de runtime Android ajoutent ces artefacts et leurs sommes SHA-256.
+
+### Résultat froid/chaud : échec actuel
+
+Le test utilise un BIOS x86 déterministe, arrête complètement QEMU via isa-debug-exit puis relance un nouveau processus avec le même L2. Le run sur le commit 1fea044 a compilé les deux binaires et vérifié les symboles, mais le test a échoué à l'étape froide : aucun message de bloc mis en cache, aucun fichier IR persistant et seul le fichier .tcg-ir-l2.lock était présent. Il ne démontre donc ni hit après relance, ni gain de traduction. Le patch C contient désormais des marqueurs explicites d'initialisation et d'entrée des hooks ; la nouvelle exécution de diagnostic est en cours et son résultat n'est pas encore établi.
+
+La compilation Android et l'APK réussis ne prouvent pas que le runtime modifié a été installé sur appareil. Le runtime ARM64 produit par le builder n'est pas encore sélectionné par l'installation standard de l'application ; la bibliothèque Android du CI ne remplace pas à elle seule le QEMU système préinstallé. Les validations de code invité modifié, contexte CPU/MMU, build QEMU/features hôte, corruption, isolation réelle entre processus, MTTCG, relances répétées et mesures de traduction restent à effectuer. Les compteurs de hits L2 propres à l'adaptateur ne sont pas encore exposés via QMP/UI.
+
+**Décision :** la section 9 reste **PARTIELLE** et la PR #14 reste en brouillon. Aucun taux de hits persistants ni gain de performance n'est revendiqué avant réussite du test froid/chaud, de la matrice d'incompatibilité et des mesures répétées.

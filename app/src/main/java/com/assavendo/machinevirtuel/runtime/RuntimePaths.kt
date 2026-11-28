@@ -56,6 +56,14 @@ class RuntimePaths(
     fun dataDir(arch: GuestArch): File =
         if (arch == GuestArch.ARM64) qemuShare else qemuShareX86
 
+    /** Native PhoenixVM cache bridge compiled for the Android ARM64 host ABI. */
+    fun tcgCacheLibrary(arch: GuestArch): File =
+        File(libraryDir(arch), "libphoenixvm_core.so")
+
+    /** Marker is emitted only by the patched QEMU 11.1.3 runtime builder. */
+    fun tcgCacheMarker(arch: GuestArch): File =
+        File(dataDir(arch), "phoenixvm-tcg-cache-v1")
+
     fun hasVirtiofsd(): Boolean = virtiofsd.canExecute()
     fun hasSwtpm(): Boolean = swtpm.canExecute()
     fun marker(): File = File(root, ".runtime-version")

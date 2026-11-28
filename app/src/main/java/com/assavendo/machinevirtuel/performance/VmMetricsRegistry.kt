@@ -1,6 +1,7 @@
 package com.assavendo.machinevirtuel.performance
 
 import java.util.concurrent.ConcurrentHashMap
+import com.assavendo.machinevirtuel.runtime.QemuTcgStats
 
 object VmMetricsRegistry {
     private val histories = ConcurrentHashMap<String, MetricsHistory>()
@@ -16,6 +17,7 @@ object VmMetricsRegistry {
         audioUnderruns: Long? = null,
         audioLatencyConfiguredMs: Double? = null,
         guestCpuMetrics: GuestCpuMetrics? = null,
+        qemuTcgStats: QemuTcgStats? = null,
     ) {
         val history = histories.getOrPut(vmId) { MetricsHistory() }
         history.add(
@@ -48,6 +50,12 @@ object VmMetricsRegistry {
                 audioLatencyConfiguredMs = audioLatencyConfiguredMs,
                 cacheHitRate = cacheHitRate,
                 translationMs = translationMs,
+                qemuTcgTbCount = qemuTcgStats?.translationBlocks,
+                qemuTcgCodeBytes = qemuTcgStats?.codeBytes,
+                qemuTcgCodeCapacityBytes = qemuTcgStats?.codeCapacityBytes,
+                qemuTcgFlushCount = qemuTcgStats?.flushCount,
+                qemuTcgInvalidationCount = qemuTcgStats?.invalidationCount,
+                qemuTcgDirectJumpCount = qemuTcgStats?.directJumpCount,
             )
         )
     }

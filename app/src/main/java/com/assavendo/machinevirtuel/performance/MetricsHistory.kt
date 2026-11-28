@@ -31,6 +31,12 @@ data class VmMetricsSample(
     val audioLatencyConfiguredMs: Double? = null,
     val cacheHitRate: Double? = null,
     val translationMs: Double? = null,
+    val qemuTcgTbCount: Long? = null,
+    val qemuTcgCodeBytes: Long? = null,
+    val qemuTcgCodeCapacityBytes: Long? = null,
+    val qemuTcgFlushCount: Long? = null,
+    val qemuTcgInvalidationCount: Long? = null,
+    val qemuTcgDirectJumpCount: Long? = null,
 )
 
 data class MetricsWindow(
@@ -60,6 +66,12 @@ data class MetricsWindow(
     val cacheHitRateAvg: Double?,
     val translationMsAvg: Double?,
     val throttlingSamples: Int,
+    val qemuTcgTbCountLast: Long?,
+    val qemuTcgCodeBytesLast: Long?,
+    val qemuTcgCodeCapacityBytesLast: Long?,
+    val qemuTcgFlushCountLast: Long?,
+    val qemuTcgInvalidationCountLast: Long?,
+    val qemuTcgDirectJumpCountLast: Long?,
 )
 
 class MetricsHistory(private val maxSamples: Int = 3600) {
@@ -114,6 +126,12 @@ class MetricsHistory(private val maxSamples: Int = 3600) {
             cacheHitRateAvg = avgNullable { it.cacheHitRate },
             translationMsAvg = avgNullable { it.translationMs },
             throttlingSamples = values.count { it.throttling },
+            qemuTcgTbCountLast = values.asReversed().firstNotNullOfOrNull { it.qemuTcgTbCount },
+            qemuTcgCodeBytesLast = values.asReversed().firstNotNullOfOrNull { it.qemuTcgCodeBytes },
+            qemuTcgCodeCapacityBytesLast = values.asReversed().firstNotNullOfOrNull { it.qemuTcgCodeCapacityBytes },
+            qemuTcgFlushCountLast = values.asReversed().firstNotNullOfOrNull { it.qemuTcgFlushCount },
+            qemuTcgInvalidationCountLast = values.asReversed().firstNotNullOfOrNull { it.qemuTcgInvalidationCount },
+            qemuTcgDirectJumpCountLast = values.asReversed().firstNotNullOfOrNull { it.qemuTcgDirectJumpCount },
         )
     }
 

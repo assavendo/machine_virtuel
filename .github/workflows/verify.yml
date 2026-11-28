@@ -18,3 +18,4 @@ jobs:
           components: rustfmt
       - run: cargo fmt --manifest-path native/phoenixvm-core/Cargo.toml -- --check
       - run: cargo test --manifest-path native/phoenixvm-core/Cargo.toml
+      - run: cc -std=c11 -Wall -Wextra -Werror -I native/phoenixvm-core/include -fsyntax-only native/phoenixvm-core/tests/tcg_cache_ffi_header.c

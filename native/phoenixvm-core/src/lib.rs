@@ -1,4 +1,6 @@
 pub mod backend;
+pub mod tcg_ir_cache;
+pub mod tcg_ir_cache_ffi;
 pub mod translation;
 
 use backend::{select_backend, Backend, HostFeatures};
@@ -59,7 +61,7 @@ fn translation_name(value: TranslationTier) -> &'static str {
 
 #[no_mangle]
 pub extern "system" fn Java_com_assavendo_machinevirtuel_engine_NativeEngine_nativeVersion(
-    mut env: JNIEnv,
+    env: JNIEnv,
     _class: JClass,
 ) -> jstring {
     let value = format!(
@@ -75,7 +77,7 @@ pub extern "system" fn Java_com_assavendo_machinevirtuel_engine_NativeEngine_nat
 
 #[no_mangle]
 pub extern "system" fn Java_com_assavendo_machinevirtuel_engine_NativeEngine_nativeSelectBackend(
-    mut env: JNIEnv,
+    env: JNIEnv,
     _class: JClass,
     arm64_guest: jboolean,
     kvm: jboolean,
@@ -103,7 +105,7 @@ pub extern "system" fn Java_com_assavendo_machinevirtuel_engine_NativeEngine_nat
 
 #[no_mangle]
 pub extern "system" fn Java_com_assavendo_machinevirtuel_engine_NativeEngine_nativeTranslationTier(
-    mut env: JNIEnv,
+    env: JNIEnv,
     _class: JClass,
     executions: jlong,
 ) -> jstring {
@@ -120,7 +122,7 @@ pub extern "system" fn Java_com_assavendo_machinevirtuel_engine_NativeEngine_nat
 
 #[no_mangle]
 pub extern "system" fn Java_com_assavendo_machinevirtuel_engine_NativeEngine_nativeSetThreadAffinity(
-    mut env: JNIEnv,
+    env: JNIEnv,
     _class: JClass,
     thread_id: jlong,
     cpu_ids: JIntArray,

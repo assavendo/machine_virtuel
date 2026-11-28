@@ -28,6 +28,11 @@ object QmpController {
     fun queryStatus(socketFile: File): String? =
         executeForResponse(socketFile, """{"execute":"query-status"}""")
 
+    /** QEMU TCG live TB/cache counters; null when TCG or x-query-jit is unavailable. */
+    fun queryTcgStats(socketFile: File): QemuTcgStats? =
+        executeForResponse(socketFile, """{"execute":"x-query-jit"}""")
+            ?.let(QemuTcgStatsParser::parseQmpResponse)
+
     fun queryVcpuThreadIds(socketFile: File): List<Long> =
         queryThreadIds(socketFile, "query-cpus-fast")
 

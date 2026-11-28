@@ -78,6 +78,18 @@ class TranslationEngine(private val cache: TranslationCacheManager) {
         return existing.copy()
     }
 
+    /** Lookup a translator-provided, compatibility-validated artifact before recompilation. */
+    fun cachedArtifact(key: TranslationCacheKey, allowGlobalLevel3: Boolean = false): ByteArray? =
+        cache.getArtifact(key, allowGlobalLevel3)
+
+    /** Persist only artifacts that the active translator declares relocation-safe. */
+    fun storeArtifact(
+        key: TranslationCacheKey,
+        artifact: ByteArray,
+        relocationSafe: Boolean,
+        allowGlobalLevel3: Boolean = false,
+    ) = cache.putArtifact(key, artifact, relocationSafe, allowGlobalLevel3)
+
     @Synchronized
     fun invalidate(key: TranslationCacheKey) {
         profiles.remove(cacheIdentity(key))
@@ -90,12 +102,5 @@ class TranslationEngine(private val cache: TranslationCacheManager) {
     }
 
     private fun cacheIdentity(key: TranslationCacheKey): String =
-        cache.fingerprint(
-            key.vmId,
-            key.guestFingerprint,
-            key.translatorVersion,
-            key.hostArch,
-            key.hostFeatures,
-            key.level.toString(),
-        )
+        cache.compatibilityFingerprint(key)
 }

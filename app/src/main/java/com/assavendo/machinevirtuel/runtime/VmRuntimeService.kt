@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.IBinder
 import com.assavendo.machinevirtuel.host.HostCapabilityScanner
 import com.assavendo.machinevirtuel.hypervisor.BackendLaunchSpec
@@ -255,13 +256,25 @@ class VmRuntimeService : Service() {
                         tpmHandle = TpmManager.start(paths, vm, dir, log)
                     }
 
-                    val spec = backend.launchSpec(
+                    val launchVm = vm.copy(backend = backend.kind)
+                    val baseSpec = backend.launchSpec(
                         paths,
-                        vm.copy(backend = backend.kind),
+                        launchVm,
                         qmp,
                         serial,
                         log,
                         usbPassthrough = usbAttachments,
+                    )
+                    val persistentTcgEnvironment = PersistentTcgCacheEnvironment.build(
+                        paths = paths,
+                        vm = launchVm,
+                        apiLevel = Build.VERSION.SDK_INT,
+                        supportedAbis = Build.SUPPORTED_ABIS.toList(),
+                        cpuInfo = runCatching { File("/proc/cpuinfo").readText() }
+                            .getOrDefault(""),
+                    )
+                    val spec = baseSpec.copy(
+                        environment = baseSpec.environment + persistentTcgEnvironment,
                     )
                     val controlSocket = spec.controlSocket
                     val guestAgentSocket = spec.guestAgentSocket
@@ -469,7 +482,9 @@ class VmRuntimeService : Service() {
         var cachedIoThreadIds: List<Long> = emptyList()
         var lastThreadPolicyKey = ""
         var lastThreadPolicyAppliedMs = 0L
-        var cachedTranslationAggregate = TranslationCacheManager(this).aggregate(id)
+        var cachedTranslationAggregate = TranslationCacheManager.get(this).aggregate(id)
+        var cachedQemuTcgStats: QemuTcgStats? = null
+        var lastTcgStatsSampleMs = 0L
         val vcpuSampler = VmCpuThreadSampler()
         val guestCpuTracker = GuestCpuStatsTracker()
         var cachedGuestCpuMetrics: com.assavendo.machinevirtuel.performance.GuestCpuMetrics? = null
@@ -494,9 +509,15 @@ class VmRuntimeService : Service() {
                 if (handle.qmp != null && now - lastTelemetryRefreshMs >= 5_000L) {
                     cachedVcpuThreadIds = QmpController.queryVcpuThreadIds(handle.qmp)
                     cachedIoThreadIds = QmpController.queryIoThreadIds(handle.qmp)
-                    cachedTranslationAggregate = TranslationCacheManager(this).aggregate(id)
+                    cachedTranslationAggregate = TranslationCacheManager.get(this).aggregate(id)
                     lastTelemetryRefreshMs = now
                 }
+                val qemuTcgStats = if (handle.backend == BackendKind.QEMU_TCG &&
+                    handle.qmp != null && now - lastTcgStatsSampleMs >= 5_000L
+                ) {
+                    lastTcgStatsSampleMs = now
+                    QmpController.queryTcgStats(handle.qmp).also { cachedQemuTcgStats = it }
+                } else cachedQemuTcgStats
 
                 val vCpuUtilization = vcpuSampler.sample(cachedVcpuThreadIds)
                 val audioUnderruns = audioMonitor?.sample()
@@ -525,6 +546,7 @@ class VmRuntimeService : Service() {
                     audioUnderruns = audioUnderruns,
                     audioLatencyConfiguredMs = vm.audioBufferMs.toDouble().takeIf { vm.audioEnabled },
                     guestCpuMetrics = cachedGuestCpuMetrics,
+                    qemuTcgStats = qemuTcgStats,
                 )
                 val host = cachedHost ?: error("Host capability cache unavailable.")
                 val topology = cachedTopology ?: error("CPU topology cache unavailable.")

@@ -24,7 +24,7 @@ import java.util.UUID
 class VmManager(private val context: Context) {
     private val store = VmStore(context)
     private val scanner = HostCapabilityScanner(context)
-    private val cache = TranslationCacheManager(context)
+    private val cache = TranslationCacheManager.get(context)
     private val orchestrator = VmOrchestrator()
     private val metrics = HostMetricsCollector(context)
     private val advisor = PerformanceAdvisor()
@@ -33,6 +33,10 @@ class VmManager(private val context: Context) {
     fun list(): List<VmConfig> = store.list()
     fun capabilities() = scanner.scan()
     fun cacheStats() = cache.stats()
+    fun translationCachePolicy() = cache.currentPolicy()
+    fun configureTranslationCache(policy: com.assavendo.machinevirtuel.cache.TranslationCachePolicy) =
+        cache.configure(policy)
+    fun cleanTranslationCache() = cache.cleanup()
 
     fun createDefault(name: String = "Linux ARM64 VM"): VmConfig {
         val caps = capabilities()

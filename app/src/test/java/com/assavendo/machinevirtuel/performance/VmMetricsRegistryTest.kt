@@ -27,6 +27,14 @@ class VmMetricsRegistryTest {
                     sampleIntervalMs = 1000,
                 ),
                 effectiveVcpus = 2,
+                qemuTcgStats = com.assavendo.machinevirtuel.runtime.QemuTcgStats(
+                    translationBlocks = 321,
+                    codeBytes = 123_456,
+                    codeCapacityBytes = 8_388_608,
+                    flushCount = 4,
+                    invalidationCount = 27,
+                    directJumpCount = 240,
+                ),
             )
 
             val sample = VmMetricsRegistry.last("vm-cpu-telemetry").single()
@@ -36,6 +44,12 @@ class VmMetricsRegistryTest {
             assertEquals(34_000L, sample.processIoWriteBytesPerSec)
             assertEquals(7.5, sample.systemCpuIoWaitPercent)
             assertEquals(1000L, sample.sampleIntervalMs)
+            assertEquals(321L, sample.qemuTcgTbCount)
+            assertEquals(123_456L, sample.qemuTcgCodeBytes)
+            assertEquals(8_388_608L, sample.qemuTcgCodeCapacityBytes)
+            assertEquals(4L, sample.qemuTcgFlushCount)
+            assertEquals(27L, sample.qemuTcgInvalidationCount)
+            assertEquals(240L, sample.qemuTcgDirectJumpCount)
             assertNull(sample.cpuGuestPercent)
             assertNull(sample.ramGuestMb)
 
@@ -43,6 +57,9 @@ class VmMetricsRegistryTest {
             assertEquals(12_000.0, minute.processIoReadBytesPerSecAvg)
             assertEquals(34_000.0, minute.processIoWriteBytesPerSecAvg)
             assertEquals(7.5, minute.systemCpuIoWaitPercentAvg)
+            assertEquals(321L, minute.qemuTcgTbCountLast)
+            assertEquals(123_456L, minute.qemuTcgCodeBytesLast)
+            assertEquals(27L, minute.qemuTcgInvalidationCountLast)
         } finally {
             VmMetricsRegistry.clearAll()
         }

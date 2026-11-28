@@ -361,6 +361,21 @@ object RuntimeInstaller {
         }
         check(safeChild(root, "usr/lib").isDirectory) { "Les bibliothèques du runtime x86 sont absentes." }
         check(safeChild(root, "usr/share/qemu").isDirectory) { "Les données QEMU x86 sont absentes." }
+
+        val cacheLibrary = safeChild(root, "usr/lib/libphoenixvm_core.so")
+        val cacheMarker = safeChild(root, "usr/share/qemu/phoenixvm-tcg-cache-v1")
+        check(cacheLibrary.isFile == cacheMarker.isFile) {
+            "Le pont natif et le marqueur QEMU du cache TCG doivent être livrés ensemble."
+        }
+        if (cacheLibrary.isFile) {
+            check(cacheLibrary.length() > 0L && cacheMarker.length() in 1..4096L) {
+                "Le pont natif ou le marqueur du cache TCG est vide ou invalide."
+            }
+            check(seen.contains("usr/lib/libphoenixvm_core.so") &&
+                seen.contains("usr/share/qemu/phoenixvm-tcg-cache-v1")) {
+                "Le pont natif et le marqueur du cache TCG doivent être couverts par SHA256SUMS."
+            }
+        }
     }
 
     private fun recoverInterruptedSwap(context: Context, paths: RuntimePaths) {
